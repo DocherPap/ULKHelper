@@ -4,6 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../Automation/AutoTriggerHelper.cs" Link="AutoTriggerHelper.cs" />
     <Compile Include="../../Automation/NavigationRules.cs" Link="NavigationRules.cs" />
     <Compile Include="../../Automation/LeaderListenerHelper.cs" Link="LeaderListenerHelper.cs" />
     <Compile Include="../../Automation/DestinationNavigationHelper.cs" Link="DestinationNavigationHelper.cs" />

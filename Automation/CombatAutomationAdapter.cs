@@ -9,7 +9,7 @@ namespace ULKHelper.Automation;
 
 // RSR handles actions; BossMod AI handles movement with its own actions/auto-target disabled.
 internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, ICommandManager commands,
-    IObjectTable objects, ITargetManager targets) : IFellingCombat
+    IObjectTable objects, ITargetManager targets) : IFellingCombat, ITriggerCombat
 {
     private bool reborn, rotationOwned, aiOwned;
     private readonly Dictionary<string, (string Before, string Written)> settings = new();
@@ -168,6 +168,25 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             return true;
         }
         catch (Exception ex) { Error = "战斗控制启动失败：" + ex.GetBaseException().Message; Disable(); return false; }
+    }
+    public bool EnableStationary()
+    {
+        try
+        {
+            if (rotationOwned) return StationaryHealthy;
+            var error = CheckReady();
+            if (error != null) { Error = error; return false; }
+            rotationOwner = CurrentRotationOwner(); rotationOwned = true;
+            RotationMode("Manual");
+            if (!StationaryHealthy) throw new InvalidOperationException("自动循环未启用。");
+            return true;
+        }
+        catch (Exception ex) { Error = ex.Message; Disable(); return false; }
+    }
+    public bool StationaryHealthy
+    {
+        get { try { return rotationOwned && !aiOwned && ReferenceEquals(rotationOwner, CurrentRotationOwner())
+            && ManualRequested() && RotationActive() && !AIActive(); } catch { return false; } }
     }
     public bool Healthy
     {

@@ -10,6 +10,10 @@ internal sealed record AutomationSnapshot(IReadOnlyList<PlayerEntry> Players, Pl
 internal interface IAutomationHelpers
 {
     AutomationSnapshot Snapshot { get; }
+    AutoTriggerSnapshot TriggerSnapshot => AutoTriggerSnapshot.Empty;
+    void StartTrigger(IReadOnlyList<TriggerPlan> plans, int batch, int maxKills) { }
+    void RecordTriggerPoint(ushort fateId, bool reset = false) { }
+    void ClearTriggerRoute(ushort fateId) { }
     void SelectLeader(PlayerIdentity identity);
     void SelectCurrentTargetAsLeader() { }
     void Listen(bool enabled);

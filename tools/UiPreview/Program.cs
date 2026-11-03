@@ -117,6 +117,12 @@ unsafe class Program
         ValidateCatalog();
         for (var frame = 0; frame < 8; frame++)
         {
+            if (args.Contains("--start-trigger"))
+            {
+                io.AddMousePosEvent(40, 483);
+                if (frame == 3) io.AddMouseButtonEvent(0, true);
+                if (frame == 4) io.AddMouseButtonEvent(0, false);
+            }
             if (args.Contains("--debug-read") || args.Contains("--debug-mount"))
             {
                 io.AddMousePosEvent(65, args.Contains("--debug-mount") ? 281 : 111);
@@ -229,6 +235,7 @@ unsafe class Program
             ImGui.End();
             ImGui.Render();
         }
+        if (args.Contains("--start-trigger") && automationFixture.TriggerPlans?.Count != 3) throw new Exception("Trigger start input failed");
         if (args.Contains("--click-job") && !(bool)GetField(page, "byJob")) throw new Exception("Job radio input failed");
         if (args.Contains("--debug-read") && automationFixture.LastDebugAction != SoloDebugAction.Inspect) throw new Exception("Debug inspect button input failed");
         if (args.Contains("--debug-mount") && automationFixture.LastDebugAction != SoloDebugAction.Mount) throw new Exception("Debug mount button input failed");
@@ -297,6 +304,10 @@ unsafe class Program
 
     sealed class AutomationFixture : IAutomationHelpers
     {
+        public IReadOnlyList<TriggerPlan>? TriggerPlans;
+        public void StartTrigger(IReadOnlyList<TriggerPlan> plans, int batch, int maxKills) => TriggerPlans = plans;
+        public AutoTriggerSnapshot TriggerSnapshot => new(false, "离线模拟：尚未开始自动触发。", 20,
+            [new(1332, new(-350,0,20)),new(1332,new(-330,0,10)),new(1348,new(300,0,300))], new Dictionary<ushort,Vector3[]>());
         public SoloDebugAction? LastDebugAction;
         public SoloDebugSnapshot DebugSnapshot => new(false,"示例：等待测试。","区域=732 地图=414\nvnavmesh Ready=True；现场状态为离线模拟。",
             [new(2415,"港口营地"), new(2429,"废弃实验室"), new(2436,"风蚀小屋")], []);

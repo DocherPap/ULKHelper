@@ -485,6 +485,7 @@ debugTest.Tick(debugFrame with { World = crystalWorld with { Territory = 763 } }
 Check(!debugTest.Active, "单人测试真实切岛取消，不沿用原岛目标");
 for (var index = 0; index < 100; index++) debugTest.Record("历史"+index,now);
 Check(debugTest.History.Count == 40, "单人测试历史最多保留40条");
+AutoTriggerChecks.Run(Check);
 Console.WriteLine($"{count} automation checks passed.");
 
 sealed class FollowFixture : IDisposable

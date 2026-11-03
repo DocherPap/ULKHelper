@@ -22,6 +22,11 @@ try
     Check(next.Get("new.option", 0) == 9 && next.ReadFromDisk("new.option", 0) == 10, "调试重读来自实际磁盘而不是内存缓存");
     Check(next.Get("filter", 7) == 7, "字段类型变化回退默认");
     Check(!File.Exists(path + ".tmp"), "成功保存不遗留临时文件");
+    var route = new Dictionary<ushort, Vector3[]> { [1365] = [new(1,2,3), new(4,5,6)] };
+    next.Put("trigger.routes", route); next.Put("trigger.batch", 21); next.Put("trigger.abandon", 7); next.Flush(true);
+    var routes = new SettingsStore(path);
+    Check(routes.Get("trigger.routes", new Dictionary<ushort, Vector3[]>())[1365].SequenceEqual(route[1365]), "触发路线FATE键与XYZ高度跨重载保留");
+    Check(routes.Get("trigger.batch", 1) == 21 && routes.Get("trigger.abandon", 1) == 7, "触发无限档位跨重载保留");
     File.WriteAllText(path, "{ invalid");
     var errors = 0; var broken = new SettingsStore(path, _ => errors++);
     Check(errors == 1 && Directory.GetFiles(root,"*.invalid-*").Length == 1, "损坏配置保留原文备份");

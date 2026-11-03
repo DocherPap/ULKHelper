@@ -2,6 +2,37 @@ using System.Reflection;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
+if (args.FirstOrDefault() == "--rsr-settings")
+{
+ var dir=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"XIVLauncherCN/installedPlugins/RotationSolver/7.5.7.15");
+ System.Runtime.Loader.AssemblyLoadContext.Default.Resolving += (_,n)=>File.Exists(Path.Combine(dir,n.Name+".dll"))?Assembly.LoadFrom(Path.Combine(dir,n.Name+".dll")):null;
+ foreach(var file in Directory.GetFiles(dir,"*.dll").Where(f=>Path.GetFileName(f).Contains("RotationSolver")))
+ {var a=Assembly.LoadFrom(file);Type[] ts;try{ts=a.GetTypes();}catch(ReflectionTypeLoadException e){ts=e.Types.OfType<Type>().ToArray();}
+ foreach(var t in ts.Where(t=>t.FullName!.Contains("Config")||t.Name.Contains("Targeting")||t.Name=="DataCenter"||t.Name=="StateCommandType"||t.Name=="Service"||t.Name=="TargetHostileType"))
+ {var props=t.GetProperties().Where(p=>p.Name.Contains("Target")||p.Name.Contains("Hostile")||p.Name.Contains("Config")||p.Name.Contains("State")||p.Name.Contains("Manual")).ToArray();
+ if(props.Length>0||t.IsEnum){Console.WriteLine("TYPE "+t.FullName);foreach(var p in props)Console.WriteLine(p);foreach(var f in t.GetFields(BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic).Where(f=>f.FieldType.Name=="Configs"))Console.WriteLine("CONFIG FIELD "+f);if(t.IsEnum)Console.WriteLine(string.Join(",",Enum.GetNames(t)));}}
+ }
+ return;
+}
+if (args.FirstOrDefault() == "--logos-data")
+{
+ using var game = new Lumina.GameData("D:/Program Files (x86)/FFXIV/game/sqpack",new Lumina.LuminaOptions { DefaultExcelLanguage=Lumina.Data.Language.ChineseSimplified });
+ foreach(var r in game.Excel.GetSheet<EurekaAetherItem>()!)Console.WriteLine($"AETHER {r.RowId} {r.Name} {r.Singular}");
+ foreach(var r in game.Excel.GetSheet<EurekaMagiciteItem>()!)Console.WriteLine($"MAGICITE {r.RowId} {r.Item.RowId} {r.Item.Value.Name} {r.EurekaMagiciteItemType.Value.Type}");
+ foreach(var r in game.Excel.GetSheet<EurekaMagiaAction>()!)Console.WriteLine($"ACTION {r.RowId} {r.Action.RowId} {r.Action.Value.Name}");
+ foreach(var r in game.Excel.GetSheet<TextCommand>()!.Where(r=>r.Command.ExtractText().Contains("magia")))Console.WriteLine($"COMMAND {r.RowId} {r.Command} {r.Alias}");
+ return;
+}
+if (args.FirstOrDefault() == "--logos-types")
+{
+ foreach(var t in typeof(Lumina.Excel.Sheets.Item).Assembly.GetTypes().Where(t=>t.Name.Contains("Eureka") || t.Name.Contains("Logos"))) {Console.WriteLine("TYPE "+t.FullName);foreach(var p in t.GetProperties())Console.WriteLine(p);}
+ foreach(var t in typeof(FFXIVClientStructs.FFXIV.Client.Game.InventoryManager).Assembly.GetTypes().Where(t=>t.Name.Contains("Eureka")||t.Name.Contains("Magia"))) {Console.WriteLine("NATIVE "+t.FullName);foreach(var f in t.GetFields())Console.WriteLine(f);foreach(var m in t.GetMethods().Where(m=>m.Name.Contains("Magia")||m.Name.Contains("Rotate")))Console.WriteLine(m);}
+ return;
+}
+
+
+
+
 
 if (args.FirstOrDefault() == "--combat-api")
 {

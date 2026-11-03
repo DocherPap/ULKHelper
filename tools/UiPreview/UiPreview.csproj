@@ -9,6 +9,8 @@
     <DalamudLibPath Condition="'$(DalamudLibPath)' == ''">$(APPDATA)/XIVLauncherCN/addon/Hooks/dev</DalamudLibPath>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../Automation/DestinationNavigationHelper.cs" Link="DestinationNavigationHelper.cs" />
+    <Compile Include="../../Automation/AutoTriggerHelper.cs" Link="AutoTriggerHelper.cs" />
     <Compile Include="../../SettingsStore.cs" Link="SettingsStore.cs" />
     <None Include="$(DalamudLibPath)/cimgui.dll" Link="cimgui.dll" CopyToOutputDirectory="PreserveNewest" />
     <Reference Include="Dalamud.Bindings.ImGui">

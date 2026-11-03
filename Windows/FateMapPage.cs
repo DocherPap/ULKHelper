@@ -2,6 +2,7 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using ULKHelper.Fates;
 using ULKHelper.Weather;
+using ULKHelper.Automation;
 
 namespace ULKHelper.Windows;
 
@@ -10,9 +11,22 @@ internal interface IMapTextures
     ImTextureID? Get(string path, out string? error);
 }
 
-internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textures, IReadOnlyList<WeatherZone> weather)
+internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textures, IReadOnlyList<WeatherZone> weather, IAutomationHelpers? navigation = null)
 {
     private int islandIndex;
+    public void Load(SettingsStore settings, string key)
+    {
+        islandIndex = Math.Clamp(settings.Get(key + ".island", 0), 0, Math.Max(0, provider.Islands.Count - 1));
+        follow = settings.Get(key + ".follow", true); showBunnies = settings.Get(key + ".bunnies", true); showLabels = settings.Get(key + ".labels", true);
+        zoom = Math.Clamp(settings.Get(key + ".zoom", 1f), 1, 4); centre = settings.Get(key + ".centre", new Vector2(.5f));
+        search = settings.Get(key + ".search", "");
+    }
+    public void Save(SettingsStore settings, string key)
+    {
+        settings.Put(key + ".island", islandIndex); settings.Put(key + ".follow", follow);
+        settings.Put(key + ".bunnies", showBunnies); settings.Put(key + ".labels", showLabels);
+        settings.Put(key + ".zoom", zoom); settings.Put(key + ".centre", centre); settings.Put(key + ".search", search);
+    }
     private bool follow = true, showBunnies = true, showLabels = true, dragged;
     private string search = "";
     private ushort selected;
@@ -122,7 +136,8 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         var notificationChanged = ImGui.Checkbox("发送通知频道", ref notificationEnabled);
         ImGui.SameLine();
         ImGui.SetNextItemWidth(ImGui.CalcTextSize("跨服通信贝 8").X + ImGui.GetFrameHeight() + ImGui.GetStyle().FramePadding.X * 2);
-        notificationChanged |= ImGui.Combo("##FateNotificationChannel", ref notificationChannel, FateNotificationText.ChannelNames, FateNotificationText.ChannelNames.Length);
+        if (ImGui.Combo("##FateNotificationChannel", ref notificationChannel, FateNotificationText.ChannelNames, FateNotificationText.ChannelNames.Length))
+        { notificationEnabled = false; notificationChanged = true; }
         ImGui.SameLine();
         ImGui.SetNextItemWidth(-1);
         notificationChanged |= ImGui.InputTextWithHint("##FateNotificationTemplate", "通知内容", ref notificationTemplate, 512);
@@ -130,6 +145,14 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         ImGui.TextDisabled("<位置> 代表位置，<名字> 代表 FATE 缩写。开启后仅通知新出现的 FATE。");
         if (FateNotificationText.IsLocal((FateNotificationChannel)notificationChannel)) ImGui.TextDisabled("当前频道仅在本机显示。");
         if (notificationEnabled && snapshot.NotificationStatus != null) ImGui.TextWrapped(snapshot.NotificationStatus);
+        if (navigation != null)
+        {
+            if (ImGui.Button("自动前往入口营地")) navigation.GoToEntrance();
+            ImGui.SameLine(); ImGui.BeginDisabled(!navigation.Snapshot.Navigating);
+            if (ImGui.Button("停止移动")) navigation.Stop();
+            ImGui.EndDisabled();
+            ImGui.TextWrapped(navigation.Snapshot.NavigationStatus);
+        }
         if (snapshot.CrowdsourceStatus != null)
             ImGui.TextWrapped($"{(snapshot.RoomId != 0 ? $"房间 {snapshot.RoomId} · " : "")}{snapshot.CrowdsourceStatus}");
         var island = provider.Islands[islandIndex];
@@ -148,6 +171,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         }
         var points = island.Fates.Where(f => (showBunnies || !f.Seed.Bunny)
             && (search.Length == 0 || f.Name.Contains(search, StringComparison.OrdinalIgnoreCase) || f.Seed.ShortName.Contains(search, StringComparison.OrdinalIgnoreCase))).ToArray();
+        LayoutSettings.RememberTable("##FateMapLayout");
         if (!ImGui.BeginTable("##FateMapLayout", 2, ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV)) return;
         try
         {
@@ -270,6 +294,13 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             ImGui.TextWrapped(definition.Name);
             ImGui.TextWrapped($"触发：{definition.Trigger}");
             if (ImGui.Button("在游戏地图标记")) provider.Mark(definition);
+            if (navigation != null)
+            {
+                ImGui.SameLine(); ImGui.BeginDisabled(snapshot.CurrentTerritory != island.Territory || navigation.Snapshot.Navigating);
+                if (ImGui.Button("自动前往")) navigation.NavigateTo(new(island.Territory, island.MapId,
+                    MapProjection.MapToWorld(new(definition.Seed.X, definition.Seed.Y), island), definition.Seed.ShortName));
+                ImGui.EndDisabled();
+            }
             ImGui.TextWrapped($"参考冷却：出现后 {definition.Seed.CooldownMinutes:0.#} 分钟。仅估计；需要刷怪 / 天气等条件。");
             var condition = definition.Seed.WeatherId == 0 ? "不限天气" : weather.FirstOrDefault(w => w.TerritoryId == island.Territory)?.Chances
                 .FirstOrDefault(c => c.WeatherId == definition.Seed.WeatherId)?.Name ?? "特定天气";

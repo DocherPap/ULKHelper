@@ -9,6 +9,7 @@
     <DalamudLibPath Condition="'$(DalamudLibPath)' == ''">$(APPDATA)/XIVLauncherCN/addon/Hooks/dev</DalamudLibPath>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../SettingsStore.cs" Link="SettingsStore.cs" />
     <None Include="$(DalamudLibPath)/cimgui.dll" Link="cimgui.dll" CopyToOutputDirectory="PreserveNewest" />
     <Reference Include="Dalamud.Bindings.ImGui">
       <HintPath>$(DalamudLibPath)/Dalamud.Bindings.ImGui.dll</HintPath>
@@ -21,6 +22,8 @@
     <Compile Include="../../Inventory/ResolvedCatalog.cs" Link="ResolvedCatalog.cs" />
     <Compile Include="../../Windows/StatisticsPreview.cs" Link="StatisticsPreview.cs" />
     <Compile Include="../../Windows/ItemStatisticsPage.cs" Link="ItemStatisticsPage.cs" />
+    <Compile Include="../../Windows/StatisticsPalette.cs" Link="StatisticsPalette.cs" />
+    <Compile Include="../../Windows/LayoutSettings.cs" Link="LayoutSettings.cs" />
     <Compile Include="../../Windows/AutomationPage.cs" Link="AutomationPage.cs" />
     <Compile Include="../../Automation/NavigationRules.cs" Link="NavigationRules.cs" />
     <Compile Include="../../Automation/AutomationModels.cs" Link="AutomationModels.cs" />

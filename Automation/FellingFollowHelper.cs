@@ -117,7 +117,7 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
                 }
                 Act(mounts.Mount, "召唤所选坐骑", now); return;
             }
-            if (observation.Ended && encounter != null) { Finish(now); return; }
+            if (observation.Ended && encounter != null) { Finish(now); RemountImmediately(frame, now); return; }
             var fate = observation.Fate;
             if (phase == Phase.Prepare && frame.Mounted && !frame.Casting)
             {
@@ -142,7 +142,7 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
             if (encounter is { } bound && (bound.Id != fate.Id || bound.Start > 0 && fate.StartedAt > 0 && bound.Start != fate.StartedAt))
             { Stop("目标NM场次变化。"); return; }
             encounter = (fate.Id, fate.StartedAt > 0 ? fate.StartedAt : encounter?.Start ?? 0);
-            if (fate.BossId != 0 && !fate.BossAlive) { Finish(now); return; }
+            if (fate.BossId != 0 && !fate.BossAlive) { Finish(now); RemountImmediately(frame, now); return; }
             if (phase == Phase.Fight && now - phaseAt > TimeSpan.FromMinutes(20)) { Stop("单场战斗超过20分钟。"); return; }
             if (phase == Phase.Prepare)
             {
@@ -155,19 +155,8 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
                 if (fate.BossId == 0 || !fate.BossTargetable) { Status = "等待确认可选中的NM头目。"; return; }
                 if (!combat.Target(fate.BossId)) { Stop("无法锁定NM头目。"); return; }
                 if (fate.NeedsSync == null) { Status = "等待确认等级同步需求。"; return; }
-                var distance = fate.NeedsSync.Value ? 15 : 25;
-                if (approach.Active)
-                {
-                    approach.Tick(context, frame.Player, frame.Safe, [], now);
-                    if (!approach.Active && approach.TakeArrival() == null) { Stop(approach.Status); return; }
-                    if (approach.Active) { Status = approach.Status; return; }
-                }
-                if (NavigationRules.Distance(frame.Player, fate.Centre) > distance + 2)
-                {
-                    approach.Start(goal! with { Position = ArrivalRules.Position(frame.Player, fate.Centre, distance) }, context, frame.Player, [], now, false);
-                    if (!approach.Active) Stop(approach.Status);
-                    return;
-                }
+                // Once pulled, hand movement to BossMod; never issue another stand-off destination.
+                approach.Stop();
                 if (fate.NeedsSync.Value && !fate.Synced)
                 { Act(() => combat.Sync(fate.Id), "等级同步", now); return; }
                 approach.Stop();
@@ -200,6 +189,11 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
         if (encounter is { } ended) finishedFates[ended.Id] = ended.Start;
         approach.Stop(); combat.Disable(); phase = Phase.Remount; phaseAt = nextAction = now; attempts = 0;
         Status = "目标事件已结束，关闭战斗控制并准备上坐骑。";
+    }
+    private void RemountImmediately(ArrivalFrame frame, DateTimeOffset now)
+    {
+        if (combat.Disable() && !frame.Mounted && !frame.InCombat && !frame.Casting)
+            Act(mounts.Mount, "召唤所选坐骑", now);
     }
     private FateEntry? FreshFate(MapDestination destination, IReadOnlyList<FateEntry> fates) => NavigationRules.FindFate(destination.Position,
         fates.Where(f => !Same(f, encounter) && !(finishedFates.TryGetValue(f.Id, out var start)

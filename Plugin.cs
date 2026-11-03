@@ -21,6 +21,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly AutomationHelpers automation;
     private readonly FateMapTracker fateTracker;
     private bool disposed;
+    private readonly SettingsStore settings;
 
     public Plugin(IDalamudPluginInterface pluginInterface, ICommandManager commandManager, IFramework framework,
         IClientState clientState, IPlayerState playerState, IDataManager dataManager, IGameInventory gameInventory,
@@ -30,8 +31,9 @@ public sealed class Plugin : IDalamudPlugin
     {
         this.pluginInterface = pluginInterface;
         this.commandManager = commandManager;
+        settings = new(Path.Combine(pluginInterface.GetPluginConfigDirectory(), "settings.json"), ex => log.Warning(ex, "保存或读取设置失败"));
         inventoryTracker = new(pluginInterface, framework, clientState, playerState, dataManager, gameInventory, addonLifecycle, log, gameGui);
-        automation = new(pluginInterface, framework, clientState, objects, fates, conditions, chat, gameGui, log, party, dataManager, interop, playerState, commandManager, targets);
+        automation = new(pluginInterface, framework, clientState, objects, fates, conditions, chat, gameGui, log, party, dataManager, interop, playerState, commandManager, targets, settings);
         IReadOnlyList<WeatherZone> weatherZones = [];
         string? weatherError = null;
         try { weatherZones = WeatherCatalogLoader.Load(dataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>()!); }
@@ -40,12 +42,12 @@ public sealed class Plugin : IDalamudPlugin
             weatherError = "读取天气数据失败，请检查本机游戏数据并重新加载插件。";
             log.Error(ex, "加载优雷卡天气表失败");
         }
-        fateTracker = new(dataManager, framework, clientState, objects, fates, gameGui, log, scanner, playerState, chat);
-        mainWindow = new(inventoryTracker, automation, weatherZones, fateTracker, new GameMapTextures(textures), weatherError);
+        fateTracker = new(dataManager, framework, clientState, objects, fates, gameGui, log, scanner, playerState, chat, settings);
+        mainWindow = new(inventoryTracker, automation, weatherZones, fateTracker, new GameMapTextures(textures), weatherError, settings);
         windows.AddWindow(mainWindow);
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "打开优雷卡助手；/ulk refreshplayers 手动刷新岛内玩家名单。",
+            HelpMessage = "打开优雷卡助手；/ulk refreshplayers 刷新岛内名单；/ulk entrance 前往入口营地；/ulk stop 停止移动。",
         });
         pluginInterface.UiBuilder.Draw += windows.Draw;
         pluginInterface.UiBuilder.OpenMainUi += OpenMainUi;
@@ -54,6 +56,8 @@ public sealed class Plugin : IDalamudPlugin
     private void OnCommand(string command, string arguments)
     {
         if (arguments.Trim().Equals("refreshplayers", StringComparison.OrdinalIgnoreCase)) automation.RefreshPlayers();
+        else if (arguments.Trim().Equals("entrance", StringComparison.OrdinalIgnoreCase)) automation.GoToEntrance();
+        else if (arguments.Trim().Equals("stop", StringComparison.OrdinalIgnoreCase)) automation.Stop();
         else OpenMainUi();
     }
 
@@ -70,5 +74,6 @@ public sealed class Plugin : IDalamudPlugin
         automation.Dispose();
         fateTracker.Dispose();
         inventoryTracker.Dispose();
+        settings.Flush(true);
     }
 }

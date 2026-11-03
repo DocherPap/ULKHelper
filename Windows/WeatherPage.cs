@@ -1,6 +1,7 @@
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using ULKHelper.Weather;
+using ULKHelper.Fates;
 
 namespace ULKHelper.Windows;
 
@@ -12,6 +13,8 @@ internal sealed class WeatherPage(IReadOnlyList<WeatherZone> zones, string? erro
     private int cachedCount;
     private readonly Dictionary<uint, IReadOnlyList<WeatherPeriod>> forecasts = new();
     private static readonly int[] Counts = [6, 12, 24];
+    public void Load(SettingsStore settings) { countIndex = Math.Clamp(settings.Get("weather.countIndex", 0), 0, 2); utc = settings.Get("weather.utc", false); }
+    public void Save(SettingsStore settings) { settings.Put("weather.countIndex", countIndex); settings.Put("weather.utc", utc); }
 
     public void Draw()
     {
@@ -60,9 +63,11 @@ internal sealed class WeatherPage(IReadOnlyList<WeatherZone> zones, string? erro
             var from = utc ? period.Start : period.Start.ToLocalTime();
             var to = utc ? period.End : period.End.ToLocalTime();
             var current = period.Start <= now && now < period.End;
+            var special = FateSeeds.All.Where(f => f.Territory == zone.TerritoryId && f.WeatherId != 0 && f.WeatherId == period.WeatherId).ToArray();
             var pos = ImGui.GetCursorScreenPos();
             var draw = ImGui.GetWindowDrawList();
-            draw.AddRectFilled(pos, pos + new Vector2(cardWidth, height), current ? 0xFF354B32u : 0xFF292929u, 4);
+            draw.AddRectFilled(pos, pos + new Vector2(cardWidth, height), special.Length > 0 ? 0xFF324D62u : current ? 0xFF354B32u : 0xFF292929u, 4);
+            if (special.Length > 0) draw.AddRect(pos, pos + new Vector2(cardWidth, height), 0xFF57D4F0u, 4, ImDrawFlags.None, 2);
             ImGui.BeginGroup();
             ImGui.Dummy(new Vector2(cardWidth, ImGui.GetStyle().FramePadding.Y));
             CenterText(current ? $"{period.WeatherName} · 当前" : period.WeatherName, pos.X, cardWidth);
@@ -76,6 +81,7 @@ internal sealed class WeatherPage(IReadOnlyList<WeatherZone> zones, string? erro
                 ImGui.BeginTooltip();
                 ImGui.TextUnformatted($"{zone.Name} · {period.WeatherName}");
                 ImGui.TextUnformatted($"{from:yyyy-MM-dd HH:mm:ss zzz} → {to:yyyy-MM-dd HH:mm:ss zzz}");
+                if (special.Length > 0) ImGui.TextUnformatted("特殊触发天气：" + string.Join("、", special.Select(f => f.ShortName)));
                 ImGui.EndTooltip();
             }
         }

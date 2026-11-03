@@ -8,10 +8,13 @@ internal sealed class AutomationPage(IAutomationHelpers helpers, FateMapPage? ma
 {
     private string filter = "";
     private PlayerIdentity? selected;
+    public void Load(SettingsStore settings) => filter = settings.Get("automation.playerFilter", "");
+    public void Save(SettingsStore settings) => settings.Put("automation.playerFilter", filter);
 
     public void Draw()
     {
         var state = helpers.Snapshot;
+        LayoutSettings.RememberTable("##AutomationMapLayout");
         if (!ImGui.BeginTable("##AutomationMapLayout", 2, ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV)) return;
         try
         {
@@ -83,6 +86,7 @@ internal sealed class AutomationPage(IAutomationHelpers helpers, FateMapPage? ma
         }
         ImGui.Separator();
         ImGui.TextUnformatted("导航");
+        if (ImGui.Button("自动前往入口")) helpers.GoToEntrance();
         var owned = state.Mounts ?? [];
         ImGui.BeginDisabled(state.Navigating);
         ImGui.TextUnformatted("坐骑"); ImGui.SameLine(); ImGui.SetNextItemWidth(-1);

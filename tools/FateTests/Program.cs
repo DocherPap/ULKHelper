@@ -111,7 +111,10 @@ Check(until > available && WeatherForecastHelper.GetForecast(weather[0], until.V
 var detail = FateTiming.Describe(conditional, ledger2.Snapshot[1332], weather[0], now);
 Check(FateTiming.ForMarker(conditional, ledger2.Snapshot[1332], detail, now).Text == "刷新剩余", "已触发点位优先显示刷新倒计时");
 var notifications = new FateNotificationHelper(islands);
-Check(!notifications.Settings.Enabled && notifications.Settings.Channel == FateNotificationChannel.Echo && notifications.Settings.Template == "在<位置>发现<名字><se.1>", "默认默语、关闭通知并填入指定文本");
+Check(notifications.Settings.Enabled && notifications.Settings.Channel == FateNotificationChannel.Echo && notifications.Settings.Template == "在<位置>发现<名字><se.1>", "默认开启默语通知并填入指定文本");
+Check(!(FateNotificationSettings.Default with { Channel = FateNotificationChannel.Shout }).ChangeFrom(FateNotificationSettings.Default).Enabled, "切换通知频道自动关闭，避免直接向新频道发送");
+Check(FateNotificationSettings.Default.ChangeFrom(FateNotificationSettings.Default).Enabled, "未切换频道时保留通知开关");
+Check(!string.IsNullOrWhiteSpace(game.Excel.GetSheet<EObjName>()!.GetRow(2000151).Singular.ExtractText()), "传送碎晶名称基准核验本机EObjName表");
 var enabled = FateNotificationSettings.Default with { Enabled = true };
 notifications.Configure(enabled);
 notifications.Observe(732, [new(1332, now.AddMinutes(-2), now.AddMinutes(10), 10, FateActivity.Running)], now);

@@ -4,6 +4,7 @@ namespace ULKHelper.Automation;
 
 internal interface IIslandCrystalActions
 {
+    string? Error => null;
     bool Open(IslandCrystal source);
     IReadOnlySet<uint>? Choices();
     bool Select(IslandCrystal target);
@@ -14,6 +15,7 @@ internal sealed record IslandCrystal(uint Territory, uint PlaceNameId, Vector3 P
 internal sealed record CrystalRoute(IslandCrystal Source, IslandCrystal Target, float Cost);
 internal static class IslandCrystalRoutes
 {
+    public static IslandCrystal? Entrance(uint territory) => All.FirstOrDefault(p => p.Territory == territory);
     public static IslandCrystal? Nearest(uint territory, Vector3 player) => NavigationRules.Finite(player)
         ? All.Where(p => p.Territory == territory).OrderBy(p => NavigationRules.Distance(player, p.Position)).ThenBy(p => p.PlaceNameId).FirstOrDefault() : null;
     // X/Z reference positions: Lifestream CustomAethernet.cs, b36320170faafc8315f7585edb45cfbcd34e7046.

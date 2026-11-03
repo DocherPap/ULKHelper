@@ -21,11 +21,12 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     public bool Transferring => Active && phase == Phase.Transfer;
     public bool Interacting => Active && phase == Phase.Menu;
     public string Status { get; private set; } = "尚未开始导航。";
+    public string? CrystalDecision { get; private set; }
     public MapDestination? TakeArrival() { var result = arrival; arrival = null; return result; }
     public void Start(MapDestination destination, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool summonMount = false)
     {
         if (Active) { Status = "请先停止当前导航。"; return; }
-        Stop(); goal = destination; context = world; origin = player; started = now;
+        Stop(); CrystalDecision = null; goal = destination; context = world; origin = player; started = now;
         if (destination.Territory != world.Territory || destination.Map != world.Map || !NavigationRules.Finite(player))
         { Stop("目的地范围无效。"); return; }
         requireMount = summonMount; resumeFinal = false; mountAttempts = 0; nextMount = now;
@@ -36,11 +37,14 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     private void BeginJourney(Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now)
     {
         route = IslandCrystalRoutes.Choose(context.Territory, player, goal!.Position);
+        CrystalDecision = route == null ? "水晶路线预计收益不足，直接前往。" : $"选择岛内水晶路线：{route.Source.PlaceNameId} → {route.Target.PlaceNameId}。";
         if (route == null) Final(player, fates, now);
         else
         {
             phase = Phase.Source;
-            walk.Start(goal! with { Position = route.Source.Position }, context, player, [], now, false);
+            var sourceGoal = NavigationRules.Distance(player, route.Source.Position) <= 3 ? player
+                : ArrivalRules.Position(player, route.Source.Position, 2);
+            walk.Start(goal! with { Position = sourceGoal }, context, player, [], now, false, 1);
             if (!walk.Active)
             {
                 if (mesh.Ready && !mesh.Busy && mesh.Route.Count == 0) Fallback(player, fates, now);
@@ -88,7 +92,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
                 if (phase == Phase.Final) { var reached = goal; Stop("已到达目的地。"); arrival = reached; return; }
                 phase = Phase.Menu; phaseAt = now; dismounts = 0; nextDismount = now;
             }
-            if (now - phaseAt >= TimeSpan.FromSeconds(15)) { Fallback(player, fates, now); return; }
+            if (now - phaseAt >= TimeSpan.FromSeconds(15)) { Fallback(player, fates, now, "未在15秒内取得水晶传送菜单。"); return; }
             if (casting) return;
             if (mounted)
             {
@@ -103,21 +107,21 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
                 if (!opened)
                 {
                     opened = true;
-                    if (!crystals.Open(route!.Source)) Fallback(player, fates, now);
+                    if (!crystals.Open(route!.Source)) Fallback(player, fates, now, crystals.Error ?? "无法与源水晶交互。");
                 }
                 return;
             }
             var availableRoute = IslandCrystalRoutes.Choose(world.Territory, origin, goal!.Position, route!.Source, choices);
-            if (availableRoute == null) { Fallback(player, fates, now); return; }
+            if (availableRoute == null) { Fallback(player, fates, now, "菜单中无已解锁且有收益的目标水晶。"); return; }
             route = availableRoute;
-            if (!crystals.Select(route.Target)) { Fallback(player, fates, now); return; }
+            if (!crystals.Select(route.Target)) { Fallback(player, fates, now, "未能唯一匹配并选择传送菜单条目。"); return; }
             phase = Phase.Transfer; phaseAt = now; Status = "等待岛内水晶传送落地。";
         }
         catch (Exception ex) { Stop("岛内导航失败：" + ex.Message); }
     }
     private bool opened;
-    private void Fallback(Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now)
-    { crystals.Cancel(); PrepareFinal(player, fates, now); }
+    private void Fallback(Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, string reason = "源水晶路径不可达。")
+    { CrystalDecision = reason + "回退直接前往。"; crystals.Cancel(); PrepareFinal(player, fates, now); }
     private void PrepareFinal(Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now)
     {
         if (!requireMount) { Final(player, fates, now); return; }

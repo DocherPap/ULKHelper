@@ -12,7 +12,8 @@ internal enum FateNotificationChannel
 internal sealed record FateNotificationSettings(bool Enabled, FateNotificationChannel Channel, string Template)
 {
     public const string DefaultTemplate = "在<位置>发现<名字><se.1>";
-    public static FateNotificationSettings Default => new(false, FateNotificationChannel.Echo, DefaultTemplate);
+    public static FateNotificationSettings Default => new(true, FateNotificationChannel.Echo, DefaultTemplate);
+    public FateNotificationSettings ChangeFrom(FateNotificationSettings previous) => Channel == previous.Channel ? this : this with { Enabled = false };
 }
 internal sealed record FateNotification(FateDefinition Fate, Vector2 Position, DateTimeOffset DetectedAt);
 

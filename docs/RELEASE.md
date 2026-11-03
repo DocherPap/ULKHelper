@@ -1,4 +1,10 @@
-# 0.0.1 上传与发布
+# 0.1.0 上传与发布
+
+当前安装包为 `dist/v0.1.0/ULKHelper-0.1.0.0.zip`，同目录有SHA256、独立repo.json与可选MakoMaster合并库链。DLL和清单版本0.1.0.0，Release标签v0.1.0，下载目标DocherPap/ULKHelper。发布说明见release/NOTES-v0.1.0.md。已完成Debug/Release构建及ZIP内容检查，尚未上传。
+
+按用户要求先打包再继续调试：此包自动化第四页暂不可用，没有第五测试页。main保存发布快照；恢复自动化和后续单人测试工具只在codex/solo-debug-tests，不提交/合并main。不要用后续调试构建覆盖此发布ZIP或main库链。
+
+## 旧版0.0.1发布记录
 
 本次仅准备本地文件，不会上传 GitHub。显示版本为 **0.0.1**，Dalamud/DLL 四段版本为 **0.0.1.0**，API 15，Windows x64。
 

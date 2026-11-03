@@ -31,19 +31,26 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
     private DateTimeOffset nextUpdate, nextError;
     private volatile FateMapSnapshot snapshot = new(0, null, new Dictionary<ushort, FateRecord>(), "尚未进入优雷卡。");
     private bool disposed;
+    private readonly SettingsStore? settings;
     public IReadOnlyList<IslandMap> Islands { get; }
     public FateMapSnapshot Snapshot => snapshot;
 
     public FateMapTracker(IDataManager data, IFramework framework, IClientState client, IObjectTable objects,
-        IFateTable fates, IGameGui gui, IPluginLog log, ISigScanner scanner, IPlayerState playerState, IChatGui chat)
+        IFateTable fates, IGameGui gui, IPluginLog log, ISigScanner scanner, IPlayerState playerState, IChatGui chat, SettingsStore? settings = null)
     {
         this.framework = framework; this.client = client; this.objects = objects; this.fates = fates; this.gui = gui; this.log = log;
         this.playerState = playerState;
         this.chat = chat;
+        this.settings = settings;
+        requestedNotifications = settings?.Get("notifications", FateNotificationSettings.Default) ?? FateNotificationSettings.Default;
+        if (!FateNotificationText.Valid(requestedNotifications)) requestedNotifications = FateNotificationSettings.Default;
+        settings?.Put("notifications", requestedNotifications);
         try { Islands = FateCatalogLoader.Load(data.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>()!, data.GetExcelSheet<Lumina.Excel.Sheets.Fate>()!); }
         catch (Exception ex) { Islands = []; error = "地图点位数据加载失败，请查看日志并重新加载插件。"; log.Error(ex, "加载优雷卡 FATE 目录失败"); }
         ledger = new(Islands);
         notifications = new(Islands);
+        notifications.Configure(requestedNotifications); notifications.Reset();
+        snapshot = snapshot with { Notifications = requestedNotifications, NotificationStatus = notifications.Status };
         roomReader = new(scanner);
         http = new(new SocketsHttpHandler { AllowAutoRedirect = false, PooledConnectionLifetime = TimeSpan.FromMinutes(5) })
         { Timeout = TimeSpan.FromSeconds(15) };
@@ -66,7 +73,12 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
             ledger.Record(id, minutesAgo, DateTimeOffset.UtcNow);
     });
     public void ClearRecord(ushort id) => commands.Enqueue(() => ledger.Clear(id));
-    public void ConfigureNotifications(FateNotificationSettings settings) => requestedNotifications = settings;
+    public void ConfigureNotifications(FateNotificationSettings value)
+    {
+        value = value.ChangeFrom(requestedNotifications);
+        requestedNotifications = value;
+        settings?.Put("notifications", value); settings?.Flush();
+    }
 
     private void Update(IFramework frame)
     {

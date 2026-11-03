@@ -20,6 +20,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
     private DateTimeOffset started, departAt;
     private bool refined;
     private Vector3 target;
+    private float arrivalRadius = 3;
     private List<Vector3> issued = [];
     private CancellationTokenSource? cancellation;
     private Task<List<Vector3>>? path;
@@ -30,7 +31,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
 
     public MapDestination? TakeArrival() { var value = arrival; arrival = null; return value; }
 
-    public void Start(MapDestination goal, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool waitWithoutFate = true)
+    public void Start(MapDestination goal, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool waitWithoutFate = true, float arrivalRadius = 3)
     {
         if (Active) { Status = "请先停止当前导航。"; return; }
         if (goal.Territory != world.Territory || goal.Map != world.Map) { Status = "目的地不在当前地图。"; return; }
@@ -40,6 +41,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
             if (!mesh.Ready) { Status = "vnavmesh 未加载或当前地图网格未就绪。"; return; }
             if (mesh.Busy || mesh.Route.Count > 0) { Status = "vnavmesh 正被其他任务使用。"; return; }
             destination = goal;
+            this.arrivalRadius = Math.Clamp(arrivalRadius, .5f, 3);
             context = world;
             started = now;
             refined = false;
@@ -98,7 +100,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
                     return;
                 }
             }
-            if (NavigationRules.Distance(player, target) <= 3 && Math.Abs(player.Y - target.Y) <= 5)
+            if (NavigationRules.Distance(player, target) <= arrivalRadius && Math.Abs(player.Y - target.Y) <= 5)
             { Finish("已到达目的地。"); return; }
             if (issued.Count > 0 && route.Count == 0) { Stop("移动已结束，尚未到达目的地。"); return; }
             if (issued.Count == 0 && path == null) RequestPath(player, destination!.Position == target);

@@ -18,4 +18,6 @@ internal interface IAutomationHelpers
     void RefreshPlayers() { }
     void SelectMount(uint id) { }
     void Follow(bool enabled) { }
+    void NavigateTo(MapDestination destination) { }
+    void GoToEntrance() { }
 }

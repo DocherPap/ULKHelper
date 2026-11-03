@@ -303,7 +303,7 @@ sequence.Follow.Receive(nextGoal);
 sequence.Follow.Tick(sequence.Frame with { Mounted = false, InCombat = true }, false, [], new(sequence.Fate), now.AddSeconds(6));
 Check(sequence.Follow.Goal == sequence.Goal && !sequence.Travel.Active, "战斗中的新坐标只缓存，不转向或寻路");
 sequence.Follow.Tick(sequence.Frame with { Mounted = false }, false, [], new(null, true), now.AddSeconds(7));
-Check(!sequence.Combat.Enabled && sequence.Combat.Disables == 1 && sequence.Mount.Mounts == 1, "事件结束先关闭自己开启的战斗控制");
+Check(!sequence.Combat.Enabled && sequence.Combat.Disables == 1 && sequence.Mount.Mounts == 2, "事件结束同一帧关闭自己控制并立即尝试上坐骑");
 sequence.Follow.Tick(sequence.Frame with { Mounted = false }, false, [], new(null, true), now.AddSeconds(8));
 Check(sequence.Mount.Mounts == 2, "脱战后立即尝试召唤所选坐骑");
 sequence.Follow.Tick(sequence.Frame, false, [], new(null), now.AddSeconds(9));
@@ -421,6 +421,21 @@ var activityListener = new LeaderListenerHelper();
 activityListener.RecordActivity(now,"小怪击杀","仙人掌 · 仙人花 +2","本轮累计2只");
 Check(activityListener.History.Single().Channel == "小怪击杀" && activityListener.History.Single().Text.Contains("+2"),
     "小怪击杀可记录到车头历史中，不要求收到聊天消息");
+using var noApproach = new FollowFixture(); noApproach.Arrive(now);
+var beforeRequests = noApproach.Mesh.PathRequests;
+noApproach.Follow.Tick(noApproach.Frame with { Mounted = false }, false, [], new(noApproach.Fate with { Centre = new(100,0,0) }), now.AddSeconds(3));
+Check(noApproach.Combat.Enabled && noApproach.Mesh.PathRequests == beforeRequests, "开怪后只启用循环和AI，不另设15或25米移动目的地");
+Check(new uint[] {732,763,795,827}.Select(t => IslandCrystalRoutes.Entrance(t)?.PlaceNameId).SequenceEqual(new uint?[] {2415,2463,2531,2876}), "四岛入口使用已核实营地水晶，不混用兵武塔入口");
+mesh = new(); crystalActions = new() { Available = new HashSet<uint> { targetCrystal.PlaceNameId } };
+using var closeCrystal = new IslandTravelHelper(mesh,crystalActions,new FakeArrivalActions());
+var farFromCrystal = sourceCrystal.Position + new Vector3(50,0,0);
+closeCrystal.Start(crystalGoal,crystalWorld,farFromCrystal,[],now);
+closeCrystal.Tick(crystalWorld,farFromCrystal,true,false,false,false,[],now);
+mesh.Complete(); closeCrystal.Tick(crystalWorld,farFromCrystal,true,false,false,false,[],now.AddSeconds(1));
+closeCrystal.Tick(crystalWorld,sourceCrystal.Position+new Vector3(5,0,0),true,false,false,false,[],now.AddSeconds(2));
+Check(crystalActions.Opens == 0, "前往水晶不能以普通3米到达容差过早结束");
+closeCrystal.Tick(crystalWorld,sourceCrystal.Position+new Vector3(2,0,0),true,false,false,false,[],now.AddSeconds(3));
+Check(crystalActions.Opens == 1, "到源水晶2米接近点后才打开传送菜单");
 Console.WriteLine($"{count} automation checks passed.");
 
 sealed class FollowFixture : IDisposable

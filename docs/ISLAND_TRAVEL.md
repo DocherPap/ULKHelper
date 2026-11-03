@@ -4,6 +4,18 @@
 
 ## 水晶路线
 
+### 最新修正与入口导航（2026-11-03）
+
+重新核对Lifestream main的CustomAethernet：四岛均明确支持；不是“不支持优雷卡”。本插件继续使用自己的目标/交互/菜单，无需安装Lifestream。其Utils.IsAetheryte除普通Aetheryte外还识别EObj传送碎晶；此前本插件仅判断ObjectKind.Aetheryte，可能漏掉这些对象。现按本机EObjName基准2000151及Lifestream同义碎晶基准（只使用本机存在且名称非空的行）的精确中文名称解析碎晶BaseId集合，再结合EventObj类型、当前源点参考位置及5米实际交互距离识别，不盲选其他对象。该基准本机表已验证，真实场景仍需确认。
+
+源水晶改走面向玩家的2米接近点，并使用1米到达容差，避免普通3米到达容差使交互过早。已在源点3米内则保持当前位置交互。菜单超时、未加载/超距、目标不在可用菜单、源点不可达等回退原因写入日志；路线仍仅在有明显预计收益时使用，短途不强制传送。
+
+地图选中当前岛FATE后“自动前往”只移动，采用既有25/30米NM接近规则，不启用循环/AI；“自动前往入口营地”和 `/ulk entrance` 使用四岛入场水晶PlaceName 2415/2463/2531/2876附近7米点，非兵武塔入口，不离开副本。可选坐骑、传送规划、5分钟时限及停止/切区/死亡约束继续生效；没有选定坐骑时允许步行。`/ulk stop` 或地图停止按钮可取消，只停止本插件路线。自动化页暂时置灰时以上入口仍可使用，不需要RSR/BossMod。
+
+最新模拟验证：源水晶接近容差、四岛入口映射及开怪后不追加站位寻路合计150项自动化检查通过；真实传送/对象类型/菜单交互尚未游戏内验证。
+
+核对来源：[CustomAethernet](https://github.com/NightmareXIV/Lifestream/blob/main/Lifestream/Systems/Custom/CustomAethernet.cs)、[Utils](https://github.com/NightmareXIV/Lifestream/blob/main/Lifestream/Utils.cs)、[传送任务](https://github.com/NightmareXIV/Lifestream/blob/main/Lifestream/Tasks/SameWorld/TaskAethernetTeleport.cs)。
+
 `IslandCrystalRoutes` 保存四岛14个水晶（3/4/4/3）的真实PlaceName ID及参考世界X/Z。数据参考 [Lifestream CustomAethernet](https://github.com/NightmareXIV/Lifestream/blob/b36320170faafc8315f7585edb45cfbcd34e7046/Lifestream/Systems/Custom/CustomAethernet.cs)，14个ID均已读取本机2026.10.06游戏表核对中文名称。高度不猜测，由现有vnavmesh地面接口解析；实际对象在交互前必须已加载并在玩家5米内、参考点10米内。
 
 `Choose` 比较直走水平距离与“到源水晶+120米等效传送开销+目标水晶到目的地”的估算成本，额外节省超过150米才选择。此为保守启发式，不是精确时间或完整地形最短路；尤其恒冰悬崖/楼层需游戏内验证。实际移动仍需完整路径与正确高度校验，源水晶不可达时，在没有其他导航占用的情况下回退原目标直走。

@@ -29,6 +29,20 @@ internal sealed class ItemStatisticsPage
         showExamples = statistics == null;
         RebuildPreview();
     }
+    public void Load(SettingsStore settings)
+    {
+        byJob = settings.Get("statistics.byJob", false); overall = settings.Get("statistics.overall", false);
+        var jobs = settings.Get("statistics.jobs", selectedJobs);
+        var categories = settings.Get("statistics.categories", selectedCategories);
+        Array.Copy(jobs, selectedJobs, Math.Min(jobs.Length, selectedJobs.Length));
+        Array.Copy(categories, selectedCategories, Math.Min(categories.Length, selectedCategories.Length));
+        RebuildPreview();
+    }
+    public void Save(SettingsStore settings)
+    {
+        settings.Put("statistics.byJob", byJob); settings.Put("statistics.overall", overall);
+        settings.Put("statistics.jobs", selectedJobs); settings.Put("statistics.categories", selectedCategories);
+    }
 
     public void Draw()
     {
@@ -38,6 +52,7 @@ internal sealed class ItemStatisticsPage
             RebuildPreview();
         }
         // Initial weights; ImGui retains widths adjusted by dragging the column borders.
+        LayoutSettings.RememberTable("##StatisticsLayoutWideMaterials");
         if (!ImGui.BeginTable("##StatisticsLayoutWideMaterials", 3,
                 ImGuiTableFlags.Resizable | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.BordersInnerV)) return;
         try
@@ -185,12 +200,12 @@ internal sealed class ItemStatisticsPage
 
     private static void DrawLegend()
     {
-        ImGui.TextColored(BrightGreen, "● 实际拥有");
-        ImGui.SameLine();
-        ImGui.TextColored(PaleGreen, "● 前置阶段");
-        if (ImGui.GetContentRegionAvail().X >= ImGui.GetFontSize() * 9)
-            ImGui.SameLine();
-        ImGui.TextColored(Muted, "○ 未拥有");
+        ImGui.TextWrapped("亮色：实际拥有　浅色：前置阶段　空心：未拥有");
+        foreach (var entry in new[] { ("常风", "常风水晶"), ("恒冰", "恒冰水晶"), ("涌火", "涌火水晶"), ("丰水", "丰水水晶"), ("改", "优雷卡的断片") })
+        {
+            if (entry.Item1 != "常风") ImGui.SameLine();
+            ImGui.TextColored(StatisticsPalette.Material(entry.Item2).Bright, entry.Item1);
+        }
     }
 
     private void DrawJobEquipment(EquipmentCard[] cards)
@@ -277,7 +292,8 @@ internal sealed class ItemStatisticsPage
         {
             var radius = radii[i] * fit;
             var center = new Vector2(x + radius, origin.Y + size.Y - 8 * fontScale);
-            var color = owned.Contains(i) ? BrightGreen : i <= latest ? PaleGreen : Muted;
+            var palette = StatisticsPalette.Stage(card, i);
+            var color = owned.Contains(i) ? palette.Bright : i <= latest ? palette.Pale : Muted;
             if (i <= latest) draw.AddCircleFilled(center, radius, Color(color));
             else draw.AddCircle(center, radius, Color(color));
             x += radius * 2 + gap * fit;
@@ -297,7 +313,8 @@ internal sealed class ItemStatisticsPage
             for (var i = 0; i < card.Stages.Length; i++)
             {
                 var stage = card.Stages[i];
-                var color = owned.Contains(i) ? BrightGreen : i <= latest ? PaleGreen : Muted;
+                var palette = StatisticsPalette.Stage(card, i);
+                var color = owned.Contains(i) ? palette.Bright : i <= latest ? palette.Pale : Muted;
                 var state = !HasOwnership ? "未获取" : owned.Contains(i) ? "拥有" : i <= latest ? "已完成" : "未在已获取库存中找到";
                 ImGui.TextColored(color, $"{(stage.Major ? "●" : "·")} {stage.Name} · {state}");
             }
@@ -372,6 +389,7 @@ internal sealed class ItemStatisticsPage
         ImGui.InvisibleButton(value.Material.Name, size);
         var hovered = ImGui.IsItemHovered();
         DrawCardBackground(origin, size, hovered);
+        var palette = StatisticsPalette.Material(value.Material.Name);
         var numerator = overall ? value.Owned + value.Spent : value.Owned;
         var denominator = overall ? value.Total : value.Remaining;
         var fraction = !HasOwnership ? 0 : denominator == 0 ? 1 : Math.Clamp((float)numerator / denominator, 0, 1);
@@ -388,12 +406,12 @@ internal sealed class ItemStatisticsPage
             if (ImGui.CalcTextSize(numbers).X * cardScale > side - 10)
                 numbers = $"{ownedText} /\n{denominator:N0}";
             DrawCenteredText(numbers, origin + new Vector2(5, height * .47f + 2),
-                new Vector2(side - 10, height * .53f - font * .65f - 2), PaleGreen, cardScale);
+                new Vector2(side - 10, height * .53f - font * .65f - 2), palette.Pale, cardScale);
             var barStart = origin + new Vector2(7, height - font * .45f);
             var barEnd = origin + new Vector2(side - 7, height - font * .20f);
-            draw.AddRectFilled(barStart, barEnd, Color(PaleGreen with { W = .30f }), 3);
+            draw.AddRectFilled(barStart, barEnd, Color(palette.Pale with { W = .30f }), 3);
             if (fraction > 0)
-                draw.AddRectFilled(barStart, new Vector2(barStart.X + (barEnd.X - barStart.X) * fraction, barEnd.Y), Color(BrightGreen), 3);
+                draw.AddRectFilled(barStart, new Vector2(barStart.X + (barEnd.X - barStart.X) * fraction, barEnd.Y), Color(palette.Bright), 3);
         }
         finally { draw.PopClipRect(); }
         if (hovered) DrawMaterialTooltip(value);
@@ -416,7 +434,7 @@ internal sealed class ItemStatisticsPage
             if (value.Material.ExchangeMaterial is not { } exchange) return;
             ImGui.Separator();
             var required = (int)Math.Ceiling(value.Deficit * value.Material.ExchangeCost);
-            ImGui.TextColored(PaleGreen, $"兑换缺口需{(value.Material.Approximate ? "约 " : " ")}{required:N0} 个{exchange}");
+            ImGui.TextColored(StatisticsPalette.Material(value.Material.Name).Pale, $"兑换缺口需{(value.Material.Approximate ? "约 " : " ")}{required:N0} 个{exchange}");
             ImGui.TextDisabled(value.Material.Approximate
                 ? "按 1 常风水晶 ≈ 3.5 乱属性水晶估算，向上取整。"
                 : $"每个{value.Material.Name}需 {value.Material.ExchangeCost:0} 个{exchange}。");

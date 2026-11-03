@@ -9,12 +9,18 @@ using ULKHelper.Inventory;
 using ULKHelper.Automation;
 using ULKHelper.Weather;
 using ULKHelper.Fates;
+using LayoutSettings = ULKHelper.Windows.LayoutSettings;
 
 // Renders the actual page with the installed ImGui library, without a game process.
 unsafe class Program
 {
     static void Main(string[] args)
     {
+        if (args.Contains("--imgui-api"))
+        {
+            foreach (var method in typeof(ImGui).GetMethods().Where(m => m.Name.Contains("IniSettings") || m.Name.Contains("TableGetColumnWidth"))) Console.WriteLine(method);
+            return;
+        }
         ImGui.CreateContext();
         var io = ImGui.GetIO();
         io.IniFilename = null;
@@ -68,7 +74,7 @@ unsafe class Program
                     textures.Add(new(bytes, tex.Header.Width, tex.Header.Height));
                     textureSource.Handles[map.TexturePath] = new ImTextureID((ulong)textures.Count);
                 }
-                fateMapPage = new(new MapFixtureProvider(maps), textureSource, weatherZones);
+                fateMapPage = new(new MapFixtureProvider(maps), textureSource, weatherZones, automationFixture);
                 SetField(fateMapPage, "follow", false);
                 if (args.Contains("--pagos")) SetField(fateMapPage, "islandIndex", 1);
                 if (args.Contains("--pyros")) SetField(fateMapPage, "islandIndex", 2);
@@ -110,6 +116,24 @@ unsafe class Program
         ValidateCatalog();
         for (var frame = 0; frame < 8; frame++)
         {
+            if (args.Contains("--settings-roundtrip"))
+            {
+                io.AddMousePosEvent(frame >= 4 ? 280 : 236, 350);
+                if (frame == 3) io.AddMouseButtonEvent(0, true);
+                if (frame == 5) io.AddMouseButtonEvent(0, false);
+            }
+            if (args.Contains("--click-fate-go") || args.Contains("--click-entrance"))
+            {
+                io.AddMousePosEvent(args.Contains("--click-entrance") ? 70 : 878, args.Contains("--click-entrance") ? 166 : 285);
+                if (frame == 3) io.AddMouseButtonEvent(0, true);
+                if (frame == 4) io.AddMouseButtonEvent(0, false);
+            }
+            if (args.Contains("--click-target-leader") || args.Contains("--open-history"))
+            {
+                io.AddMousePosEvent(io.DisplaySize.X * .65f, args.Contains("--open-history") ? 469 : 233);
+                if (frame == 3) io.AddMouseButtonEvent(0, true);
+                if (frame == 4) io.AddMouseButtonEvent(0, false);
+            }
             if (args.Contains("--click-job")) io.AddMousePosEvent(20, 124);
             if (args.Contains("--click-follow") || args.Contains("--open-mount"))
             {
@@ -181,19 +205,37 @@ unsafe class Program
                     ImGui.EndTabItem();
                 }
                 ImGui.SetNextItemWidth(tabWidth);
-                if (ImGui.BeginTabItem("自动化", args.Contains("--automation") ? ImGuiTabItemFlags.SetSelected : 0))
+                ImGui.BeginDisabled(!args.Contains("--automation"));
+                if (ImGui.BeginTabItem(args.Contains("--automation") ? "自动化" : "自动化（暂不可用）", args.Contains("--automation") ? ImGuiTabItemFlags.SetSelected : 0))
                 {
                     if (ImGui.BeginChild("##AutomationPageContent", Vector2.Zero)) automation.Draw();
                     ImGui.EndChild();
                     ImGui.EndTabItem();
                 }
+                ImGui.EndDisabled();
                 ImGui.EndTabBar();
             }
             ImGui.End();
             ImGui.Render();
         }
         if (args.Contains("--click-job") && !(bool)GetField(page, "byJob")) throw new Exception("Job radio input failed");
+        if (args.Contains("--click-fate-go") && automationFixture.PointGoal?.Territory != 732) throw new Exception("FATE travel button input failed");
+        if (args.Contains("--click-entrance") && !automationFixture.EntranceRequested) throw new Exception("Entrance travel button input failed");
+        if (args.Contains("--settings-roundtrip"))
+        {
+            var settingsPath = Path.GetFullPath("artifacts/ui/preview-settings.json");
+            var settings = new ULKHelper.SettingsStore(settingsPath);
+            page.Save(settings); weatherPage.Save(settings); fateMapPage?.Save(settings, "map"); LayoutSettings.Capture(settings); settings.Flush(true);
+            var reloaded = new ULKHelper.SettingsStore(settingsPath);
+            var reloadedPage = new ItemStatisticsPage(); reloadedPage.Load(reloaded);
+            if ((bool)GetField(page,"byJob") != (bool)GetField(reloadedPage,"byJob") || !((bool[])GetField(page,"selectedJobs")).SequenceEqual((bool[])GetField(reloadedPage,"selectedJobs"))) throw new Exception("Page preferences roundtrip failed");
+            if (!reloaded.Get("layout.tables", "").Contains("[Table]"))
+            { File.WriteAllText("artifacts/ui/preview-layout.ini", ImGui.SaveIniSettingsToMemory()); throw new Exception("Own table layout persistence failed"); }
+            LayoutSettings.Restore(reloaded);
+            Console.WriteLine("Page preferences and own table layout JSON roundtrip passed.");
+        }
         if (args.Contains("--click-follow") && !automationFixture.Snapshot.Following) throw new Exception("Follow button input failed");
+        if (args.Contains("--click-target-leader") && automationFixture.Snapshot.Leader?.Name != "当前目标示例") throw new Exception("Current target leader button input failed");
         if (args.Contains("--add-trigger") && !((TriggerSelection)GetField(fateMapPage!, "triggerSelection")).Ids.Contains((ushort)1332)) throw new Exception("Trigger plan add input failed");
         if (args.Contains("--automation-map-click") && (ushort)GetField(fateMapPage!, "selected") != 1332) throw new Exception("Embedded map marker input failed");
         if (args.Contains("--click-filter") && ((bool[])GetField(page, "selectedJobs"))[0]) throw new Exception("Job checkbox input failed");
@@ -242,6 +284,10 @@ unsafe class Program
 
     sealed class AutomationFixture : IAutomationHelpers
     {
+        public MapDestination? PointGoal;
+        public bool EntranceRequested;
+        public void NavigateTo(MapDestination destination) => PointGoal = destination;
+        public void GoToEntrance() => EntranceRequested = true;
         public AutomationSnapshot Snapshot { get; private set; } = new(
             Enumerable.Range(0, 30).Select(i => new PlayerEntry(new($"示例玩家{i + 1:00}", 100), "示例服务器", new(i, 0, 0), i * 12)).ToArray(),
             new("示例玩家02", 100), true, "已在地图标记目的地。", new(1, 2, new(200, 0, 0), "禁地优雷卡 常风之地 ( 25.0, 30.0 )"),
@@ -251,6 +297,7 @@ unsafe class Program
             [new(1, "陆行鸟"), new(5, "独角兽"), new(99, "示例不可移动坐骑", true)], 1,
             KillCounts: [new(1332,"仙人掌","仙人花",12),new(1348,"章鱼","海祭司",3)]);
         public void SelectLeader(PlayerIdentity identity) { }
+        public void SelectCurrentTargetAsLeader() => Snapshot = Snapshot with { Leader = new("当前目标示例", 100) };
         public void Listen(bool enabled) { }
         public void Navigate() { }
         public void Stop() { }

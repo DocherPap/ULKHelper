@@ -14,17 +14,27 @@ internal sealed class MainWindow : Window
     private readonly AutomationPage automation;
     private readonly WeatherPage weather;
     private readonly FateMapPage fateMap;
+    private readonly FateMapPage triggerMap;
+    private readonly SettingsStore? settings;
+    private bool firstDraw = true;
+    private int selectedTab;
+    private DateTimeOffset nextLayout;
 
     public MainWindow(IStatisticsProvider statistics, AutomationHelpers helpers, IReadOnlyList<WeatherZone> weatherZones,
         IFateMapProvider fateProvider, IMapTextures mapTextures,
-        string? weatherError = null) : base("优雷卡助手###ULKHelper.Main")
+        string? weatherError = null, SettingsStore? settings = null) : base("优雷卡助手###ULKHelper.Main")
     {
         itemStatistics = new(statistics);
-        automation = new(helpers, new FateMapPage(fateProvider, mapTextures, weatherZones));
+        triggerMap = new(fateProvider, mapTextures, weatherZones, helpers);
+        automation = new(helpers, triggerMap);
         weather = new(weatherZones, weatherError);
-        fateMap = new(fateProvider, mapTextures, weatherZones);
-        Size = new Vector2(1280, 780);
-        SizeCondition = ImGuiCond.FirstUseEver;
+        fateMap = new(fateProvider, mapTextures, weatherZones, helpers);
+        this.settings = settings;
+        selectedTab = Math.Clamp(settings?.Get("window.tab", 0) ?? 0, 0, 2);
+        if (settings != null) { itemStatistics.Load(settings); weather.Load(settings); fateMap.Load(settings, "map"); triggerMap.Load(settings, "triggerMap"); automation.Load(settings); }
+        Size = settings?.Get("window.size", new Vector2(1280, 780)) ?? new Vector2(1280, 780);
+        SizeCondition = ImGuiCond.Once;
+        if (settings != null) { Position = settings.Get("window.position", new Vector2(80, 80)); PositionCondition = ImGuiCond.Once; }
         SizeConstraints = new WindowSizeConstraints
         {
             MinimumSize = new Vector2(1000, 520),
@@ -36,39 +46,57 @@ internal sealed class MainWindow : Window
 
     public override void Draw()
     {
+        if (firstDraw && settings != null) LayoutSettings.Restore(settings);
+        var restoreTab = selectedTab;
         var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 3) / 4;
         if (!ImGui.BeginTabBar("##MainPages", ImGuiTabBarFlags.FittingPolicyResizeDown)) return;
         try
         {
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("物品统计"))
+            if (ImGui.BeginTabItem("物品统计", firstDraw && restoreTab == 0 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
+                selectedTab = 0;
                 try { DrawPage(DrawItemStatisticsPage); }
                 finally { ImGui.EndTabItem(); }
             }
 
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("天气预报"))
+            if (ImGui.BeginTabItem("天气预报", firstDraw && restoreTab == 1 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
+                selectedTab = 1;
                 try { DrawPage(weather.Draw); }
                 finally { ImGui.EndTabItem(); }
             }
 
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("地图 / FATE"))
+            if (ImGui.BeginTabItem("地图 / FATE", firstDraw && restoreTab == 2 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
+                selectedTab = 2;
                 try { DrawPage(fateMap.Draw); }
                 finally { ImGui.EndTabItem(); }
             }
 
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("自动化"))
+            ImGui.BeginDisabled();
+            if (ImGui.BeginTabItem("自动化（暂不可用）"))
             {
-                try { DrawPage(DrawAutomationPage); }
+                try { DrawPage(() => ImGui.TextUnformatted("自动化暂不可用。")); }
                 finally { ImGui.EndTabItem(); }
             }
+            ImGui.EndDisabled();
         }
-        finally { ImGui.EndTabBar(); }
+        finally
+        {
+            ImGui.EndTabBar();
+            firstDraw = false;
+            if (settings != null)
+            {
+                itemStatistics.Save(settings); weather.Save(settings); fateMap.Save(settings, "map"); triggerMap.Save(settings, "triggerMap"); automation.Save(settings);
+                settings.Put("window.size", ImGui.GetWindowSize()); settings.Put("window.position", ImGui.GetWindowPos()); settings.Put("window.tab", selectedTab);
+                if (DateTimeOffset.UtcNow >= nextLayout || ImGui.IsMouseReleased(ImGuiMouseButton.Left)) { LayoutSettings.Capture(settings); nextLayout = DateTimeOffset.UtcNow.AddSeconds(1); }
+                settings.Flush();
+            }
+        }
     }
 
     private static void DrawPage(Action drawContent)

@@ -25,6 +25,9 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
     private readonly IGameGui gui;
     private readonly IPluginLog log;
     private readonly ITargetManager targets;
+    private readonly SettingsStore? settings;
+    private bool pointNm;
+    private string? reportedCrystalDecision;
     private readonly ConcurrentQueue<Action> commands = new();
     private readonly LeaderListenerHelper listener = new();
     private readonly IslandTravelHelper navigation;
@@ -48,12 +51,13 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
 
     public AutomationHelpers(IDalamudPluginInterface plugin, IFramework framework, IClientState client,
         IObjectTable objects, IFateTable fates, ICondition conditions, IChatGui chat, IGameGui gui, IPluginLog log, IPartyList party,
-        IDataManager data, IGameInteropProvider interop, IPlayerState playerState, ICommandManager commandManager, ITargetManager targets)
+        IDataManager data, IGameInteropProvider interop, IPlayerState playerState, ICommandManager commandManager, ITargetManager targets, SettingsStore? settings = null)
     {
         this.framework = framework; this.client = client; this.objects = objects; this.fates = fates;
         this.conditions = conditions; this.chat = chat; this.gui = gui; this.log = log;
         this.playerState = playerState;
         this.targets = targets;
+        this.settings = settings;
         var mesh = new VnavmeshAdapter(plugin);
         mounts = new(objects, data);
         arrivalGame = new(objects, party, fates, mounts);
@@ -68,15 +72,35 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
     }
 
     public AutomationSnapshot Snapshot => snapshot;
-    public void SelectLeader(PlayerIdentity identity) => commands.Enqueue(() => { follow.Stop("车头已更换。"); listener.Select(identity); });
+    public void SelectLeader(PlayerIdentity identity) => commands.Enqueue(() => SetLeader(identity));
+    private void SetLeader(PlayerIdentity identity)
+    {
+        follow.Stop("车头已更换。"); listener.Select(identity);
+        if (playerState.ContentId != 0) { settings?.Put("leader." + playerState.ContentId, identity); settings?.Flush(); }
+    }
     public void SelectCurrentTargetAsLeader() => commands.Enqueue(() =>
     {
         if (targets.Target is not Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player || player.HomeWorld.RowId == 0) return;
-        follow.Stop("车头已更换。"); listener.Select(new(player.Name.TextValue, player.HomeWorld.RowId));
+        SetLeader(new(player.Name.TextValue, player.HomeWorld.RowId));
     });
     public void Listen(bool enabled) => commands.Enqueue(() => { if (!enabled) follow.Stop("监听已停止。"); listener.SetListening(enabled); });
     public void RefreshPlayers() => commands.Enqueue(roster.Refresh);
-    public void SelectMount(uint id) => commands.Enqueue(() => { if (!follow.Active) mounts.Select(id); });
+    public void SelectMount(uint id) => commands.Enqueue(() => { if (!follow.Active) { mounts.Select(id); settings?.Put("mount", mounts.Selected); settings?.Flush(); } });
+    public void NavigateTo(MapDestination destination) => commands.Enqueue(() => StartPointNavigation(destination));
+    public void GoToEntrance() => commands.Enqueue(() =>
+    {
+        var crystal = IslandCrystalRoutes.Entrance(client.TerritoryType);
+        if (crystal != null && objects.LocalPlayer is { } player)
+            StartPointNavigation(new(client.TerritoryType, client.MapId, ArrivalRules.Position(player.Position, crystal.Position, 7), "当前岛入口营地"), false);
+        else { usingFollow = false; navigation.Stop("请先进入优雷卡岛内。"); }
+    });
+    private void StartPointNavigation(MapDestination destination, bool useNm = true)
+    {
+        follow.Stop(); navigation.Stop(); arrivalGame.Reset(); usingFollow = false;
+        if (!CanMove()) { navigation.Stop("当前角色状态不允许移动，请脱战并结束交互后重试。"); return; }
+        pointNm = useNm;
+        navigation.Start(destination, Context(), objects.LocalPlayer!.Position, useNm ? ReadFates() : [], DateTimeOffset.UtcNow, mounts.Selected != 0);
+    }
     public void Follow(bool enabled) => commands.Enqueue(() =>
     {
         if (!enabled) { follow.Stop(); listener.SetListening(false); return; }
@@ -117,6 +141,7 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
         try
         {
             var now = DateTimeOffset.UtcNow;
+            settings?.Flush();
             var world = Context();
             var transferScreen = conditions[ConditionFlag.BetweenAreas] || conditions[ConditionFlag.BetweenAreas51] || objects.LocalPlayer == null;
             world = NavigationRules.TransferContext(world, previous, client.IsLoggedIn, navigation.Transferring, transferScreen);
@@ -129,12 +154,14 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
                 mounts.Reset(); nextMounts = default;
                 while (commands.TryDequeue(out var ignored)) { }
                 previous = world; nextPlayers = default;
+                var savedLeader = settings?.Get<PlayerIdentity?>("leader." + world.PlayerId, null);
+                if (world.PlayerId != 0 && savedLeader != null) listener.Select(savedLeader);
             }
             while (commands.TryDequeue(out var command)) command();
             if (!follow.Active && combat.CleanupPending && now >= nextCleanup)
             { nextCleanup = now.AddSeconds(1); combat.Disable(); }
             if (SafeState() && playerState.ContentId != 0 && now >= nextMounts)
-            { mounts.Refresh(); nextMounts = now.AddSeconds(30); }
+            { var restoreMount = mounts.Selected == 0; mounts.Refresh(); if (restoreMount) mounts.Select(settings?.Get("mount", 0u) ?? 0); if (mounts.Selected != 0) settings?.Put("mount", mounts.Selected); nextMounts = now.AddSeconds(30); }
             roster.Tick(client.TerritoryType, SafeState(), now);
             if (client.IsLoggedIn && objects.LocalPlayer != null && !transferScreen && now >= nextKills)
             {
@@ -159,9 +186,17 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
                     transferScreen && client.IsLoggedIn && local?.IsDead != true && !conditions[ConditionFlag.InCombat]
                         && !conditions[ConditionFlag.WatchingCutscene], ReadFates(), observation, now);
             }
+            else if (!follow.Active && navigation.Active)
+                navigation.Tick(world, objects.LocalPlayer?.Position ?? Vector3.Zero, CanMove() || navigation.Interacting && SafeState(true),
+                    transferScreen, conditions[ConditionFlag.Mounted], objects.LocalPlayer?.IsCasting ?? false, pointNm ? ReadFates() : [], now);
             snapshot = new(players, listener.Leader, listener.Listening, listener.Status, listener.Destination,
-                listener.History, follow.Active, usingFollow ? follow.Status : navigation.Status, roster.Snapshot,
+                listener.History, follow.Active || navigation.Active, usingFollow ? follow.Status : navigation.Status, roster.Snapshot,
                 mounts.Owned, mounts.Selected, follow.Following, combat.CleanupPending && !follow.Active ? "等待恢复战斗插件状态。" : follow.Status, kills.Snapshot);
+            if (navigation.CrystalDecision != reportedCrystalDecision)
+            {
+                reportedCrystalDecision = navigation.CrystalDecision;
+                if (reportedCrystalDecision != null) log.Information("岛内水晶导航：{Decision}", reportedCrystalDecision);
+            }
         }
         catch (Exception ex)
         {

@@ -16,11 +16,11 @@
       "eureka",
       "优雷卡"
     ],
-    "IsTestingExclusive": false,
+    "LastUpdate": 1793682920,
     "DownloadLinkUpdate": "https://github.com/DocherPap/ULKHelper/releases/download/v0.0.1/ULKHelper-0.0.1.0.zip",
-    "IsHide": false,
     "DownloadLinkInstall": "https://github.com/DocherPap/ULKHelper/releases/download/v0.0.1/ULKHelper-0.0.1.0.zip",
-    "LastUpdate": 1793682693,
+    "IsHide": false,
+    "IsTestingExclusive": false,
     "RepoUrl": "https://github.com/DocherPap/ULKHelper"
   }
 ]

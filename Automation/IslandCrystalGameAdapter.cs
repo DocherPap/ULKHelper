@@ -25,7 +25,8 @@ internal sealed unsafe class IslandCrystalGameAdapter(IObjectTable objects, IGam
         if (shardIds == null)
         {
             var names = new HashSet<string>();
-            foreach (var id in new uint[] { 2000151, 2014665, 2014664, 2003395, 2011160 })
+            // 2009421: live CN Anemos report, 2026-11-03, EventObj "岛内以太之光", 1.6m, targetable.
+            foreach (var id in new uint[] { 2000151, 2014665, 2014664, 2003395, 2011160, 2009421 })
                 if (rows.TryGetRow(id, out var row) && row.Singular.ExtractText() is { Length: > 0 } name) names.Add(name);
             shardIds = rows.Where(r => names.Contains(r.Singular.ExtractText())).Select(r => r.RowId).ToHashSet();
         }
@@ -44,10 +45,17 @@ internal sealed unsafe class IslandCrystalGameAdapter(IObjectTable objects, IGam
         if (Menu() != null || objects.LocalPlayer is not { } player) return Fail("已有菜单或玩家尚未加载。");
         if (new[] { "SelectYesno", "Talk", "SelectIconString", "TelepotTown" }.Any(n =>
             { var a = gui.GetAddonByName(n); return !a.IsNull && a.IsVisible; })) return Fail("其他交互界面占用中。");
-        var crystal = objects.FirstOrDefault(o => IsCrystal(o) && o.IsTargetable
-            && NavigationRules.Distance(o.Position, source.Position) < 10 && Vector3.Distance(o.Position, player.Position) <= 5);
+        var recognized = objects.Where(IsCrystal).ToArray();
+        var nearSource = recognized.Where(o => NavigationRules.Distance(o.Position, source.Position) < 10).ToArray();
+        var selectable = nearSource.Where(o => o.IsTargetable).ToArray();
+        var crystal = selectable.Where(o => Vector3.Distance(o.Position, player.Position) <= 5)
+            .OrderBy(o => Vector3.Distance(o.Position, player.Position)).FirstOrDefault();
         var targets = TargetSystem.Instance();
-        if (crystal == null || targets == null) return Fail("源水晶未加载、不可交互或不在5米内。");
+        if (recognized.Length == 0) return Fail("没有识别到已加载的水晶对象；请复制包含现场状态的报告。");
+        if (nearSource.Length == 0) return Fail($"已识别{recognized.Length}个水晶，但没有位于源水晶{source.PlaceNameId}参考点10米内的对象。");
+        if (selectable.Length == 0) return Fail("源水晶对象已加载，但当前不可选中。");
+        if (crystal == null) return Fail($"源水晶已识别，实际距离{selectable.Min(o => Vector3.Distance(o.Position, player.Position)):0.0}米，超过5米交互范围。");
+        if (targets == null) return Fail("游戏目标系统尚未就绪。");
         targets->SetHardTarget((GameObject*)crystal.Address);
         if ((ulong)targets->GetTargetObjectId() != crystal.GameObjectId) return Fail("无法选中源水晶。");
         actor = crystal.GameObjectId; addonId = 0; opened = true;

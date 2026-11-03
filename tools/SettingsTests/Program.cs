@@ -18,6 +18,8 @@ try
     var next = new SettingsStore(path);
     Check(next.Get("future", "") == "保留未知键", "更新不删除未知版本设置");
     Check(next.Get("new.option", 0) == 9, "修改覆盖原键并原子写入");
+    File.WriteAllText(path, File.ReadAllText(path).Replace("\"new.option\": 9", "\"new.option\": 10"));
+    Check(next.Get("new.option", 0) == 9 && next.ReadFromDisk("new.option", 0) == 10, "调试重读来自实际磁盘而不是内存缓存");
     Check(next.Get("filter", 7) == 7, "字段类型变化回退默认");
     Check(!File.Exists(path + ".tmp"), "成功保存不遗留临时文件");
     File.WriteAllText(path, "{ invalid");

@@ -25,6 +25,10 @@
     <Compile Include="../../Windows/StatisticsPalette.cs" Link="StatisticsPalette.cs" />
     <Compile Include="../../Windows/LayoutSettings.cs" Link="LayoutSettings.cs" />
     <Compile Include="../../Windows/AutomationPage.cs" Link="AutomationPage.cs" />
+    <Compile Include="../../Windows/DebugTestsPage.cs" Link="DebugTestsPage.cs" />
+    <Compile Include="../../Automation/SoloDebugHelper.cs" Link="SoloDebugHelper.cs" />
+    <Compile Include="../../Automation/IslandCrystalRoutes.cs" Link="IslandCrystalRoutes.cs" />
+    <Compile Include="../../Automation/ArrivalRules.cs" Link="ArrivalRules.cs" />
     <Compile Include="../../Automation/NavigationRules.cs" Link="NavigationRules.cs" />
     <Compile Include="../../Automation/AutomationModels.cs" Link="AutomationModels.cs" />
     <Compile Include="../../Automation/OwnedMount.cs" Link="OwnedMount.cs" />

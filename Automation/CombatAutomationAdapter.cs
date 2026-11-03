@@ -19,6 +19,20 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     private object? aiBehaviour;
     public string? Error { get; private set; }
     public bool CleanupPending => rotationOwned || aiOwned || settings.Count > 0 || presetBefore != null;
+    public string DescribeState()
+    {
+        string rotation, ai;
+        try { rotation = $"RSR 开关={RotationRequested()} 实际运行={RotationActive()} Manual={ManualRequested()}"; }
+        catch (Exception ex) { rotation = "RSR 状态不可读：" + ex.GetBaseException().Message; }
+        try
+        {
+            var active = commands.Commands.ContainsKey("/bmrai") ? RebornBehaviour() != null
+                : plugin.GetIpcSubscriber<bool>("BossMod.AI.IsEnabled").InvokeFunc();
+            ai = $"BossMod AI={active} 本插件循环所有权={rotationOwned} AI所有权={aiOwned}";
+        }
+        catch (Exception ex) { ai = "BossMod 状态不可读：" + ex.GetBaseException().Message; }
+        return rotation + "\n" + ai;
+    }
     private bool RotationActive() => plugin.GetIpcSubscriber<bool>("RotationSolverReborn.AutorotationActive").InvokeFunc();
     private Assembly? CurrentRotationOwner() => commands.Commands.TryGetValue("/rotation", out var c) ? c.Handler.Method.DeclaringType?.Assembly : null;
     private object? CurrentBossOwner() => commands.Commands.TryGetValue(reborn ? "/bmrai" : "/vbm", out var c)

@@ -115,6 +115,7 @@ Check(notifications.Settings.Enabled && notifications.Settings.Channel == FateNo
 Check(!(FateNotificationSettings.Default with { Channel = FateNotificationChannel.Shout }).ChangeFrom(FateNotificationSettings.Default).Enabled, "切换通知频道自动关闭，避免直接向新频道发送");
 Check(FateNotificationSettings.Default.ChangeFrom(FateNotificationSettings.Default).Enabled, "未切换频道时保留通知开关");
 Check(!string.IsNullOrWhiteSpace(game.Excel.GetSheet<EObjName>()!.GetRow(2000151).Singular.ExtractText()), "传送碎晶名称基准核验本机EObjName表");
+Check(game.Excel.GetSheet<EObjName>()!.GetRow(2009421).Singular.ExtractText() == "岛内以太之光", "实测优雷卡EventObj 2009421确认为岛内以太之光，与普通碎晶名称不同");
 var enabled = FateNotificationSettings.Default with { Enabled = true };
 notifications.Configure(enabled);
 notifications.Observe(732, [new(1332, now.AddMinutes(-2), now.AddMinutes(10), 10, FateActivity.Running)], now);

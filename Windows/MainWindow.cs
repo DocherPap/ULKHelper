@@ -16,6 +16,7 @@ internal sealed class MainWindow : Window
     private readonly FateMapPage fateMap;
     private readonly FateMapPage triggerMap;
     private readonly SettingsStore? settings;
+    private readonly DebugTestsPage debugTests;
     private bool firstDraw = true;
     private int selectedTab;
     private DateTimeOffset nextLayout;
@@ -30,7 +31,8 @@ internal sealed class MainWindow : Window
         weather = new(weatherZones, weatherError);
         fateMap = new(fateProvider, mapTextures, weatherZones, helpers);
         this.settings = settings;
-        selectedTab = Math.Clamp(settings?.Get("window.tab", 0) ?? 0, 0, 2);
+        debugTests = new(helpers, settings);
+        selectedTab = Math.Clamp(settings?.Get("window.tab", 0) ?? 0, 0, 4);
         if (settings != null) { itemStatistics.Load(settings); weather.Load(settings); fateMap.Load(settings, "map"); triggerMap.Load(settings, "triggerMap"); automation.Load(settings); }
         Size = settings?.Get("window.size", new Vector2(1280, 780)) ?? new Vector2(1280, 780);
         SizeCondition = ImGuiCond.Once;
@@ -48,7 +50,7 @@ internal sealed class MainWindow : Window
     {
         if (firstDraw && settings != null) LayoutSettings.Restore(settings);
         var restoreTab = selectedTab;
-        var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 3) / 4;
+        var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 4) / 5;
         if (!ImGui.BeginTabBar("##MainPages", ImGuiTabBarFlags.FittingPolicyResizeDown)) return;
         try
         {
@@ -77,13 +79,19 @@ internal sealed class MainWindow : Window
             }
 
             ImGui.SetNextItemWidth(tabWidth);
-            ImGui.BeginDisabled();
-            if (ImGui.BeginTabItem("自动化（暂不可用）"))
+            if (ImGui.BeginTabItem("自动化", firstDraw && restoreTab == 3 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
-                try { DrawPage(() => ImGui.TextUnformatted("自动化暂不可用。")); }
+                selectedTab = 3;
+                try { DrawPage(DrawAutomationPage); }
                 finally { ImGui.EndTabItem(); }
             }
-            ImGui.EndDisabled();
+            ImGui.SetNextItemWidth(tabWidth);
+            if (ImGui.BeginTabItem("调试测试", firstDraw && restoreTab == 4 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            {
+                selectedTab = 4;
+                try { DrawPage(debugTests.Draw); }
+                finally { ImGui.EndTabItem(); }
+            }
         }
         finally
         {

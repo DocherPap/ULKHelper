@@ -55,6 +55,7 @@ unsafe class Program
         }
         var page = new ItemStatisticsPage(args.Contains("--live") ? new LiveFixtureProvider() : null);
         var automationFixture = new AutomationFixture();
+        var debugPage = new DebugTestsPage(automationFixture, new ULKHelper.SettingsStore(Path.GetFullPath("artifacts/ui/debug-settings.json")));
         IReadOnlyList<WeatherZone> weatherZones = [];
         FateMapPage? fateMapPage = null;
         if (args.Contains("--weather") || args.Contains("--map") || args.Contains("--automation"))
@@ -116,6 +117,12 @@ unsafe class Program
         ValidateCatalog();
         for (var frame = 0; frame < 8; frame++)
         {
+            if (args.Contains("--debug-read") || args.Contains("--debug-mount"))
+            {
+                io.AddMousePosEvent(65, args.Contains("--debug-mount") ? 281 : 111);
+                if (frame == 3) io.AddMouseButtonEvent(0, true);
+                if (frame == 4) io.AddMouseButtonEvent(0, false);
+            }
             if (args.Contains("--settings-roundtrip"))
             {
                 io.AddMousePosEvent(frame >= 4 ? 280 : 236, 350);
@@ -181,11 +188,11 @@ unsafe class Program
             ImGui.SetNextWindowPos(Vector2.Zero);
             ImGui.SetNextWindowSize(io.DisplaySize);
             ImGui.Begin("优雷卡助手", ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoScrollbar);
-            var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 3) / 4;
+            var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 4) / 5;
             if (ImGui.BeginTabBar("##MainPages"))
             {
                 ImGui.SetNextItemWidth(tabWidth);
-                if (ImGui.BeginTabItem("物品统计", args.Contains("--automation") || args.Contains("--weather") || args.Contains("--map") ? 0 : ImGuiTabItemFlags.SetSelected))
+                if (ImGui.BeginTabItem("物品统计", args.Contains("--automation") || args.Contains("--weather") || args.Contains("--map") || args.Contains("--debug") ? 0 : ImGuiTabItemFlags.SetSelected))
                 {
                     page.Draw();
                     ImGui.EndTabItem();
@@ -205,20 +212,26 @@ unsafe class Program
                     ImGui.EndTabItem();
                 }
                 ImGui.SetNextItemWidth(tabWidth);
-                ImGui.BeginDisabled(!args.Contains("--automation"));
-                if (ImGui.BeginTabItem(args.Contains("--automation") ? "自动化" : "自动化（暂不可用）", args.Contains("--automation") ? ImGuiTabItemFlags.SetSelected : 0))
+                if (ImGui.BeginTabItem("自动化", args.Contains("--automation") ? ImGuiTabItemFlags.SetSelected : 0))
                 {
                     if (ImGui.BeginChild("##AutomationPageContent", Vector2.Zero)) automation.Draw();
                     ImGui.EndChild();
                     ImGui.EndTabItem();
                 }
-                ImGui.EndDisabled();
+                ImGui.SetNextItemWidth(tabWidth);
+                if (ImGui.BeginTabItem("调试测试", args.Contains("--debug") ? ImGuiTabItemFlags.SetSelected : 0))
+                {
+                    if (ImGui.BeginChild("##DebugContent", Vector2.Zero)) debugPage.Draw();
+                    ImGui.EndChild(); ImGui.EndTabItem();
+                }
                 ImGui.EndTabBar();
             }
             ImGui.End();
             ImGui.Render();
         }
         if (args.Contains("--click-job") && !(bool)GetField(page, "byJob")) throw new Exception("Job radio input failed");
+        if (args.Contains("--debug-read") && automationFixture.LastDebugAction != SoloDebugAction.Inspect) throw new Exception("Debug inspect button input failed");
+        if (args.Contains("--debug-mount") && automationFixture.LastDebugAction != SoloDebugAction.Mount) throw new Exception("Debug mount button input failed");
         if (args.Contains("--click-fate-go") && automationFixture.PointGoal?.Territory != 732) throw new Exception("FATE travel button input failed");
         if (args.Contains("--click-entrance") && !automationFixture.EntranceRequested) throw new Exception("Entrance travel button input failed");
         if (args.Contains("--settings-roundtrip"))
@@ -284,6 +297,10 @@ unsafe class Program
 
     sealed class AutomationFixture : IAutomationHelpers
     {
+        public SoloDebugAction? LastDebugAction;
+        public SoloDebugSnapshot DebugSnapshot => new(false,"示例：等待测试。","区域=732 地图=414\nvnavmesh Ready=True；现场状态为离线模拟。",
+            [new(2415,"港口营地"), new(2429,"废弃实验室"), new(2436,"风蚀小屋")], []);
+        public void RunDebug(SoloDebugAction action, uint crystalId = 0) => LastDebugAction = action;
         public MapDestination? PointGoal;
         public bool EntranceRequested;
         public void NavigateTo(MapDestination destination) => PointGoal = destination;

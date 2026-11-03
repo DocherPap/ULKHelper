@@ -6,6 +6,13 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+if ((Get-Content (Join-Path $root 'ULKHelper.csproj') -Raw) -match '<Version>[^<]*-debug') {
+    throw '调试分支不能生成正式库链或覆盖0.1.0发布包。请使用 scripts/Package-Debug.ps1。'
+}
+if (Test-Path (Join-Path $root '.git')) {
+    $currentBranch = & git -C $root branch --show-current
+    if ($currentBranch -eq 'codex/solo-debug-tests') { throw '调试分支不能生成正式库链或覆盖0.1.0发布包。请使用 scripts/Package-Debug.ps1。' }
+}
 if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'Repository 应为 owner/repo。' }
 if (-not $SkipBuild) {
     $buildArgs = @('build', (Join-Path $root 'ULKHelper.csproj'), '-c', 'Release', '--nologo')

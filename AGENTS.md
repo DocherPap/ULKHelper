@@ -1,5 +1,8 @@
 # 优雷卡助手开发约定
 
+- 当前独立调试分支为 `codex/solo-debug-tests`。用户明确要求此分支的自动化恢复、第五页及后续调试改动永不提交/合并main；main的c8996e9为已打包0.1.0发布快照。正式dist/v0.1.0及repo.json不受调试打包影响。使用scripts/Package-Debug.ps1；不得调用正式发布脚本覆盖正式包或自行上传。
+- 此分支UI改为五个等宽页签：物品统计、天气预报、地图/FATE、自动化（恢复可用）、调试测试。第五页只在用户点击时执行单次有界测试，测试/导航/跟随互斥，可停止，切区/死亡/卸载不恢复；离线测试仅用模拟提供者。详见docs/SOLO_DEBUG.md。以下旧“自动化置灰”仅指main正式0.1.0快照。
+
 - 与用户使用中文交流。开始开发前阅读 `docs/CONTEXT.md` 与 `docs/DALAMUD_DEVELOPMENT.md`。
 - 项目根目录 `D:\project\ULKHelper`；插件 InternalName/AssemblyName 为 `ULKHelper`，显示名“优雷卡助手”。
 - `D:\project\MakoMaster` 是只读参考项目；不要修改它或直接复用魔光键影专属 ID、坐标和逻辑。

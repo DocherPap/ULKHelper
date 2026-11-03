@@ -1,8 +1,8 @@
-# 独立单人调试分支
+# 单人调试与实测记录
 
-分支固定为 `codex/solo-debug-tests`。按用户明确要求，先在main的c8996e9打包正式0.1.0（自动化禁用、无第五页），再在本分支恢复自动化和增加测试页。此分支的改动不得提交/合并main，不推送或发布正式库链。正式ZIP SHA256为 `20d494fcc2398a38bc586e0ca92c42a77823039df3868b3abd92a40116d28d30`。
+起初在main的c8996e9打包正式0.1.0（自动化禁用、无第五页），再于 `codex/solo-debug-tests` 恢复自动化和增加测试页。用户最新要求已撤销隔离，全部改动合入main并准备0.1.1；用户自行提交及上传。原0.1.0 ZIP保持不变，SHA256为 `20d494fcc2398a38bc586e0ca92c42a77823039df3868b3abd92a40116d28d30`。
 
-调试程序集版本仍0.1.0.0，InformationalVersion为0.1.0-debug.2，清单显示“优雷卡助手（调试分支）”。InternalName及配置路径保持ULKHelper以沿用设置；不要同时加载正式版和调试版。
+历史实测构建为0.1.0.0 / 0.1.0-debug.2。当前main版本0.1.1 / DLL0.1.1.0，显示名“优雷卡助手”；InternalName及配置路径保持ULKHelper以沿用设置。不要同时加载正式版和历史调试版。
 
 ## 单人操作
 
@@ -32,4 +32,4 @@ debug.2将失败拆分为未识别、源点不符、不可选中、实际距离�
 
 ## 构建与隔离
 
-`scripts/Package-Debug.ps1` 生成 `dist/debug/ULKHelper-0.1.0.0-solo-debug.zip`，不改repo.json或正式dist/v0.1.0；调试分支调用正式Package.ps1会被拒绝。可使用bin/Debug/net10.0-windows/ULKHelper.dll作为开发插件加载入口。保留正式ZIP，不用调试构建覆盖正式0.1.0资源。
+历史debug后缀构建使用scripts/Package-Debug.ps1，不覆盖正式包；该脚本不用于当前0.1.1。当前main使用scripts/Package.ps1生成dist/v0.1.1与repo.json，不覆盖旧dist/v0.1.0。可使用bin/Debug/net10.0-windows/ULKHelper.dll作为开发插件加载入口。

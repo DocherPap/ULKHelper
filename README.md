@@ -58,7 +58,7 @@ https://raw.githubusercontent.com/DocherPap/MakoMaster/main/repo.json
 
 ## 自动化
 
-此独立调试构建已恢复第四页“自动化”，第五页为“调试测试”。正式0.1.0安装包仍保持原状，不包含这部分调试改动。
+0.1.1已恢复第四页“自动化”，第五页为“调试测试”。
 
 跟随伐木需选择车头和坐骑，再显式开始；需要vnavmesh、Rotation Solver Reborn及BossMod/BossMod Reborn。停止按钮可结束，切区/死亡/卸载也会停止，不自动恢复。
 

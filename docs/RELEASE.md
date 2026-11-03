@@ -1,8 +1,14 @@
-# 0.1.0 上传与发布
+# 0.1.1 上传与发布
+
+当前main包含恢复的自动化、第五页单人测试和岛内以太之光识别修复。显示版本0.1.1，DLL/清单0.1.1.0，标签v0.1.1。安装包dist/v0.1.1/ULKHelper-0.1.1.0.zip，同目录有SHA256、独立repo.json及可选MakoMaster合并库链；发布说明release/NOTES-v0.1.1.md。
+
+用户将自行提交及上传：版本调整保留main工作区，未自动提交/推送。上传Release标签v0.1.1及对应ZIP后，再发布根目录repo.json；下载目标为DocherPap/ULKHelper/releases/download/v0.1.1/ULKHelper-0.1.1.0.zip。旧dist/v0.1.0不覆盖。原禁止合入main的分支隔离指令已由用户明确撤销。
+
+## 0.1.0历史安装包
 
 当前安装包为 `dist/v0.1.0/ULKHelper-0.1.0.0.zip`，同目录有SHA256、独立repo.json与可选MakoMaster合并库链。DLL和清单版本0.1.0.0，Release标签v0.1.0，下载目标DocherPap/ULKHelper。发布说明见release/NOTES-v0.1.0.md。已完成Debug/Release构建及ZIP内容检查，尚未上传。
 
-按用户要求先打包再继续调试：此包自动化第四页暂不可用，没有第五测试页。main保存发布快照；恢复自动化和后续单人测试工具只在codex/solo-debug-tests，不提交/合并main。不要用后续调试构建覆盖此发布ZIP或main库链。
+此前按用户要求先打包再继续调试：此包自动化第四页暂不可用，没有第五测试页，对应快照c8996e9。后续独立调试改动现已合入main并另行准备0.1.1，不覆盖此历史ZIP。
 
 ## 旧版0.0.1发布记录
 

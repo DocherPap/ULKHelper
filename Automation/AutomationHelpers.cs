@@ -108,7 +108,7 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
         var targetText = selectedObject == null ? "无" : $"{selectedObject.Name.TextValue} Kind={selectedObject.ObjectKind} BaseId={selectedObject.BaseId} 位置={selectedObject.Position} 可选中={selectedObject.IsTargetable}";
         var build = typeof(Plugin).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
             .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion;
-        diagnostics = $"读取时间：{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}\n版本：{typeof(Plugin).Assembly.GetName().Version} / {build} / 独立调试分支\n区域={client.TerritoryType} 地图={client.MapId} 分线={client.Instance}\n"
+        diagnostics = $"读取时间：{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}\n版本：{typeof(Plugin).Assembly.GetName().Version} / {build}\n区域={client.TerritoryType} 地图={client.MapId} 分线={client.Instance}\n"
             + $"位置={player?.Position} 骑乘={conditions[ConditionFlag.Mounted]} 战斗={conditions[ConditionFlag.InCombat]}\n"
             + $"vnavmesh {navigationInfo}\n"
             + combat.DescribeState() + "\n"

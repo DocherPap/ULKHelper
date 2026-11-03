@@ -13,7 +13,7 @@ internal sealed class DebugTestsPage(IAutomationHelpers helpers, SettingsStore? 
     public void Draw()
     {
         var test = helpers.DebugSnapshot; var state = helpers.Snapshot;
-        ImGui.TextUnformatted("单人调试 · 独立分支，不发布到 main");
+        ImGui.TextUnformatted("单人调试");
         ImGui.TextWrapped("先在安全营地测试。水晶测试只传送一次，不需要车头、队友或vnavmesh。页面不会自动开启战斗循环，不向其他玩家发送测试消息。");
         if (ImGui.Button("读取现场状态（只读）")) helpers.RunDebug(SoloDebugAction.Inspect);
         ImGui.SameLine();
@@ -82,7 +82,7 @@ internal sealed class DebugTestsPage(IAutomationHelpers helpers, SettingsStore? 
     }
     private string Report(SoloDebugSnapshot test, AutomationSnapshot state)
     {
-        var result = new StringBuilder("ULKHelper 单人调试报告 / codex/solo-debug-tests\n");
+        var result = new StringBuilder("ULKHelper 单人调试报告\n");
         result.AppendLine(test.Diagnostics).AppendLine("测试：" + test.Status).AppendLine("移动：" + state.NavigationStatus)
             .AppendLine("跟随：" + state.FollowStatus)
             .AppendLine("设置测试：" + settingsResult);

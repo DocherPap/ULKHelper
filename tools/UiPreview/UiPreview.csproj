@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <UseWindowsForms>true</UseWindowsForms>
+    <DalamudLibPath Condition="'$(DalamudLibPath)' == ''">$(APPDATA)/XIVLauncherCN/addon/Hooks/dev</DalamudLibPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(DalamudLibPath)/cimgui.dll" Link="cimgui.dll" CopyToOutputDirectory="PreserveNewest" />
+    <Reference Include="Dalamud.Bindings.ImGui">
+      <HintPath>$(DalamudLibPath)/Dalamud.Bindings.ImGui.dll</HintPath>
+    </Reference>
+    <Reference Include="Lumina"><HintPath>$(DalamudLibPath)/Lumina.dll</HintPath></Reference>
+    <Reference Include="Lumina.Excel"><HintPath>$(DalamudLibPath)/Lumina.Excel.dll</HintPath></Reference>
+    <Compile Include="../../Data/StatisticsCatalog.cs" Link="StatisticsCatalog.cs" />
+    <Compile Include="../../Inventory/IStatisticsProvider.cs" Link="IStatisticsProvider.cs" />
+    <Compile Include="../../Inventory/OwnershipLedger.cs" Link="OwnershipLedger.cs" />
+    <Compile Include="../../Inventory/ResolvedCatalog.cs" Link="ResolvedCatalog.cs" />
+    <Compile Include="../../Windows/StatisticsPreview.cs" Link="StatisticsPreview.cs" />
+    <Compile Include="../../Windows/ItemStatisticsPage.cs" Link="ItemStatisticsPage.cs" />
+    <Compile Include="../../Windows/AutomationPage.cs" Link="AutomationPage.cs" />
+    <Compile Include="../../Automation/NavigationRules.cs" Link="NavigationRules.cs" />
+    <Compile Include="../../Automation/AutomationModels.cs" Link="AutomationModels.cs" />
+    <Compile Include="../../Automation/LeaderListenerHelper.cs" Link="LeaderListenerHelper.cs" />
+    <Compile Include="../../Weather/*.cs" Link="Weather/%(Filename)%(Extension)" />
+    <Compile Include="../../Windows/WeatherPage.cs" Link="WeatherPage.cs" />
+    <Compile Include="../../Windows/FateMapPage.cs" Link="FateMapPage.cs" />
+    <Compile Include="../../Fates/*.cs" Exclude="../../Fates/FateMapTracker.cs" Link="Fates/%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

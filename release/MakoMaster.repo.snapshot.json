@@ -1,0 +1,22 @@
+[
+  {
+    "Author": "DocherPap",
+    "Name": "MakoMaster",
+    "InternalName": "MakoMaster",
+    "AssemblyVersion": "2.1.18.0",
+    "Description": "魔光键影自动输入与持续循环。启动时尝试切换中文输入法，运行中维护小游戏输入框焦点，停止后解除；护盾与读条优先，危险技能暂停，诊断日志默认关闭。",
+    "Punchline": "魔光键影自动输入与循环游玩",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "Changelog": "2.1.18：移除“输入法已安装词库”选项，统一使用整词输入及保留拼音翻页选字流程。",
+    "IsTestingExclusive": false,
+    "LastUpdate": 1793329617,
+    "RepoUrl": "https://github.com/DocherPap/MakoMaster",
+    "IsHide": false,
+    "DownloadLinkInstall": "https://raw.githubusercontent.com/DocherPap/MakoMaster/main/dist/MakoMaster-2.1.18.0.zip",
+    "DownloadLinkUpdate": "https://raw.githubusercontent.com/DocherPap/MakoMaster/main/dist/MakoMaster-2.1.18.0.zip"
+  }
+]

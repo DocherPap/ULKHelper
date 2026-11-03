@@ -20,7 +20,7 @@ internal sealed class MainWindow : Window
         string? weatherError = null) : base("优雷卡助手###ULKHelper.Main")
     {
         itemStatistics = new(statistics);
-        automation = new(helpers);
+        automation = new(helpers, new FateMapPage(fateProvider, mapTextures, weatherZones));
         weather = new(weatherZones, weatherError);
         fateMap = new(fateProvider, mapTextures, weatherZones);
         Size = new Vector2(1280, 780);

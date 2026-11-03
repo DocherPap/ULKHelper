@@ -46,12 +46,12 @@
 - `Inventory/IStatisticsProvider.cs`：真实库存投影、前置配方推算、共享装备/剑盾配方去重；数量与已投入分开统计。
 - `Windows/StatisticsPreview.cs`：示例数据仅用于独立开发预览；生产窗口必须注入真实提供者，不显示示例开关。
 - `tools/UiPreview`：使用本机 ImGui 依赖离线绘制同一页面的开发工具，不进入插件编译或分发输出；验证截图在忽略的 `artifacts/ui/`。
-- 没有 isearch 依赖或原生 hook；已新增本地发布脚本及库链配置。真实库存保存在插件配置目录下 `inventory/<角色ID>.json`，筛选不持久化。新增导航使用可选 vnavmesh IPC，其余功能不依赖它。
+- 没有 isearch 依赖；库存仍无原生hook。全岛玩家名单新增ContentMember.EndRequest完成通知hook，卸载释放；已新增本地发布脚本及库链配置。真实库存保存在插件配置目录下 `inventory/<角色ID>.json`，筛选不持久化。新增导航使用可选 vnavmesh IPC，其余功能不依赖它。
 - `Automation/PlayerListHelper.cs`：每秒读取当前已加载玩家的托管快照，客户端对象表无法覆盖整张地图远端玩家。
 - `Automation/LeaderListenerHelper.cs`：名字＋原始服务器选定车头；监听 Say/Yell/Shout，保留 50 条原始消息，优先识别 MapLinkPayload，回退 `(x, y)`；当前地图坐标距玩家 ≤25m 跳过，其余地图标记。默认关闭，切区/实例/角色清空，不保存车头。
 - `Automation/DestinationNavigationHelper.cs`：独立 Start/Tick/Stop，附近 50m 查进行中的优雷卡 NM（本地 Fate.EurekaFate=1/Rule=1，排除幸福兔），初始 25m 站位；无 NM 等 2 秒；接近终点 50m 时改 30m 站位，仅一次。手动开始、可停止、5 分钟时限，状态异常/切区/死亡/战斗等停止。
 - `Automation/VnavmeshAdapter.cs`：本机 vnavmesh 1.2.3.14，使用可取消路径计算、地面查询、路线读写 IPC。只取消自身 token、匹配自身路线后停止，不用全局 CancelAll；晚到结果不会自动移动。依赖缺失只影响导航。
-- `Windows/AutomationPage.cs`：可拖动两栏、玩家搜索/选择、开始/停止监听、地图目的地与手动导航入口、消息记录。暂不将车头坐标自动接入移动，仍是独立 helper 调试。
+- `Windows/AutomationPage.cs`：可拖动两栏、玩家搜索/选择、开始/停止监听、地图目的地、消息记录；最新已增加已拥有坐骑下拉和开始/停止跟随伐木，将导航/同步/循环/BossMod整合为显式启用的流程。见docs/FELLING_FOLLOW.md。
 - 最新天气接入：参照用户提供的 `https://ulk.tunnel.tidebyte.com:8129/weather`，核实其为前端本地计算，不使用在线预报接口。新增 `Weather/WeatherForecastHelper.cs` 纯计算、`WeatherCatalogLoader.cs` 读取四岛 WeatherRate；无新增网络/插件依赖。
 - 天气页显示四岛当前及后续共 6/12/24 段、下一段倒计时、本地或 UTC 时间、日期与 ET，按窗口宽度及字体换行，上下滚动。
 - 天气数据核实：TerritoryType 732/763/795/827 对应 WeatherRate 91/94/96/100；概率与参考网站一致，生产读取本地表。每段 1400 秒，uint32 哈希计算；详情和来源见 `docs/WEATHER.md`。仅展示，尚未用于自动化触发。
@@ -89,7 +89,7 @@
 
 ## 自动化后续方向
 
-- 首批 helper 已完成代码与离线验证，游戏内验证待进行；不得自行将收到车头坐标整合为自动移动。
+- 用户已明确授权并完成跟随伐木整合：默认不启用，选择坐骑/车头后显式开始，战斗中不切换目的地，结束关闭控制并上坐骑。游戏内验证待进行；不自行扩展到其他刷怪任务。
 - 其他刷怪/材料流程待明确：目标怪物/材料、数量、路线、是否涉及技能执行、目标选择、拾取或兑换，以及期望的停止/恢复条件。
 - 预计拆分观察游戏状态、任务状态机、动作适配和可选 IPC；先确定一个可验证的小流程。
 - 设计候选状态：Idle / Running / Paused / Completed / Failed；只在框架线程执行游戏操作，各步骤有超时与结果确认，不在 UI Draw 中执行动作。
@@ -109,6 +109,18 @@
 当前不需要为了这些待办阻塞初始化，也不把建议当作已确认需求。
 
 ## 验证记录
+
+- 最新自动化布局/待机：左侧复用四岛地图并新增最多3个NM触发计划UI（添加/移除/小怪说明），触发按钮未完成禁用，无击杀执行/数量统计；原地图页保留。右侧车头右旁为4.5行高度岛民名单，坐骑移到导航，移除名单请求状态行，消息可折叠。跟随战后无新NM时选择本岛最近水晶旁7米待机，保存完成场次排除重复/更早记录，监视最新车头坐标等待新NM再继续；战斗中不离开头目。144项自动化、84项地图/FATE检查通过，默认/最小/三项UI及真实ImGui选点/添加/跟随点击离线验证通过，Debug/Release构建通过；真实导航待机未游戏内测试。此轮不重打包0.0.1发布ZIP。见docs/FELLING_FOLLOW.md。
+
+- 跟随伐木已实现：MountGameAdapter读取已拥有坐骑，出发/传送后确认挂载，到达无NM也先下坐骑；FellingFollowHelper将新坐标/导航/开怪/头目目标/原生等级同步/RSR循环/BossMod AI/战后上坐骑串联，新增开始/停止按钮。单次导航也复用战斗流程，战斗新坐标保留最新但不打断。CombatAutomationAdapter核对本机RSR7.5.7.13/BMR7.5.7.3，RSR用真实枚举IPC Manual/Off，BMR当前命令对象只读Beh确认，原版用AI.IsEnabled；只接管初始关闭的控制并按所有权恢复配置，提供者更换不关闭新实例。135项自动化模拟检查、Debug/Release0警告0错误、默认/最小UI、菜单和实际ImGui跟随按钮输入通过。未进行真实骑乘、同步、攻击或控制插件开关。本轮不重打包0.0.1，详见docs/FELLING_FOLLOW.md。
+
+- 岛内传送/名单已实现：IslandTravelHelper封装原导航，四岛14个水晶启发式规划，走源水晶→直接游戏目标交互/读取SelectString可用菜单→确认落地→原目标导航→到达helper。无需Lifestream；未解锁/菜单超时/源点不可达回退直走，传送未确认45秒停止，总5分钟，停止后不恢复。名单通过InfoProxyContentMember.RequestData和EndRequest hook等待分页完成，每30秒自动/ `/ulk refreshplayers` 手动（最短5秒）；缓存失败保留、切区清空、未加载成员可选车头但不伪造位置。开怪比例改为缓存全岛人数，90秒过期则比例条件未知，血量/2队友仍独立。102项自动化检查、14个本地PlaceName核对、最小窗口预览及Debug/Release构建通过；原生名单请求/hook/水晶菜单/实际传送未游戏内实测。本次不更新0.0.1发布ZIP。见docs/ISLAND_TRAVEL.md。
+
+- 岛内水晶传送可行性调研：Lifestream当前源码CustomAethernet明确列出四岛14个传送点（3/4/4/3），IPC AethernetTeleportByPlaceNameId可按本地PlaceName调用，但要求已在源水晶交互范围内；内部通过目标/交互/菜单选择实现，不能将其当成任意位置普通Teleport。适合未来将导航拆为走到源水晶、选目标、确认传送落地、继续原目标。需对比完整绕路成本并验证可用菜单，未知解锁不当作可传送；同岛预期过图需保留任务，失败不能误报到达。此次用户询问可行性，仅完成源码核对，未添加依赖或修改执行逻辑。
+
+- 到达处理新增ArrivalRules、ArrivalGameAdapter、DestinationArrivalHelper，无新UI。用户明确授权开怪判断（三条件任一）、同步需求、上/下坐骑和25/15米站位。手动导航成功后接入，取消/失败不接入；玩家数口径为NM附近已加载存活玩家、排除自己，攻击用施法/近期4秒动作证据，血量只用确认名称匹配的主怪。同步用AgentHUD元素等级/IFate.MaxLevel及SyncedFateId，不切换同步开关。坐骑GeneralAction9/23已核对本地表；3秒间隔各最多3次、总5分钟、原停止可取消。68项自动化检查及Debug/Release构建通过；真实动作/同步/骑乘/站位未游戏内验证。此次不更新0.0.1发布ZIP，保留已准备版本；详见docs/AUTOMATION_HELPERS.md。
+
+- 调研新岛/发生历史：核对当前FFXIVClientStructs的FateManager、FateContext、PublicContentEureka、ContentDirector及官方众包文档/服务端。已知客户端结构没有已确认的新岛标志、创建时间或完整历史查询；当前FATE表提供已加载事件及StartTimeEpoch。本项目已导入最新track每个FATE最近一次发生时间，非完整时间线。空tracks/null/404只代表无可用观测，不证明新岛；instanceEpoch由服务端上报间隔超过3600秒递增，不是游戏创建代次。此次仅调研，不改执行逻辑，不增加查询频率。来源见docs/CROWDSOURCE.md新增调研节。
 
 - README 已改为使用者说明，仅保留安装、打开窗口、物品统计、天气、地图/FATE通知及施工中自动化的使用方法，移除本机路径、构建命令、开发上下文与发布操作；同步重新打包0.0.1安装包及SHA256。
 

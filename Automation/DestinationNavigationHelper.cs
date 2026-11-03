@@ -23,11 +23,14 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
     private List<Vector3> issued = [];
     private CancellationTokenSource? cancellation;
     private Task<List<Vector3>>? path;
+    private MapDestination? arrival;
     public bool Active { get; private set; }
     public string Status { get; private set; } = "尚未开始导航。";
     public Vector3? Target => Active ? target : null;
 
-    public void Start(MapDestination goal, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now)
+    public MapDestination? TakeArrival() { var value = arrival; arrival = null; return value; }
+
+    public void Start(MapDestination goal, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool waitWithoutFate = true)
     {
         if (Active) { Status = "请先停止当前导航。"; return; }
         if (goal.Territory != world.Territory || goal.Map != world.Map) { Status = "目的地不在当前地图。"; return; }
@@ -44,7 +47,8 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
             Active = true;
             var fate = NavigationRules.FindFate(goal.Position, fates);
             target = fate == null ? goal.Position : NavigationRules.StandOff(player, fate.Position, 25);
-            departAt = fate == null ? now.AddSeconds(2) : now;
+            arrival = null;
+            departAt = fate == null && waitWithoutFate ? now.AddSeconds(2) : now;
             Status = fate == null ? "附近无 FATE，等待 2 秒后出发。" : $"目标：{fate.Name} 中心前方 25 米。";
             if (fate != null) RequestPath(player, false);
         }
@@ -87,7 +91,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
                 {
                     StopOwnRoute();
                     if (NavigationRules.Distance(player, fate.Position) <= 30)
-                    { Stop("已在 FATE 中心 30 米内。"); return; }
+                    { Finish("已在 FATE 中心 30 米内。"); return; }
                     target = NavigationRules.StandOff(player, fate.Position, 30);
                     Status = $"接近目的地，改为 {fate.Name} 中心前方 30 米。";
                     RequestPath(player, false);
@@ -95,7 +99,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
                 }
             }
             if (NavigationRules.Distance(player, target) <= 3 && Math.Abs(player.Y - target.Y) <= 5)
-            { Stop("已到达目的地。"); return; }
+            { Finish("已到达目的地。"); return; }
             if (issued.Count > 0 && route.Count == 0) { Stop("移动已结束，尚未到达目的地。"); return; }
             if (issued.Count == 0 && path == null) RequestPath(player, destination!.Position == target);
         }
@@ -123,6 +127,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
 
     public void Stop(string reason = "已手动停止导航。")
     {
+        arrival = null;
         Active = false;
         cancellation?.Cancel(); cancellation?.Dispose(); cancellation = null;
         if (path != null)
@@ -131,6 +136,13 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
         try { StopOwnRoute(); }
         catch { issued = []; } // The optional IPC provider can disappear during unload.
         Status = reason;
+    }
+
+    private void Finish(string reason)
+    {
+        var goal = destination;
+        Stop(reason);
+        arrival = goal;
     }
 
     public void Dispose() => Stop("导航模块已卸载。");

@@ -9,3 +9,7 @@ Licensed under Apache License 2.0; see `cactbot-LICENSE.txt` in this directory. 
 # CriticalEncounter.CrowdSource data attribution
 
 `Fates/FateTriggers.cs` adapts Chinese trigger descriptions from `web/public/assets/dynamic-event-catalog.json`, version `c2bf132ca39c1467c60bb87b97c3281160ae3c80` of https://github.com/Dalamud-DailyRoutines/CriticalEncounter.CrowdSource . Copyright (c) 2026 AtmoOmen, MIT License; see `CriticalEncounter.CrowdSource-LICENSE.txt`. Markdown emphasis was removed and the five Happy Bunny entries were given explicit special-trigger explanations.
+
+# Island crystal location reference
+
+The fourteen factual X/Z crystal positions and PlaceName row IDs in `Automation/IslandCrystalRoutes.cs` were cross-referenced against Lifestream's `CustomAethernet.cs` at commit `b36320170faafc8315f7585edb45cfbcd34e7046`: https://github.com/NightmareXIV/Lifestream/blob/b36320170faafc8315f7585edb45cfbcd34e7046/Lifestream/Systems/Custom/CustomAethernet.cs . Chinese names are resolved from the user's game data. No Lifestream implementation or synthetic IDs are included; route selection and game interaction are independently implemented.

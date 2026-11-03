@@ -21,13 +21,13 @@ unsafe class Program
         io.DisplaySize = new Vector2(1280, 780);
         io.DeltaTime = 1f / 60;
         var mapCharacters = "";
-        if (args.Contains("--map"))
+        if (args.Contains("--map") || args.Contains("--automation"))
         {
             using var glyphGame = new Lumina.GameData("D:/Program Files (x86)/FFXIV/game/sqpack", new Lumina.LuminaOptions { DefaultExcelLanguage = Lumina.Data.Language.ChineseSimplified });
             mapCharacters = string.Concat(glyphGame.Excel.GetSheet<Lumina.Excel.Sheets.Fate>()!.Where(f => f.EurekaFate == 1).Select(f => f.Name.ExtractText()));
         }
         var characters = Directory.GetFiles("Windows", "*.cs").Concat(Directory.GetFiles("Data", "*.cs")).Concat(Directory.GetFiles("Inventory", "*.cs")).Concat(Directory.GetFiles("Automation", "*.cs")).Concat(Directory.GetFiles("Weather", "*.cs")).Concat(Directory.GetFiles("Fates", "*.cs"))
-            .Append("tools/WeatherTests/Program.cs").SelectMany(File.ReadAllText).Concat(mapCharacters).Where(c => c > 255).Distinct().Order().ToArray();
+            .Append("tools/WeatherTests/Program.cs").Append("tools/UiPreview/Program.cs").SelectMany(File.ReadAllText).Concat(mapCharacters).Where(c => c > 255).Distinct().Order().ToArray();
         var ranges = new List<ushort> { 0x20, 0xFF };
         foreach (var character in characters) { ranges.Add(character); ranges.Add(character); }
         ranges.Add(0);
@@ -48,14 +48,14 @@ unsafe class Program
             io.Fonts.SetTexID(index, new ImTextureID((ulong)index + 1));
         }
         var page = new ItemStatisticsPage(args.Contains("--live") ? new LiveFixtureProvider() : null);
-        var automation = new AutomationPage(new AutomationFixture());
+        var automationFixture = new AutomationFixture();
         IReadOnlyList<WeatherZone> weatherZones = [];
         FateMapPage? fateMapPage = null;
-        if (args.Contains("--weather") || args.Contains("--map"))
+        if (args.Contains("--weather") || args.Contains("--map") || args.Contains("--automation"))
         {
             using var game = new Lumina.GameData("D:/Program Files (x86)/FFXIV/game/sqpack", new Lumina.LuminaOptions { DefaultExcelLanguage = Lumina.Data.Language.ChineseSimplified });
             weatherZones = WeatherCatalogLoader.Load(game.Excel.GetSheet<Lumina.Excel.Sheets.TerritoryType>()!);
-            if (args.Contains("--map"))
+            if (args.Contains("--map") || args.Contains("--automation"))
             {
                 var maps = FateCatalogLoader.Load(game.Excel.GetSheet<Lumina.Excel.Sheets.TerritoryType>()!, game.Excel.GetSheet<Lumina.Excel.Sheets.Fate>()!);
                 var textureSource = new MapFixtureTextures();
@@ -73,7 +73,14 @@ unsafe class Program
                 if (args.Contains("--pagos")) SetField(fateMapPage, "islandIndex", 1);
                 if (args.Contains("--pyros")) SetField(fateMapPage, "islandIndex", 2);
                 if (args.Contains("--hydatos")) SetField(fateMapPage, "islandIndex", 3);
-                if (args.Contains("--map-selected")) SetField(fateMapPage, "selected", (ushort)1332);
+                if (args.Contains("--map-selected") || args.Contains("--add-trigger")) SetField(fateMapPage, "selected", (ushort)1332);
+                if (args.Contains("--trigger-list"))
+                {
+                    var plan = (TriggerSelection)GetField(fateMapPage, "triggerSelection");
+                    var map = maps[(int)GetField(fateMapPage, "islandIndex")];
+                    plan.SetIsland(map.Territory);
+                    foreach (var point in map.Fates.Where(f => !f.Seed.Bunny).Take(3)) plan.Add(point);
+                }
                 if (args.Contains("--map-pan")) SetField(fateMapPage, "zoom", 2f);
                 if (args.Contains("--debug-notify"))
                 {
@@ -83,6 +90,7 @@ unsafe class Program
                 }
             }
         }
+        var automation = new AutomationPage(automationFixture, fateMapPage);
         var weatherPage = new WeatherPage(weatherZones);
         if (args.Contains("--weather-long")) SetField(weatherPage, "countIndex", 2);
         if (args.Contains("--utc")) SetField(weatherPage, "utc", true);
@@ -103,6 +111,24 @@ unsafe class Program
         for (var frame = 0; frame < 8; frame++)
         {
             if (args.Contains("--click-job")) io.AddMousePosEvent(20, 124);
+            if (args.Contains("--click-follow") || args.Contains("--open-mount"))
+            {
+                io.AddMousePosEvent(io.DisplaySize.X * .65f, args.Contains("--open-mount") ? 301 : 72);
+                if (frame == 3) io.AddMouseButtonEvent(0, true);
+                if (frame == 4) io.AddMouseButtonEvent(0, false);
+            }
+            if (args.Contains("--add-trigger"))
+            {
+                io.AddMousePosEvent(125, 735);
+                if (frame == 3) io.AddMouseButtonEvent(0, true);
+                if (frame == 4) io.AddMouseButtonEvent(0, false);
+            }
+            if (args.Contains("--automation-map-click"))
+            {
+                io.AddMousePosEvent(258, 396);
+                if (frame == 3) io.AddMouseButtonEvent(0, true);
+                if (frame == 4) io.AddMouseButtonEvent(0, false);
+            }
             if (args.Contains("--click-filter")) io.AddMousePosEvent(20, 182);
             if (args.Contains("--map-click") || args.Contains("--map-scroll"))
             {
@@ -167,6 +193,9 @@ unsafe class Program
             ImGui.Render();
         }
         if (args.Contains("--click-job") && !(bool)GetField(page, "byJob")) throw new Exception("Job radio input failed");
+        if (args.Contains("--click-follow") && !automationFixture.Snapshot.Following) throw new Exception("Follow button input failed");
+        if (args.Contains("--add-trigger") && !((TriggerSelection)GetField(fateMapPage!, "triggerSelection")).Ids.Contains((ushort)1332)) throw new Exception("Trigger plan add input failed");
+        if (args.Contains("--automation-map-click") && (ushort)GetField(fateMapPage!, "selected") != 1332) throw new Exception("Embedded map marker input failed");
         if (args.Contains("--click-filter") && ((bool[])GetField(page, "selectedJobs"))[0]) throw new Exception("Job checkbox input failed");
         if (args.Contains("--map-click") && (ushort)GetField(fateMapPage!, "selected") != 1332) throw new Exception("Map marker click failed");
         if (args.Contains("--map-scroll") && (float)GetField(fateMapPage!, "zoom") <= 1) throw new Exception("Map wheel zoom failed");
@@ -213,15 +242,20 @@ unsafe class Program
 
     sealed class AutomationFixture : IAutomationHelpers
     {
-        public AutomationSnapshot Snapshot { get; } = new(
+        public AutomationSnapshot Snapshot { get; private set; } = new(
             Enumerable.Range(0, 30).Select(i => new PlayerEntry(new($"示例玩家{i + 1:00}", 100), "示例服务器", new(i, 0, 0), i * 12)).ToArray(),
             new("示例玩家02", 100), true, "已在地图标记目的地。", new(1, 2, new(200, 0, 0), "禁地优雷卡 常风之地 ( 25.0, 30.0 )"),
-            [new(DateTimeOffset.Now, "Shout", "示例车头：准备出发 (25.0, 30.0)", "已在地图标记目的地。"),
-             new(DateTimeOffset.Now, "Yell", "示例车头：等待一下", "已记录，未发现坐标。")], false, "附近无 FATE，等待 2 秒后出发。");
+            [new(DateTimeOffset.Now, "小怪击杀", "仙人掌 · 仙人花 +2", "本轮本地观测累计12只"),
+             new(DateTimeOffset.Now, "Shout", "示例车头：准备出发 (25.0, 30.0)", "已在地图标记目的地。"),
+             new(DateTimeOffset.Now, "Yell", "示例车头：等待一下", "已记录，未发现坐标。")], false, "等待车头的新坐标。", null,
+            [new(1, "陆行鸟"), new(5, "独角兽"), new(99, "示例不可移动坐骑", true)], 1,
+            KillCounts: [new(1332,"仙人掌","仙人花",12),new(1348,"章鱼","海祭司",3)]);
         public void SelectLeader(PlayerIdentity identity) { }
         public void Listen(bool enabled) { }
         public void Navigate() { }
         public void Stop() { }
+        public void Follow(bool enabled) => Snapshot = Snapshot with { Following = enabled, Navigating = enabled };
+        public void SelectMount(uint id) => Snapshot = Snapshot with { SelectedMount = id };
     }
 
     // Exercises the production data-provider UI without accessing the game or a real character.

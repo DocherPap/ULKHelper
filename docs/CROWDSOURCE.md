@@ -48,6 +48,14 @@
 
 ## 模块与验证
 
+### 新岛与历史的判断边界（2026-11-03 调研）
+
+- 现有导入已能取得最新轨迹中每个 FATE 最近一次已观测发生时间；接口不是每次发生/结束/击杀的完整历史。`updatedAt` 是快照更新时间，不能当作开岛时间。`tracks=[]`、`lastSpawnedAt=null`、404 均不能证明新岛。
+- 核对当前 [FateManager](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/Game/Fate/FateManager.cs)、[FateContext](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/Game/Fate/FateContext.cs)、[PublicContentEureka](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/Game/InstanceContent/PublicContentEureka.cs) 和 ContentDirector，未找到已确认的副本创建时间、新岛标志或完整已结束FATE历史。未命名字段/未解析协议是否包含其他依据尚未证明，不能将此表述为服务端绝对不发送。
+- 官方 [DataCenterState.ts](https://github.com/Dalamud-DailyRoutines/CriticalEncounter.CrowdSource/blob/c2bf132ca39c1467c60bb87b97c3281160ae3c80/src/durable-objects/DataCenterState.ts) 中 `instanceEpoch` 在最近上报间隔超过3600秒时增加；这是众包识别代次，不是游戏提供的开岛证明。房间ID、代次或轨迹变化不能独立推导新岛。
+- 可可靠展示“有历史记录 / 无可用历史 / 查询失败”，附来源和发生时间。新岛只能标记为未知或用户手动确认；不应自动将未记录的NM全部标成已过冷却。若未来持久化本地观测，只能证明该轨迹至少何时被观察到，还需处理房间ID复用。
+- 本次只调研，不更改运行代码、请求次数或发布包；继续遵守只在进岛查询一次。
+
 - `Crowdsource/CrowdsourceClient.cs`：官方订阅/单次读取、响应体上限、范围/地址/格式校验。
 - `Crowdsource/EntryCrowdsourceLookup.cs`：一次入场单次查询、取消、晚到结果隔离；没有后台周期任务。
 - `Crowdsource/ZoneServerIdReader.cs`：本机只读房间 ID。

@@ -25,6 +25,78 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
     private bool notificationEnabled, notificationInitialized;
     private int notificationChannel;
     private string notificationTemplate = FateNotificationSettings.DefaultTemplate;
+    private readonly TriggerSelection triggerSelection = new();
+
+    public void DrawTriggerPlanner(IReadOnlyList<TriggerKillCount>? kills = null)
+    {
+        var snapshot = provider.Snapshot;
+        if (provider.Islands.Count == 0) { ImGui.TextWrapped("地图数据尚未就绪。"); return; }
+        if (follow)
+        {
+            var index = provider.Islands.Select((value, i) => (value, i)).FirstOrDefault(p => p.value.Territory == snapshot.CurrentTerritory);
+            if (index.value != null && islandIndex != index.i) { islandIndex = index.i; ResetView(); }
+        }
+        ImGui.SetNextItemWidth(ImGui.GetFontSize() * 8);
+        if (ImGui.Combo("##TriggerIsland", ref islandIndex, provider.Islands.Select(i => i.Name).ToArray(), provider.Islands.Count))
+        { follow = false; ResetView(); }
+        ImGui.SameLine(); ImGui.Checkbox("跟随岛屿", ref follow);
+        ImGui.SameLine(); ImGui.Checkbox("简称", ref showLabels);
+        var island = provider.Islands[islandIndex];
+        triggerSelection.SetIsland(island.Territory);
+        var now = DateTimeOffset.UtcNow;
+        UpdateTiming(island, snapshot, now);
+        var points = island.Fates.Where(f => !f.Seed.Bunny).ToArray();
+        var availableHeight = ImGui.GetContentRegionAvail().Y;
+        var reserved = Math.Min(availableHeight * .38f, ImGui.GetTextLineHeightWithSpacing() * (3 + triggerSelection.Ids.Count * 2)) + 12;
+        var mapHeight = Math.Max(170, availableHeight - reserved);
+        if (ImGui.BeginChild("##TriggerIslandMap", new Vector2(0, mapHeight)))
+            DrawMap(island, points, snapshot, now, triggerSelection.Ids.ToHashSet(), true);
+        ImGui.EndChild();
+        var current = island.Fates.FirstOrDefault(f => f.Seed.Id == selected);
+        ImGui.Separator();
+        ImGui.TextUnformatted($"自动触发列表（{triggerSelection.Ids.Count}/3）");
+        ImGui.SameLine(); ImGui.BeginDisabled(); ImGui.SmallButton("开始触发（未完成）"); ImGui.EndDisabled();
+        if (current != null)
+        {
+            ImGui.TextUnformatted($"已选：{current.Seed.ShortName}");
+            ImGui.SameLine();
+            ImGui.BeginDisabled(triggerSelection.Ids.Count >= 3 || triggerSelection.Ids.Contains(selected));
+            if (ImGui.SmallButton("加入列表")) triggerSelection.Add(current);
+            ImGui.EndDisabled();
+        }
+        else ImGui.TextDisabled("点击地图上的NM，再加入列表（最多3个）。");
+        if (ImGui.BeginChild("##TriggerPlanRows", Vector2.Zero))
+        {
+            foreach (var id in triggerSelection.Ids.ToArray())
+            {
+                var point = island.Fates.First(f => f.Seed.Id == id);
+                ImGui.PushID(id);
+                ImGui.TextUnformatted(point.Seed.ShortName);
+                ImGui.SameLine();
+                if (ImGui.SmallButton("移除")) triggerSelection.Remove(id);
+                ImGui.TextWrapped("触发：" + point.Trigger);
+                ImGui.TextDisabled(snapshot.CurrentTerritory == island.Territory
+                    ? $"本地观测击杀：{kills?.FirstOrDefault(k => k.FateId == id)?.Count ?? 0}"
+                    : "本地观测击杀：未获取");
+                ImGui.Separator(); ImGui.PopID();
+            }
+            ImGui.TextDisabled("自动触发执行待实现。");
+        }
+        ImGui.EndChild();
+    }
+
+    private void UpdateTiming(IslandMap island, FateMapSnapshot snapshot, DateTimeOffset now)
+    {
+        if (now < nextTiming) return;
+        timing.Clear(); markerTiming.Clear();
+        foreach (var point in island.Fates)
+        {
+            snapshot.Records.TryGetValue(point.Seed.Id, out var record);
+            timing[point.Seed.Id] = FateTiming.Describe(point, record, weather.FirstOrDefault(w => w.TerritoryId == island.Territory), now);
+            markerTiming[point.Seed.Id] = FateTiming.ForMarker(point, record, timing[point.Seed.Id], now);
+        }
+        nextTiming = now.AddSeconds(1);
+    }
 
     public void Draw()
     {
@@ -93,7 +165,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
 
     private void ResetView() { centre = new(.5f); zoom = 1; selected = 0; timing.Clear(); markerTiming.Clear(); nextTiming = default; }
 
-    private void DrawMap(IslandMap island, IReadOnlyList<FateDefinition> points, FateMapSnapshot snapshot, DateTimeOffset now)
+    private void DrawMap(IslandMap island, IReadOnlyList<FateDefinition> points, FateMapSnapshot snapshot, DateTimeOffset now, IReadOnlySet<ushort>? planned = null, bool compactLabels = false)
     {
         if (ImGui.SmallButton("还原视图")) { centre = new(.5f); zoom = 1; }
         ImGui.SameLine(); ImGui.TextDisabled("滚轮缩放 · 拖动平移 · 点击点位选择");
@@ -134,12 +206,14 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             var radius = Math.Max(5, ImGui.GetFontSize() * .38f);
             draw.AddCircleFilled(marker, radius, status.Color);
             draw.AddCircle(marker, radius + (selected == fate.Seed.Id ? 3 : 1), selected == fate.Seed.Id ? 0xFFFFFFFF : 0xFF202020, 16, 2);
+            if (planned?.Contains(fate.Seed.Id) == true) draw.AddCircle(marker, radius + 5, 0xFFFFCA65, 16, 2);
             var markerState = markerTiming.GetValueOrDefault(fate.Seed.Id) ?? status;
             var countdown = markerState.Until is { } until ? $"{markerState.Text} {FateTiming.Countdown(until, now)}" : markerState.Text;
             if (countdown == "未知 · 未记录") countdown = "未记录";
             if (countdown == "条件可用 · 待触发") countdown = "待触发";
-            var label = showLabels || selected == fate.Seed.Id ? $"{fate.Seed.ShortName}\n{countdown}" : countdown;
-            if (marker.X >= pos.X && marker.Y >= pos.Y && marker.X <= pos.X + side && marker.Y <= pos.Y + side)
+            var label = compactLabels ? showLabels || selected == fate.Seed.Id ? fate.Seed.ShortName : ""
+                : showLabels || selected == fate.Seed.Id ? $"{fate.Seed.ShortName}\n{countdown}" : countdown;
+            if (label.Length > 0 && marker.X >= pos.X && marker.Y >= pos.Y && marker.X <= pos.X + side && marker.Y <= pos.Y + side)
             {
                 var fontSize = Math.Max(12, ImGui.GetFontSize() * .8f);
                 var size = ImGui.CalcTextSize(label) * (fontSize / ImGui.GetFontSize()) + new Vector2(6, 4);

@@ -7,5 +7,11 @@
     <Compile Include="../../Automation/NavigationRules.cs" Link="NavigationRules.cs" />
     <Compile Include="../../Automation/LeaderListenerHelper.cs" Link="LeaderListenerHelper.cs" />
     <Compile Include="../../Automation/DestinationNavigationHelper.cs" Link="DestinationNavigationHelper.cs" />
+    <Compile Include="../../Automation/ArrivalRules.cs" Link="ArrivalRules.cs" />
+    <Compile Include="../../Automation/IslandRosterHelper.cs" Link="IslandRosterHelper.cs" />
+    <Compile Include="../../Automation/IslandCrystalRoutes.cs" Link="IslandCrystalRoutes.cs" />
+    <Compile Include="../../Automation/IslandTravelHelper.cs" Link="IslandTravelHelper.cs" />
+    <Compile Include="../../Automation/FellingFollowHelper.cs" Link="FellingFollowHelper.cs" />
+    <Compile Include="../../Automation/DestinationArrivalHelper.cs" Link="DestinationArrivalHelper.cs" />
   </ItemGroup>
 </Project>

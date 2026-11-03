@@ -166,6 +166,58 @@ Check(FateNotificationText.Command(FateNotificationChannel.Linkshell8) == "/l8"
 Check(FateNotificationText.Command(FateNotificationChannel.NoviceNetwork) == "/b"
     && FateNotificationText.Command(FateNotificationChannel.PvPTeam) == "/pt", "新人和PvP战队命令与本机文本指令表一致");
 Check(FateNotificationText.FlagCommand(enabled, "仙人掌") == "/e 在<flag>发现仙人掌<se.1>", "位置使用游戏原生flag占位而不是文字坐标");
+var triggerPlan = new TriggerSelection();
+triggerPlan.SetIsland(islands[0].Territory);
+var planPoints = islands[0].Fates.Where(f => !f.Seed.Bunny).Take(4).ToArray();
+Check(triggerPlan.Add(planPoints[0]), "自动触发UI可加入本岛NM");
+Check(!triggerPlan.Add(planPoints[0]) && triggerPlan.Ids.Count == 1, "自动触发列表不重复加入同一NM");
+Check(triggerPlan.Add(planPoints[1]) && triggerPlan.Add(planPoints[2]), "自动触发列表最多保留三项");
+Check(!triggerPlan.Add(planPoints[3]) && triggerPlan.Ids.Count == 3, "第四个NM不能加入已满列表");
+triggerPlan.Remove(planPoints[1].Seed.Id);
+Check(triggerPlan.Add(planPoints[3]) && triggerPlan.Ids.Count == 3, "移除后可选择其他NM");
+Check(!triggerPlan.Add(islands[1].Fates[0]), "不能在当前列表加入其他岛屿事件");
+triggerPlan.SetIsland(islands[1].Territory);
+Check(triggerPlan.Ids.Count == 0, "切换岛屿清理UI计划，避免跨岛混选");
+Check(!triggerPlan.Add(islands[1].Fates.First(f => f.Seed.Bunny)), "幸福兔不作为击杀触发目标");
+var mobRules = TriggerMobCatalog.Resolve(game.Excel.GetSheet<BNpcName>()!.Select(n => (n.RowId,n.Singular.ExtractText())));
+Console.WriteLine($"Resolved trigger mob rules: {mobRules.Count}/65.");
+Check(mobRules.Count == 65 && mobRules.All(r => r.NameIds.Count > 0), "65种普通NM触发小怪全部匹配本机BNpcName ID");
+var mobRule = mobRules.Single(r => r.FateId == 1332);
+var npcNameId = mobRule.NameIds.First();
+TriggerNpcLife Npc(ulong id, bool dead, byte level = 6) => new(id,npcNameId,level,dead);
+var kills = new TriggerKillLedger(mobRules);
+kills.Observe(732,[Npc(1,false)],new HashSet<ushort>(),now);
+Check(kills.Snapshot.Count == 0, "首次观测存活小怪不增加击杀数");
+var killEvents = kills.Observe(732,[Npc(1,true)],new HashSet<ushort>(),now.AddMilliseconds(250));
+Check(kills.Snapshot.Single().Count == 1 && killEvents.Count == 1, "存活到死亡计数并生成历史记录");
+Check(kills.Observe(732,[Npc(1,true)],new HashSet<ushort>(),now.AddMilliseconds(500)).Count == 0 && kills.Snapshot.Single().Count == 1,
+    "持续看到同一尸体不重复计数");
+kills.Observe(732,[],new HashSet<ushort>(),now.AddMilliseconds(750));
+kills.Observe(732,[Npc(2,true)],new HashSet<ushort>(),now.AddSeconds(1));
+Check(kills.Snapshot.Single().Count == 1, "消失和首次看到尸体都不当作击杀");
+kills.Observe(732,[Npc(3,false),Npc(4,false)],new HashSet<ushort>(),now.AddSeconds(1.25));
+var batch = kills.Observe(732,[Npc(3,true),Npc(3,true),Npc(4,true)],new HashSet<ushort>(),now.AddSeconds(1.5));
+Check(kills.Snapshot.Single().Count == 3 && batch.Count == 1 && batch[0].Text.Contains("+2"), "同帧多只死亡汇总日志并去重对象ID");
+kills.Observe(732,[Npc(5,false,7)],new HashSet<ushort>(),now.AddSeconds(1.75));
+kills.Observe(732,[Npc(5,true,7)],new HashSet<ushort>(),now.AddSeconds(2));
+Check(kills.Snapshot.Single().Count == 3, "同名但等级不同不误计触发怪");
+var appeared = kills.Observe(732,[],new HashSet<ushort>{1332},now.AddSeconds(2.25));
+Check(kills.Snapshot.Count == 0 && appeared.Any(e => e.Text.Contains("已触发") && e.Result.Contains("3")), "NM出现归档本轮并隐藏已触发计数");
+kills.Observe(732,[Npc(6,false)],new HashSet<ushort>{1332},now.AddSeconds(2.5));
+kills.Observe(732,[Npc(6,true)],new HashSet<ushort>{1332},now.AddSeconds(2.75));
+Check(kills.Snapshot.Count == 0, "NM已触发期间不累计其触发小怪");
+kills.Observe(732,[],new HashSet<ushort>(),now.AddSeconds(3));
+kills.Observe(732,[Npc(7,false)],new HashSet<ushort>(),now.AddSeconds(3.25));
+kills.Observe(732,[Npc(7,true)],new HashSet<ushort>(),now.AddSeconds(3.5));
+Check(kills.Snapshot.Single().Count == 1, "事件结束后开始新一轮计数");
+kills.Observe(732,[Npc(7,false)],new HashSet<ushort>(),now.AddSeconds(3.75));
+kills.Observe(732,[Npc(7,true)],new HashSet<ushort>(),now.AddSeconds(4));
+Check(kills.Snapshot.Single().Count == 2, "同ID重新存活后可计下一次死亡");
+kills.Observe(732,[Npc(8,false)],new HashSet<ushort>(),now.AddSeconds(5));
+kills.Observe(732,[Npc(8,true)],new HashSet<ushort>(),now.AddSeconds(10));
+Check(kills.Snapshot.Single().Count == 2, "采样中断超过2秒不把旧存活快照推断成击杀");
+kills.Observe(763,[Npc(8,true)],new HashSet<ushort>(),now.AddSeconds(11));
+Check(kills.Snapshot.Count == 0, "切岛清空击杀与生命状态，旧尸体不计入新岛");
 Console.WriteLine($"{count} FATE/map checks passed.");
 
 sealed class SubscriptionHandler : HttpMessageHandler

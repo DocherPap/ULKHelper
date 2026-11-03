@@ -3,6 +3,63 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
 
+if (args.FirstOrDefault() == "--combat-api")
+{
+    Console.WriteLine("IPC " + typeof(Dalamud.Plugin.Ipc.ICallGateSubscriber<,>).GetMethod("InvokeAction"));
+    foreach (var m in typeof(Dalamud.Plugin.IDalamudPluginInterface).GetMethods().Where(m => m.Name == "GetIpcSubscriber" && m.IsGenericMethodDefinition && m.GetGenericArguments().Length == 2)) Console.WriteLine("FACTORY " + m);
+    foreach (var t in new[] { typeof(FFXIVClientStructs.FFXIV.Client.Game.UI.PlayerState), typeof(FFXIVClientStructs.FFXIV.Client.Game.Fate.FateManager), typeof(Lumina.Excel.Sheets.Mount), typeof(ITargetManager), typeof(ICommandManager) })
+    {
+        Console.WriteLine("TYPE " + t.FullName);
+        foreach (var p in t.GetProperties()) Console.WriteLine(p);
+        foreach (var m in t.GetMethods().Where(m => m.Name.Contains("Mount") || m.Name.Contains("Sync") || m.Name.Contains("Command"))) Console.WriteLine(m);
+    }
+    var pluginRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XIVLauncherCN/installedPlugins");
+    var dirs = new[] { Path.Combine(pluginRoot, "BossModReborn/7.5.7.3"), Path.Combine(pluginRoot, "RotationSolver/7.5.7.13") };
+    System.Runtime.Loader.AssemblyLoadContext.Default.Resolving += (_, name) => {
+        foreach (var d in dirs) { var file = Path.Combine(d, name.Name + ".dll"); if (File.Exists(file)) return Assembly.LoadFrom(file); }
+        return null;
+    };
+    foreach (var file in new[] { Path.Combine(dirs[0], "BossModReborn.dll"), Path.Combine(dirs[1], "RotationSolver.dll") })
+    {
+        var a = Assembly.LoadFrom(file); Type[] inspectedTypes;
+        try { inspectedTypes = a.GetTypes(); } catch (ReflectionTypeLoadException e) { inspectedTypes = e.Types.OfType<Type>().ToArray(); }
+        foreach (var t in inspectedTypes.Where(t => t.FullName is "BossMod.AI.AIManager" or "BossMod.IPCProvider" or "RotationSolver.IPC.IPCProvider" or "RotationSolver.Basic.DataCenter" || t.Name == "StateCommandType"))
+        {
+            Console.WriteLine("PLUGIN " + t.FullName);
+            foreach (var f in t.GetFields(BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static|BindingFlags.Instance)) Console.WriteLine(f);
+            foreach (var p in t.GetProperties(BindingFlags.Public|BindingFlags.Static).Where(p => p.Name is "State" or "IsManual")) Console.WriteLine(p);
+            foreach (var m in t.GetMethods(BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance).Where(m => m.Name is "AutorotationActive" or "ChangeOperatingMode" or "Register")) Console.WriteLine(m);
+        }
+    }
+    return;
+}
+
+if (args.FirstOrDefault() == "--travel-api")
+{
+    foreach (var t in new[] { typeof(FFXIVClientStructs.FFXIV.Client.UI.Info.InfoProxyContentMember), typeof(FFXIVClientStructs.FFXIV.Client.UI.Info.InfoProxyCommonList), typeof(FFXIVClientStructs.FFXIV.Client.UI.Info.InfoProxyPageInterface), typeof(FFXIVClientStructs.FFXIV.Client.UI.Info.InfoProxyInterface), typeof(FFXIVClientStructs.FFXIV.Client.UI.Info.InfoProxyContentMember.ContentMemberData), typeof(FFXIVClientStructs.FFXIV.Client.UI.AddonSelectString), typeof(FFXIVClientStructs.FFXIV.Client.UI.PopupMenu), typeof(FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase) })
+    {
+        Console.WriteLine("TYPE " + t.FullName);
+        foreach (var f in t.GetFields().Where(f => !f.Name.Contains("Virtual") && f.Name != "Addresses")) Console.WriteLine(f);
+        foreach (var p in t.GetProperties()) Console.WriteLine(p);
+        foreach (var m in t.GetMethods().Where(m => m.Name is "Instance" or "RequestData" or "FireCallback" or "Close")) Console.WriteLine(m);
+    }
+    return;
+}
+
+if (args.FirstOrDefault() == "--arrival-api")
+{
+    foreach (var type in typeof(InventoryManager).Assembly.GetTypes().Where(t => t.IsValueType))
+        foreach (var field in type.GetFields().Where(f => f.Name.Contains("Elemental") || f.Name.Contains("Eureka") || f.Name.Contains("MountId"))) Console.WriteLine("MATCH " + type.FullName + " " + field);
+    foreach (var t in new[] { typeof(Dalamud.Game.ClientState.Objects.Types.IBattleChara), typeof(Dalamud.Game.ClientState.Objects.Types.IBattleNpc), typeof(Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter), typeof(IPartyList), typeof(Dalamud.Game.ClientState.Party.IPartyMember), typeof(Dalamud.Game.ClientState.Fates.IFate), typeof(Lumina.Excel.Sheets.Fate), typeof(Lumina.Excel.Sheets.GeneralAction), typeof(FFXIVClientStructs.FFXIV.Client.Game.Character.Character), typeof(FFXIVClientStructs.FFXIV.Client.Game.Character.CastInfo), typeof(FFXIVClientStructs.FFXIV.Client.Game.UI.PlayerState), typeof(FFXIVClientStructs.FFXIV.Client.Game.ActionManager) })
+    {
+        Console.WriteLine("TYPE " + t.FullName);
+        foreach (var p in t.GetProperties()) Console.WriteLine(p);
+        foreach (var f in t.GetFields().Where(f => !f.Name.Contains("Virtual") && f.Name != "Addresses")) Console.WriteLine(f);
+        foreach (var m in t.GetMethods().Where(m => m.Name is "GetCastInfo" or "UseAction" or "GetActionStatus" or "Instance")) Console.WriteLine(m);
+    }
+    return;
+}
+
 if (args.FirstOrDefault() == "--chat-api")
 {
     foreach (var name in Enum.GetNames<Dalamud.Game.Text.XivChatType>())
@@ -107,6 +164,20 @@ if (args.FirstOrDefault() == "--automation-api")
 if (args.Length > 0)
 {
     using var game = new Lumina.GameData(args[0], new Lumina.LuminaOptions { DefaultExcelLanguage = Lumina.Data.Language.ChineseSimplified });
+    if (args.Contains("--crystal-data"))
+    {
+        foreach (var id in new uint[] { 2415,2429,2436,2463,2474,2472,2473,2531,2540,2541,2542,2876,2891,2892 })
+            Console.WriteLine($"{id}: {game.Excel.GetSheet<PlaceName>()!.GetRow(id).Name.ExtractText()}");
+        return;
+    }
+    if (args.Contains("--arrival-data"))
+    {
+        foreach (var action in game.Excel.GetSheet<GeneralAction>()!)
+            if (action.RowId < 30) Console.WriteLine($"GeneralAction {action.RowId} {action.Name.ExtractText()} action={action.Action.RowId}");
+        foreach (var id in new uint[] { 1332, 1351, 1412, 1422 })
+        { var row = game.Excel.GetSheet<Fate>()!.GetRow(id); Console.WriteLine($"Fate {id} {row.Name.ExtractText()} level={row.ClassJobLevel} max={row.ClassJobLevelMax}"); }
+        return;
+    }
     if (args.Contains("--chat-commands"))
     {
         foreach (var command in game.Excel.GetSheet<TextCommand>()!)

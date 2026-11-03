@@ -3,13 +3,18 @@ using System.Numerics;
 namespace ULKHelper.Automation;
 
 internal sealed record PlayerIdentity(string Name, uint HomeWorld);
-internal sealed record PlayerEntry(PlayerIdentity Identity, string WorldName, Vector3 Position, float Distance);
+internal sealed record PlayerEntry(PlayerIdentity Identity, string WorldName, Vector3 Position, float Distance, bool IsLoaded = true);
 internal sealed record MapDestination(uint Territory, uint Map, Vector3 Position, string Label);
-internal sealed record FateEntry(ushort Id, string Name, Vector3 Position);
+internal sealed record FateEntry(ushort Id, string Name, Vector3 Position, int StartedAt = 0);
 internal readonly record struct WorldContext(uint Territory, uint Map, uint Instance, ulong PlayerId);
 
 internal static class NavigationRules
 {
+    public static WorldContext TransferContext(WorldContext current, WorldContext previous, bool loggedIn, bool transferring, bool loading)
+        => loggedIn && transferring && loading && (current.PlayerId == previous.PlayerId || current.PlayerId == 0)
+            && (current.Territory == previous.Territory || current.Territory == 0) && (current.Map == previous.Map || current.Map == 0)
+            && current.Instance == previous.Instance ? previous : current;
+
     // Local Chinese Fate sheet 2026.10.06: Eureka=1 / Rule=1 are the 67 NMs;
     // the five Happy Bunny events use Rule=4. Other Eureka values describe other content.
     public static bool IsEurekaNm(byte eureka, byte rule) => eureka == 1 && rule == 1;

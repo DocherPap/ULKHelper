@@ -11,6 +11,11 @@ internal sealed class LeaderListenerHelper
     public bool Listening { get; private set; }
     public MapDestination? Destination { get; private set; }
     public IReadOnlyList<LeaderMessage> History => history.Reverse().ToArray();
+    public void RecordActivity(DateTimeOffset time, string category, string text, string result)
+    {
+        history.Enqueue(new(time, category, text, result));
+        while (history.Count > 50) history.Dequeue();
+    }
     public string Status { get; private set; } = "请选择车头。";
 
     public void Select(PlayerIdentity identity)
@@ -47,8 +52,7 @@ internal sealed class LeaderListenerHelper
             else if (mark(link)) { Destination = link; result = "已在地图标记目的地。"; }
             else result = "地图标记失败。";
         }
-        history.Enqueue(new(time, channel, text, result));
-        while (history.Count > 50) history.Dequeue();
+        RecordActivity(time, channel, text, result);
         Status = result;
         return true;
     }

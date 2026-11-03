@@ -25,12 +25,13 @@ public sealed class Plugin : IDalamudPlugin
     public Plugin(IDalamudPluginInterface pluginInterface, ICommandManager commandManager, IFramework framework,
         IClientState clientState, IPlayerState playerState, IDataManager dataManager, IGameInventory gameInventory,
         IAddonLifecycle addonLifecycle, IPluginLog log, IGameGui gameGui, IObjectTable objects,
-        IFateTable fates, ICondition conditions, IChatGui chat, ITextureProvider textures, ISigScanner scanner)
+        IFateTable fates, ICondition conditions, IChatGui chat, ITextureProvider textures, ISigScanner scanner, IPartyList party,
+        IGameInteropProvider interop, ITargetManager targets)
     {
         this.pluginInterface = pluginInterface;
         this.commandManager = commandManager;
         inventoryTracker = new(pluginInterface, framework, clientState, playerState, dataManager, gameInventory, addonLifecycle, log, gameGui);
-        automation = new(pluginInterface, framework, clientState, objects, fates, conditions, chat, gameGui, log);
+        automation = new(pluginInterface, framework, clientState, objects, fates, conditions, chat, gameGui, log, party, dataManager, interop, playerState, commandManager, targets);
         IReadOnlyList<WeatherZone> weatherZones = [];
         string? weatherError = null;
         try { weatherZones = WeatherCatalogLoader.Load(dataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>()!); }
@@ -44,13 +45,17 @@ public sealed class Plugin : IDalamudPlugin
         windows.AddWindow(mainWindow);
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "打开优雷卡助手。",
+            HelpMessage = "打开优雷卡助手；/ulk refreshplayers 手动刷新岛内玩家名单。",
         });
         pluginInterface.UiBuilder.Draw += windows.Draw;
         pluginInterface.UiBuilder.OpenMainUi += OpenMainUi;
     }
 
-    private void OnCommand(string command, string arguments) => OpenMainUi();
+    private void OnCommand(string command, string arguments)
+    {
+        if (arguments.Trim().Equals("refreshplayers", StringComparison.OrdinalIgnoreCase)) automation.RefreshPlayers();
+        else OpenMainUi();
+    }
 
     private void OpenMainUi() => mainWindow.IsOpen = true;
 

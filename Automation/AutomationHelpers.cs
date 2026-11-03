@@ -229,6 +229,7 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
         {
             var now = DateTimeOffset.UtcNow;
             settings?.Flush();
+            combat.TickMagiaRestore();
             var world = Context();
             var transferScreen = conditions[ConditionFlag.BetweenAreas] || conditions[ConditionFlag.BetweenAreas51] || objects.LocalPlayer == null;
             world = NavigationRules.TransferContext(world, previous, client.IsLoggedIn, navigation.Transferring || debug.Transferring, transferScreen);

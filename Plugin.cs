@@ -20,6 +20,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly InventoryTracker inventoryTracker;
     private readonly AutomationHelpers automation;
     private readonly FateMapTracker fateTracker;
+    private readonly Logos.LogosService logos = new();
     private bool disposed;
     private readonly SettingsStore settings;
 
@@ -43,7 +44,7 @@ public sealed class Plugin : IDalamudPlugin
             log.Error(ex, "加载优雷卡天气表失败");
         }
         fateTracker = new(dataManager, framework, clientState, objects, fates, gameGui, log, scanner, playerState, chat, settings);
-        mainWindow = new(inventoryTracker, automation, weatherZones, fateTracker, new GameMapTextures(textures), weatherError, settings);
+        mainWindow = new(inventoryTracker, automation, weatherZones, fateTracker, new GameMapTextures(textures), weatherError, settings, new LogosPage(dataManager, objects, logos, settings));
         windows.AddWindow(mainWindow);
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -71,6 +72,7 @@ public sealed class Plugin : IDalamudPlugin
         pluginInterface.UiBuilder.OpenMainUi -= OpenMainUi;
         commandManager.RemoveHandler(CommandName);
         windows.RemoveAllWindows();
+        logos.Dispose();
         automation.Dispose();
         fateTracker.Dispose();
         inventoryTracker.Dispose();

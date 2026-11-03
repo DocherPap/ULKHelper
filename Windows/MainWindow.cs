@@ -17,14 +17,16 @@ internal sealed class MainWindow : Window
     private readonly FateMapPage triggerMap;
     private readonly SettingsStore? settings;
     private readonly DebugTestsPage debugTests;
+    private readonly LogosPage logos;
     private bool firstDraw = true;
     private int selectedTab;
     private DateTimeOffset nextLayout;
 
     public MainWindow(IStatisticsProvider statistics, AutomationHelpers helpers, IReadOnlyList<WeatherZone> weatherZones,
         IFateMapProvider fateProvider, IMapTextures mapTextures,
-        string? weatherError = null, SettingsStore? settings = null) : base("优雷卡助手###ULKHelper.Main")
+        string? weatherError = null, SettingsStore? settings = null, LogosPage? logosPage = null) : base("优雷卡助手###ULKHelper.Main")
     {
+        logos = logosPage!;
         itemStatistics = new(statistics);
         triggerMap = new(fateProvider, mapTextures, weatherZones, helpers);
         automation = new(helpers, triggerMap);
@@ -32,7 +34,7 @@ internal sealed class MainWindow : Window
         fateMap = new(fateProvider, mapTextures, weatherZones, helpers);
         this.settings = settings;
         debugTests = new(helpers, settings);
-        selectedTab = Math.Clamp(settings?.Get("window.tab", 0) ?? 0, 0, 4);
+        selectedTab = Math.Clamp(settings?.Get("window.tab", 0) ?? 0, 0, 5);
         if (settings != null) { itemStatistics.Load(settings); weather.Load(settings); fateMap.Load(settings, "map"); triggerMap.Load(settings, "triggerMap"); automation.Load(settings); }
         Size = settings?.Get("window.size", new Vector2(1280, 780)) ?? new Vector2(1280, 780);
         SizeCondition = ImGuiCond.Once;
@@ -50,7 +52,7 @@ internal sealed class MainWindow : Window
     {
         if (firstDraw && settings != null) LayoutSettings.Restore(settings);
         var restoreTab = selectedTab;
-        var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 4) / 5;
+        var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 5) / 6;
         if (!ImGui.BeginTabBar("##MainPages", ImGuiTabBarFlags.FittingPolicyResizeDown)) return;
         try
         {
@@ -79,16 +81,22 @@ internal sealed class MainWindow : Window
             }
 
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("自动化", firstDraw && restoreTab == 3 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("文理技能", firstDraw && restoreTab == 3 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
                 selectedTab = 3;
+                try { DrawPage(logos.Draw); } finally { ImGui.EndTabItem(); }
+            }
+            ImGui.SetNextItemWidth(tabWidth);
+            if (ImGui.BeginTabItem("自动化", firstDraw && restoreTab == 4 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            {
+                selectedTab = 4;
                 try { DrawPage(DrawAutomationPage); }
                 finally { ImGui.EndTabItem(); }
             }
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("调试测试", firstDraw && restoreTab == 4 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("调试测试", firstDraw && restoreTab == 5 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
-                selectedTab = 4;
+                selectedTab = 5;
                 try { DrawPage(debugTests.Draw); }
                 finally { ImGui.EndTabItem(); }
             }

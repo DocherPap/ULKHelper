@@ -1,0 +1,1127 @@
+{
+ "source": "Recipes: ffxiv-eureka.com/logograms (captured 2026-10-11). Logogram → mnemes: consolegameswiki Logograms page, item ids checked against the game Item sheet (2026-10-17). Names, icons and descriptions: game data.",
+ "shards": [
+  {
+   "item": 24007,
+   "mnemes": [
+    24015,
+    24016,
+    24017,
+    24024,
+    24030,
+    24033,
+    24037
+   ]
+  },
+  {
+   "item": 24008,
+   "mnemes": [
+    24022,
+    24028,
+    24031,
+    24036,
+    24038
+   ]
+  },
+  {
+   "item": 24010,
+   "mnemes": [
+    24020,
+    24032
+   ]
+  },
+  {
+   "item": 24011,
+   "mnemes": [
+    24018,
+    24021
+   ]
+  },
+  {
+   "item": 24009,
+   "mnemes": [
+    24019,
+    24034
+   ]
+  },
+  {
+   "item": 24012,
+   "mnemes": [
+    24025,
+    24029
+   ]
+  },
+  {
+   "item": 24014,
+   "mnemes": [
+    24026,
+    24027
+   ]
+  },
+  {
+   "item": 24013,
+   "mnemes": [
+    24023,
+    24035
+   ]
+  },
+  {
+   "item": 24809,
+   "mnemes": [
+    24810,
+    24813,
+    24812,
+    24811
+   ]
+  }
+ ],
+ "mnemes": [
+  {
+   "item": 24015,
+   "type": "offensive"
+  },
+  {
+   "item": 24016,
+   "type": "offensive"
+  },
+  {
+   "item": 24017,
+   "type": "protective"
+  },
+  {
+   "item": 24037,
+   "type": "protective"
+  },
+  {
+   "item": 24033,
+   "type": "curative"
+  },
+  {
+   "item": 24030,
+   "type": "tactical"
+  },
+  {
+   "item": 24024,
+   "type": "inimical"
+  },
+  {
+   "item": 24036,
+   "type": "curative"
+  },
+  {
+   "item": 24038,
+   "type": "curative"
+  },
+  {
+   "item": 24028,
+   "type": "tactical"
+  },
+  {
+   "item": 24031,
+   "type": "inimical"
+  },
+  {
+   "item": 24022,
+   "type": "mitigative"
+  },
+  {
+   "item": 24020,
+   "type": "offensive"
+  },
+  {
+   "item": 24032,
+   "type": "offensive"
+  },
+  {
+   "item": 24018,
+   "type": "protective"
+  },
+  {
+   "item": 24021,
+   "type": "protective"
+  },
+  {
+   "item": 24019,
+   "type": "curative"
+  },
+  {
+   "item": 24034,
+   "type": "curative"
+  },
+  {
+   "item": 24025,
+   "type": "tactical"
+  },
+  {
+   "item": 24029,
+   "type": "tactical"
+  },
+  {
+   "item": 24026,
+   "type": "inimical"
+  },
+  {
+   "item": 24027,
+   "type": "inimical"
+  },
+  {
+   "item": 24023,
+   "type": "mitigative"
+  },
+  {
+   "item": 24035,
+   "type": "mitigative"
+  },
+  {
+   "item": 24813,
+   "type": "offensive"
+  },
+  {
+   "item": 24811,
+   "type": "offensive"
+  },
+  {
+   "item": 24812,
+   "type": "offensive"
+  },
+  {
+   "item": 24810,
+   "type": "tactical"
+  }
+ ],
+ "actions": [
+  {
+   "number": 1,
+   "action": 12958,
+   "roles": "H",
+   "uses": 3,
+   "recipes": [
+    [
+     24015
+    ]
+   ]
+  },
+  {
+   "number": 2,
+   "action": 12959,
+   "roles": "T",
+   "uses": 3,
+   "recipes": [
+    [
+     24016
+    ]
+   ]
+  },
+  {
+   "number": 3,
+   "action": 12960,
+   "roles": "MPHC",
+   "uses": 3,
+   "recipes": [
+    [
+     24017
+    ]
+   ]
+  },
+  {
+   "number": 4,
+   "action": 12961,
+   "roles": "T",
+   "uses": 3,
+   "recipes": [
+    [
+     24018
+    ],
+    [
+     24017,
+     24022
+    ],
+    [
+     24017,
+     24035
+    ],
+    [
+     24017,
+     24037,
+     24037
+    ],
+    [
+     24035,
+     24035,
+     24035
+    ]
+   ]
+  },
+  {
+   "number": 5,
+   "action": 12962,
+   "roles": "H",
+   "uses": 3,
+   "recipes": [
+    [
+     24019
+    ],
+    [
+     24015,
+     24036
+    ],
+    [
+     24015,
+     24033,
+     24033
+    ],
+    [
+     24034,
+     24034,
+     24034
+    ]
+   ]
+  },
+  {
+   "number": 6,
+   "action": 12963,
+   "roles": "MPC",
+   "uses": 3,
+   "recipes": [
+    [
+     24020
+    ],
+    [
+     24016,
+     24028
+    ],
+    [
+     24016,
+     24016,
+     24016
+    ]
+   ]
+  },
+  {
+   "number": 7,
+   "action": 12964,
+   "roles": "T",
+   "uses": 3,
+   "recipes": [
+    [
+     24029,
+     24029
+    ]
+   ]
+  },
+  {
+   "number": 8,
+   "action": 12965,
+   "roles": "H",
+   "uses": 3,
+   "recipes": [
+    [
+     24020,
+     24034
+    ],
+    [
+     24020,
+     24035
+    ],
+    [
+     24017,
+     24033,
+     24035
+    ]
+   ]
+  },
+  {
+   "number": 9,
+   "action": 12966,
+   "roles": "MPC",
+   "uses": 3,
+   "recipes": [
+    [
+     24020,
+     24018
+    ],
+    [
+     24016,
+     24037,
+     24020
+    ]
+   ]
+  },
+  {
+   "number": 10,
+   "action": 12967,
+   "roles": "THMPC",
+   "uses": 3,
+   "recipes": [
+    [
+     24810
+    ],
+    [
+     24025,
+     24029
+    ],
+    [
+     24029,
+     24029,
+     24029
+    ],
+    [
+     24025,
+     24025,
+     24025
+    ]
+   ]
+  },
+  {
+   "number": 11,
+   "action": 12968,
+   "roles": "THMPC",
+   "uses": 1,
+   "recipes": [
+    [
+     24021
+    ],
+    [
+     24016,
+     24018
+    ],
+    [
+     24015,
+     24016,
+     24017
+    ]
+   ]
+  },
+  {
+   "number": 12,
+   "action": 12969,
+   "roles": "THMPC",
+   "uses": null,
+   "recipes": [
+    [
+     24022
+    ]
+   ]
+  },
+  {
+   "number": 13,
+   "action": 12970,
+   "roles": "THMPC",
+   "uses": null,
+   "recipes": [
+    [
+     24023
+    ],
+    [
+     24036,
+     24022
+    ]
+   ]
+  },
+  {
+   "number": 14,
+   "action": 12971,
+   "roles": "THMPC",
+   "uses": 30,
+   "recipes": [
+    [
+     24038,
+     24027
+    ],
+    [
+     24038,
+     24031,
+     24031
+    ],
+    [
+     24015,
+     24024,
+     24038
+    ],
+    [
+     24027,
+     24027,
+     24027
+    ]
+   ]
+  },
+  {
+   "number": 15,
+   "action": 12972,
+   "roles": "THMPC",
+   "uses": 99,
+   "recipes": [
+    [
+     24020,
+     24032
+    ],
+    [
+     24032,
+     24032,
+     24032
+    ]
+   ]
+  },
+  {
+   "number": 16,
+   "action": 12973,
+   "roles": "THMPC",
+   "uses": 99,
+   "recipes": [
+    [
+     24024
+    ]
+   ]
+  },
+  {
+   "number": 17,
+   "action": 12974,
+   "roles": "THMPC",
+   "uses": 99,
+   "recipes": [
+    [
+     24024,
+     24026
+    ],
+    [
+     24024,
+     24024,
+     24024
+    ],
+    [
+     24015,
+     24024,
+     24024
+    ]
+   ]
+  },
+  {
+   "number": 18,
+   "action": 12975,
+   "roles": "THMPC",
+   "uses": 20,
+   "recipes": [
+    [
+     24025,
+     24025
+    ],
+    [
+     24030,
+     24030,
+     24025
+    ]
+   ]
+  },
+  {
+   "number": 19,
+   "action": 12976,
+   "roles": "THMPC",
+   "uses": 50,
+   "recipes": [
+    [
+     24025
+    ],
+    [
+     24028,
+     24028
+    ]
+   ]
+  },
+  {
+   "number": 20,
+   "action": 12977,
+   "roles": "MPC",
+   "uses": 50,
+   "recipes": [
+    [
+     24026
+    ],
+    [
+     24031,
+     24019
+    ],
+    [
+     24015,
+     24024,
+     24031
+    ]
+   ]
+  },
+  {
+   "number": 21,
+   "action": 12978,
+   "roles": "TMP",
+   "uses": 3,
+   "recipes": [
+    [
+     24018,
+     24026
+    ],
+    [
+     24032,
+     24032
+    ],
+    [
+     24026,
+     24026,
+     24026
+    ]
+   ]
+  },
+  {
+   "number": 22,
+   "action": 12979,
+   "roles": "MPHC",
+   "uses": null,
+   "recipes": [
+    [
+     24027
+    ],
+    [
+     24036,
+     24019
+    ],
+    [
+     24036,
+     24036,
+     24036
+    ],
+    [
+     24031,
+     24031,
+     24031
+    ]
+   ]
+  },
+  {
+   "number": 23,
+   "action": 12980,
+   "roles": "TH",
+   "uses": null,
+   "recipes": [
+    [
+     24028
+    ]
+   ]
+  },
+  {
+   "number": 24,
+   "action": 12981,
+   "roles": "TMPHC",
+   "uses": 50,
+   "recipes": [
+    [
+     24029
+    ],
+    [
+     24019,
+     24023
+    ]
+   ]
+  },
+  {
+   "number": 25,
+   "action": 12982,
+   "roles": "THMPC",
+   "uses": 99,
+   "recipes": [
+    [
+     24030,
+     24029
+    ],
+    [
+     24016,
+     24030,
+     24028
+    ]
+   ]
+  },
+  {
+   "number": 26,
+   "action": 12983,
+   "roles": "THMPC",
+   "uses": 99,
+   "recipes": [
+    [
+     24030
+    ]
+   ]
+  },
+  {
+   "number": 27,
+   "action": 12984,
+   "roles": "THMPC",
+   "uses": 50,
+   "recipes": [
+    [
+     24031
+    ]
+   ]
+  },
+  {
+   "number": 28,
+   "action": 12985,
+   "roles": "THMPC",
+   "uses": 30,
+   "recipes": [
+    [
+     24032
+    ],
+    [
+     24033,
+     24020
+    ],
+    [
+     24016,
+     24016,
+     24033
+    ]
+   ]
+  },
+  {
+   "number": 29,
+   "action": 12986,
+   "roles": "THMPC",
+   "uses": 50,
+   "recipes": [
+    [
+     24032,
+     24023
+    ],
+    [
+     24021,
+     24026
+    ],
+    [
+     24015,
+     24016,
+     24033
+    ]
+   ]
+  },
+  {
+   "number": 30,
+   "action": 12987,
+   "roles": "T",
+   "uses": 50,
+   "recipes": [
+    [
+     24020,
+     24025
+    ],
+    [
+     24016,
+     24037,
+     24025
+    ]
+   ]
+  },
+  {
+   "number": 31,
+   "action": 12988,
+   "roles": "TMPC",
+   "uses": 50,
+   "recipes": [
+    [
+     24036,
+     24027
+    ],
+    [
+     24033,
+     24036,
+     24028
+    ]
+   ]
+  },
+  {
+   "number": 32,
+   "action": 12989,
+   "roles": "TMPC",
+   "uses": null,
+   "recipes": [
+    [
+     24033
+    ]
+   ]
+  },
+  {
+   "number": 33,
+   "action": 12990,
+   "roles": "MPC",
+   "uses": 50,
+   "recipes": [
+    [
+     24034
+    ],
+    [
+     24033,
+     24019
+    ],
+    [
+     24033,
+     24033,
+     24033
+    ],
+    [
+     24038,
+     24038,
+     24038
+    ]
+   ]
+  },
+  {
+   "number": 34,
+   "action": 12991,
+   "roles": "THMPC",
+   "uses": 99,
+   "recipes": [
+    [
+     24035
+    ],
+    [
+     24022,
+     24023
+    ],
+    [
+     24022,
+     24022,
+     24022
+    ],
+    [
+     24023,
+     24023,
+     24023
+    ]
+   ]
+  },
+  {
+   "number": 35,
+   "action": 12992,
+   "roles": "TMPC",
+   "uses": 50,
+   "recipes": [
+    [
+     24032,
+     24019
+    ],
+    [
+     24034,
+     24034
+    ],
+    [
+     24033,
+     24033,
+     24019
+    ]
+   ]
+  },
+  {
+   "number": 36,
+   "action": 12993,
+   "roles": "TMPC",
+   "uses": 99,
+   "recipes": [
+    [
+     24031,
+     24034
+    ],
+    [
+     24028,
+     24034
+    ],
+    [
+     24033,
+     24033,
+     24028
+    ]
+   ]
+  },
+  {
+   "number": 37,
+   "action": 12994,
+   "roles": "TMPC",
+   "uses": null,
+   "recipes": [
+    [
+     24036
+    ]
+   ]
+  },
+  {
+   "number": 38,
+   "action": 12995,
+   "roles": "MPHC",
+   "uses": null,
+   "recipes": [
+    [
+     24037
+    ]
+   ]
+  },
+  {
+   "number": 39,
+   "action": 12996,
+   "roles": "TMPC",
+   "uses": 99,
+   "recipes": [
+    [
+     24038
+    ]
+   ]
+  },
+  {
+   "number": 40,
+   "action": 12997,
+   "roles": "HC",
+   "uses": 99,
+   "recipes": [
+    [
+     24020,
+     24018,
+     24019
+    ]
+   ]
+  },
+  {
+   "number": 41,
+   "action": 12998,
+   "roles": "MPHC",
+   "uses": 30,
+   "recipes": [
+    [
+     24022,
+     24018,
+     24035
+    ]
+   ]
+  },
+  {
+   "number": 42,
+   "action": 12999,
+   "roles": "MPHC",
+   "uses": 30,
+   "recipes": [
+    [
+     24018,
+     24023,
+     24035
+    ]
+   ]
+  },
+  {
+   "number": 43,
+   "action": 13000,
+   "roles": "THMPC",
+   "uses": 99,
+   "recipes": [
+    [
+     24022,
+     24019,
+     24023
+    ]
+   ]
+  },
+  {
+   "number": 44,
+   "action": 13001,
+   "roles": "T",
+   "uses": 30,
+   "recipes": [
+    [
+     24031,
+     24020,
+     24026
+    ]
+   ]
+  },
+  {
+   "number": 45,
+   "action": 13002,
+   "roles": "H",
+   "uses": 99,
+   "recipes": [
+    [
+     24015,
+     24019,
+     24034
+    ]
+   ]
+  },
+  {
+   "number": 46,
+   "action": 13003,
+   "roles": "H",
+   "uses": 99,
+   "recipes": [
+    [
+     24015,
+     24027,
+     24027
+    ]
+   ]
+  },
+  {
+   "number": 47,
+   "action": 13004,
+   "roles": "H",
+   "uses": 50,
+   "recipes": [
+    [
+     24019,
+     24027,
+     24027
+    ]
+   ]
+  },
+  {
+   "number": 48,
+   "action": 13005,
+   "roles": "HC",
+   "uses": 10,
+   "recipes": [
+    [
+     24813
+    ],
+    [
+     24021,
+     24019,
+     24035
+    ]
+   ]
+  },
+  {
+   "number": 49,
+   "action": 13006,
+   "roles": "TM",
+   "uses": 10,
+   "recipes": [
+    [
+     24812
+    ],
+    [
+     24020,
+     24032,
+     24018
+    ]
+   ]
+  },
+  {
+   "number": 50,
+   "action": 13007,
+   "roles": "P",
+   "uses": 30,
+   "recipes": [
+    [
+     24811
+    ],
+    [
+     24020,
+     24021,
+     24026
+    ]
+   ]
+  },
+  {
+   "number": 51,
+   "action": 14476,
+   "roles": "MPC",
+   "uses": 99,
+   "recipes": [
+    [
+     24810,
+     24810
+    ],
+    [
+     24029,
+     24027,
+     24810
+    ]
+   ]
+  },
+  {
+   "number": 52,
+   "action": 14477,
+   "roles": "C",
+   "uses": 3,
+   "recipes": [
+    [
+     24015,
+     24019,
+     24813
+    ],
+    [
+     24018,
+     24035,
+     24813
+    ]
+   ]
+  },
+  {
+   "number": 53,
+   "action": 14478,
+   "roles": "M",
+   "uses": 3,
+   "recipes": [
+    [
+     24020,
+     24020,
+     24812
+    ],
+    [
+     24030,
+     24032,
+     24812
+    ]
+   ]
+  },
+  {
+   "number": 54,
+   "action": 14479,
+   "roles": "P",
+   "uses": 3,
+   "recipes": [
+    [
+     24025,
+     24026,
+     24811
+    ],
+    [
+     24028,
+     24031,
+     24811
+    ]
+   ]
+  },
+  {
+   "number": 55,
+   "action": 14480,
+   "roles": "T",
+   "uses": 3,
+   "recipes": [
+    [
+     24017,
+     24037,
+     24812
+    ],
+    [
+     24022,
+     24021,
+     24812
+    ]
+   ]
+  },
+  {
+   "number": 56,
+   "action": 14481,
+   "roles": "H",
+   "uses": 10,
+   "recipes": [
+    [
+     24036,
+     24038,
+     24813
+    ]
+   ]
+  }
+ ]
+}

@@ -2,12 +2,17 @@ using System.Reflection;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
+if(args.FirstOrDefault()=="--magia-api"){
+ foreach(var t in new[]{typeof(FFXIVClientStructs.FFXIV.Client.Game.Event.EventFramework),typeof(FFXIVClientStructs.FFXIV.Client.Game.InstanceContent.PublicContentEureka),typeof(FFXIVClientStructs.FFXIV.Client.Game.UI.UIState)})foreach(var m in t.GetMethods().Where(m=>m.Name.Contains("Instance")||m.Name.Contains("PublicContent")||m.Name.Contains("Eureka")))Console.WriteLine(t.Name+" "+m);return;}
 if (args.FirstOrDefault() == "--rsr-settings")
 {
  var dir=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"XIVLauncherCN/installedPlugins/RotationSolver/7.5.7.15");
  System.Runtime.Loader.AssemblyLoadContext.Default.Resolving += (_,n)=>File.Exists(Path.Combine(dir,n.Name+".dll"))?Assembly.LoadFrom(Path.Combine(dir,n.Name+".dll")):null;
- foreach(var file in Directory.GetFiles(dir,"*.dll").Where(f=>Path.GetFileName(f).Contains("RotationSolver")))
+ foreach(var file in Directory.GetFiles(dir,"*.dll").Where(f=>Path.GetFileName(f)=="RotationSolver.dll"))
  {var a=Assembly.LoadFrom(file);Type[] ts;try{ts=a.GetTypes();}catch(ReflectionTypeLoadException e){ts=e.Types.OfType<Type>().ToArray();}
+ Console.WriteLine("SERVICES "+string.Join(",",ts.Where(t=>t.Name.Contains("Service")||t.Name.Contains("Svc")).Select(t=>t.FullName)));
+ foreach(var t0 in ts.Where(t=>!t.FullName!.Contains("SourceGenerator"))) foreach(var f0 in t0.GetFields(BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic).Where(f=>f.FieldType.Name=="Configs"))Console.WriteLine("ROOT "+t0.FullName+" "+f0);
+ foreach(var t0 in ts) foreach(var pp in t0.GetProperties(BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic).Where(p=>p.Name.Contains("Config")))Console.WriteLine("ROOTPROP "+t0.FullName+" "+pp);
  foreach(var t in ts.Where(t=>t.FullName!.Contains("Config")||t.Name.Contains("Targeting")||t.Name=="DataCenter"||t.Name=="StateCommandType"||t.Name=="Service"||t.Name=="TargetHostileType"))
  {var props=t.GetProperties().Where(p=>p.Name.Contains("Target")||p.Name.Contains("Hostile")||p.Name.Contains("Config")||p.Name.Contains("State")||p.Name.Contains("Manual")).ToArray();
  if(props.Length>0||t.IsEnum){Console.WriteLine("TYPE "+t.FullName);foreach(var p in props)Console.WriteLine(p);foreach(var f in t.GetFields(BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic).Where(f=>f.FieldType.Name=="Configs"))Console.WriteLine("CONFIG FIELD "+f);if(t.IsEnum)Console.WriteLine(string.Join(",",Enum.GetNames(t)));}}

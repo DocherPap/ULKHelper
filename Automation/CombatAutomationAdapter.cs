@@ -12,6 +12,62 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     IObjectTable objects, ITargetManager targets) : IFellingCombat, ITriggerCombat
 {
     private bool reborn, rotationOwned, aiOwned;
+    private bool triggerAuto;
+    private Assembly? triggerOwner;
+    private object? triggerConfig, hostileBefore, hostileWritten, targetingBefore, targetingWritten;
+    private string? triggerModeBefore;
+    private readonly TriggerMagia magia = new(commands, objects);
+    public string? BeginTrigger()
+    {
+        try
+        {
+            triggerOwner=CurrentRotationOwner();
+            if(triggerOwner==null)return "RSR未加载。";
+            triggerConfig=RotationType("RotationSolver.Basic.Service").GetProperty("Config",BindingFlags.Static|BindingFlags.Public)?.GetValue(null)
+                ?? throw new InvalidOperationException("无法读取RSR配置。");
+            hostileBefore=triggerConfig.GetType().GetProperty("HostileType")!.GetValue(triggerConfig);
+            targetingBefore=RotationType("RotationSolver.Basic.DataCenter").GetProperty("TargetingTypeOverride")!.GetValue(null);
+            if(!magia.Begin())return magia.Error;
+            triggerModeBefore=RotationRequested()?(ManualRequested()?"Manual":"Auto"):"Off";
+            return null;
+        }
+        catch(Exception ex){return "触发设置准备失败："+ex.GetBaseException().Message;}
+    }
+    public bool PrepareTarget(ulong id,bool fighting)
+    {
+        if(!ReferenceEquals(triggerOwner,CurrentRotationOwner())||!Target(id))return false;
+        var npc=objects.OfType<IBattleNpc>().FirstOrDefault(n=>n.GameObjectId==id);
+        var level=TriggerGameReader.Level();
+        if(npc==null||level==null)return false;
+        var tank=objects.LocalPlayer?.ClassJob.Value.Role==1;
+        var attack=npc.Level<level || npc.Level<=level+2 && tank;
+        if(!magia.Apply(attack))return false;
+        var property=triggerConfig!.GetType().GetProperty("HostileType")!;
+        hostileWritten=Enum.Parse(property.PropertyType,fighting?"TargetsHaveTarget":"AllTargetsCanAttack");property.SetValue(triggerConfig,hostileWritten);
+        var target=RotationType("RotationSolver.Basic.DataCenter").GetProperty("TargetingTypeOverride")!;
+        targetingWritten=fighting?Enum.Parse(Nullable.GetUnderlyingType(target.PropertyType)??target.PropertyType,"HighHP"):targetingBefore;
+        target.SetValue(null,targetingWritten);
+        if(rotationOwned && triggerAuto!=fighting) Disable();
+        triggerAuto=fighting;
+        return true;
+    }
+    public void EndTrigger()
+    {
+        if(triggerModeBefore==null)return;
+        try
+        {
+            if(ReferenceEquals(triggerOwner,CurrentRotationOwner()))
+            {
+                var property=triggerConfig?.GetType().GetProperty("HostileType");
+                if(property!=null && Equals(property.GetValue(triggerConfig),hostileWritten))property.SetValue(triggerConfig,hostileBefore);
+                var target=RotationType("RotationSolver.Basic.DataCenter").GetProperty("TargetingTypeOverride")!;
+                if(Equals(target.GetValue(null),targetingWritten))target.SetValue(null,targetingBefore);
+                if(!RotationRequested())RotationMode(triggerModeBefore);
+            }
+        }
+        finally {triggerModeBefore=null;triggerOwner=null;triggerConfig=null;triggerAuto=false;magia.Restore();}
+    }
+    public void TickMagiaRestore(){if(triggerModeBefore==null)magia.Restore();}
     private readonly Dictionary<string, (string Before, string Written)> settings = new();
     private string? presetBefore;
     private Assembly? rotationOwner;
@@ -177,7 +233,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             var error = CheckReady();
             if (error != null) { Error = error; return false; }
             rotationOwner = CurrentRotationOwner(); rotationOwned = true;
-            RotationMode("Manual");
+            RotationMode(triggerAuto ? "Auto" : "Manual");
             if (!StationaryHealthy) throw new InvalidOperationException("自动循环未启用。");
             return true;
         }
@@ -186,7 +242,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     public bool StationaryHealthy
     {
         get { try { return rotationOwned && !aiOwned && ReferenceEquals(rotationOwner, CurrentRotationOwner())
-            && ManualRequested() && RotationActive() && !AIActive(); } catch { return false; } }
+            && (triggerAuto ? RotationRequested() && !ManualRequested() : ManualRequested()) && RotationActive() && !AIActive(); } catch { return false; } }
     }
     public bool Healthy
     {
@@ -202,7 +258,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         { aiOwned = false; settings.Clear(); presetBefore = null; bossOwner = null; }
         try
         {
-            if (rotationOwned && RotationRequested() && !ManualRequested()) rotationOwned = false;
+            if (rotationOwned && RotationRequested() && !ManualRequested() && !triggerAuto) rotationOwned = false;
             if (aiOwned && reborn && aiBehaviour != null && RebornBehaviour() is { } current && !ReferenceEquals(current, aiBehaviour)) aiOwned = false;
         }
         catch { }

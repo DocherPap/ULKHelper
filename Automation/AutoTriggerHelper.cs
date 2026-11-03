@@ -14,6 +14,9 @@ internal sealed record TriggerFrame(WorldContext World, Vector3 Position, bool S
     int? Level, IReadOnlyList<TriggerMob> Mobs, IReadOnlySet<ushort> ActiveFates);
 internal interface ITriggerCombat
 {
+    string? BeginTrigger() => null;
+    void EndTrigger() { }
+    bool PrepareTarget(ulong id, bool fighting) => Target(id);
     string? PrepareStart();
     bool Target(ulong id);
     bool EnableStationary();
@@ -77,8 +80,8 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         if (requested.Any(p => p.Mode == TriggerMode.Recorded && (p.Route.Length < 2 || p.Route.Length > 128 || p.Route.Any(v => !NavigationRules.Finite(v)))))
         { Status = "特殊触发需先记录本岛起点和终点（最多128点）。"; return false; }
         if (!mesh.Ready || mesh.Busy || mesh.Route.Count > 0) { Status = "导航网格未就绪或正在使用。"; return false; }
-        var error = combat.PrepareStart();
-        if (error != null) { Status = error; return false; }
+        var error = combat.BeginTrigger() ?? combat.PrepareStart();
+        if (error != null) { combat.EndTrigger(); Status = error; return false; }
         huntOrder.Clear(); appeared.Clear(); searchedKnown.Clear(); scannedRing = false; plans.Clear(); plans.AddRange(requested); kills.Clear(); seen.Clear(); pulled.Clear(); waypoints.Clear();
         world = frame.World; started = phaseAt = now; actionAt = default; lastScan = default; attempts = 0; index = 0;
         pullLimit = batch == 21 ? int.MaxValue : Math.Clamp(batch, 1, 20);
@@ -87,7 +90,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         Status = "自动触发已开始（会话上限2小时）。"; return true;
     }
     public void Stop(string reason = "已停止自动触发。")
-    { Active = false; move.Stop(); if (rotation) combat.Disable(); rotation = false; waypoints.Clear(); pulled.Clear(); seen.Clear(); Status = reason; }
+    { Active = false; move.Stop(); if (rotation) combat.Disable(); rotation = false; combat.EndTrigger(); waypoints.Clear(); pulled.Clear(); seen.Clear(); Status = reason; }
     private void SetPhase(Phase value, DateTimeOffset now) { phase = value; phaseAt = now; attempts = 0; actionAt = default; }
     private bool Riding(bool desired, TriggerFrame frame, DateTimeOffset now)
     {
@@ -104,9 +107,9 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         if (!walking) Stop(move.Status);
         return walking;
     }
-    private bool StartRotation(ulong id)
+    private bool StartRotation(ulong id, bool fighting = false)
     {
-        if (!combat.Target(id)) return false;
+        if (!combat.PrepareTarget(id, fighting)) return false;
         if (!rotation) { rotation = combat.EnableStationary(); if (!rotation) Stop("无法开启原地自动循环。"); }
         return rotation;
     }
@@ -154,7 +157,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             {
                 if (!Riding(false, frame, now)) return;
                 var enemy = living.Where(m => pulled.Contains(m.Id) && m.Aggro).MinBy(m => Vector3.DistanceSquared(frame.Position, m.Position));
-                if (enemy != null) { StartRotation(enemy.Id); return; }
+                if (enemy != null) { StartRotation(enemy.Id, true); return; }
                 if (frame.InCombat) return; // Unknown/unloaded enemies are not counted as dead.
                 if (!EndRotation()) return;
                 pulled.Clear(); target = 0;

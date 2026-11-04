@@ -53,7 +53,8 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
             target = fate == null ? goal.Position : NavigationRules.StandOff(player, fate.Position, 25);
             arrival = null;
             departAt = fate == null && waitWithoutFate ? now.AddSeconds(2) : now;
-            Status = fate == null ? "附近无 FATE，等待 2 秒后出发。" : $"目标：{fate.Name} 中心前方 25 米。";
+            Status = fate != null ? $"目标：{fate.Name} 中心前方 25 米。"
+                : waitWithoutFate ? "附近无 FATE，等待 2 秒后出发。" : "准备直接寻路。";
             if (fate != null) RequestPath(player, false);
         }
         catch (Exception ex) { Stop("无法开始导航：" + ex.Message); }

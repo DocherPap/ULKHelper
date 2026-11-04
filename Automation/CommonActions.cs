@@ -122,7 +122,8 @@ internal sealed partial class AutomationHelpers
                 if (crystal == null) { commonStatus = "没有已知水晶。"; return; }
                 commonUsesNavigation = true;
                 StartPointNavigation(new(world.Territory, world.Map, ArrivalRules.Position(player.Position, crystal.Position, 7),
-                    action == CommonAction.Camp ? "入口营地" : "最近的水晶"), false, useCrystals: false);
+                    action == CommonAction.Camp ? "入口营地" : "最近的水晶"), false,
+                    useCrystals: action == CommonAction.Camp, waitWithoutFate: action != CommonAction.Camp);
                 break;
             case CommonAction.Coordinate:
             case CommonAction.Fate:

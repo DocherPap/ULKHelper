@@ -14,7 +14,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     private Phase phase;
     private int dismounts;
     private DateTimeOffset nextDismount;
-    private bool requireMount, resumeFinal, useCrystals;
+    private bool requireMount, resumeFinal, useCrystals, waitWithoutFate;
     private int mountAttempts;
     private DateTimeOffset nextMount;
     public bool Active { get; private set; }
@@ -23,13 +23,14 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     public string Status { get; private set; } = "尚未开始导航。";
     public string? CrystalDecision { get; private set; }
     public MapDestination? TakeArrival() { var result = arrival; arrival = null; return result; }
-    public void Start(MapDestination destination, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool summonMount = false, bool useCrystals = true)
+    public void Start(MapDestination destination, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool summonMount = false, bool useCrystals = true, bool waitWithoutFate = true)
     {
         if (Active) { Status = "请先停止当前导航。"; return; }
         Stop(); CrystalDecision = null; goal = destination; context = world; origin = player; started = now;
         if (destination.Territory != world.Territory || destination.Map != world.Map || !NavigationRules.Finite(player))
         { Stop("目的地范围无效。"); return; }
         requireMount = summonMount; this.useCrystals = useCrystals; resumeFinal = false; mountAttempts = 0; nextMount = now;
+        this.waitWithoutFate = waitWithoutFate;
         Active = true;
         if (requireMount) { phase = Phase.Mount; Status = "检查并召唤所选坐骑。"; return; }
         BeginJourney(player, fates, now);
@@ -130,7 +131,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     private void Final(Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now)
     {
         phase = Phase.Final;
-        walk.Start(goal!, context, player, fates, now);
+        walk.Start(goal!, context, player, fates, now, waitWithoutFate);
         if (!walk.Active) Stop(walk.Status); else Status = walk.Status;
     }
     public void Stop(string reason = "已停止导航。")

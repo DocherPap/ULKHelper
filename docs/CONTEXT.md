@@ -1,5 +1,7 @@
 # 优雷卡助手：开发 context
 
+NPC 对话修复（0.2.0 本地构建）。按 MakoMaster 本机实现核对 Talk、SelectIconString 与原生确认按钮事件，接入常用功能的购物和进岛流程。返回营地去掉两秒等待并允许水晶传送。Debug、Release 和242项自动化离线检查通过，其中3项覆盖营地直达和传送后的即时寻路；购物和进岛待游戏内验证。
+
 0.2.0。正式构建保留六个功能页，单人调试、测试动作和会话记录仅在 Debug 构建可用，离线测试留在源码。README 和打包统一使用 DocherPap/ULKHelper 独立库链。发布流程见 docs/RELEASE.md；常用功能的 NPC 对话、购物和组队仍待游戏内验证。
 
 common-actions.26。新增首个「常用功能」页，七页等宽，旧设置保留原页签。接入黄金港罗德尼行程、四岛进岛、补给购买、岛内坐标及FATE导航、开怪等待、紧急停止、组队与喊话。Debug、Release 与239项自动化离线检查通过。实际 NPC 对话、商店和组队待游戏内验证，见 docs/COMMON_ACTIONS.md。

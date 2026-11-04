@@ -218,16 +218,16 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     {
         var crystal = IslandCrystalRoutes.Entrance(client.TerritoryType);
         if (crystal != null && objects.LocalPlayer is { } player)
-            StartPointNavigation(new(client.TerritoryType, client.MapId, ArrivalRules.Position(player.Position, crystal.Position, 7), "当前岛入口营地"), false);
+            StartPointNavigation(new(client.TerritoryType, client.MapId, ArrivalRules.Position(player.Position, crystal.Position, 7), "当前岛入口营地"), false, waitWithoutFate: false);
         else { usingFollow = false; navigation.Stop("请先进入优雷卡岛内。"); }
     });
-    private void StartPointNavigation(MapDestination destination, bool useNm = true, bool useCrystals = true)
+    private void StartPointNavigation(MapDestination destination, bool useNm = true, bool useCrystals = true, bool waitWithoutFate = true)
     {
         if (commonJourney.Active || trigger.Active || DebugActive) return;
         follow.Stop(); navigation.Stop(); arrivalGame.Reset(); usingFollow = false;
         if (!CanMove()) { navigation.Stop("当前角色状态不允许移动，请脱战并结束交互后重试。"); return; }
         pointNm = useNm;
-        navigation.Start(destination, Context(), objects.LocalPlayer!.Position, useNm ? ReadFates() : [], DateTimeOffset.UtcNow, mounts.Selected != 0, useCrystals);
+        navigation.Start(destination, Context(), objects.LocalPlayer!.Position, useNm ? ReadFates() : [], DateTimeOffset.UtcNow, mounts.Selected != 0, useCrystals, waitWithoutFate);
     }
     public void Follow(bool enabled) => commands.Enqueue(() =>
     {

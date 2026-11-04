@@ -2,6 +2,7 @@ using System.Numerics;
 using Dalamud.Game.ClientState.Conditions;
 using ObjectKind = Dalamud.Game.ClientState.Objects.Enums.ObjectKind;
 using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -20,6 +21,7 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
 {
     private const uint Kugane = 628, Rodney = 1024517, Potion = 22306;
     private const int Quantity = 99, UnitPrice = 300;
+    private const string VendorName = "调查队的补给负责人";
     private static readonly Vector3 RodneyPosition = new(-133.147f, -5.02026f, 149.283f);
     private static readonly Dictionary<uint, Vector2> Vendors = new()
     {
@@ -34,9 +36,10 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
     private bool purchase, requestedPier, ownsLifestream, confirmed, commenced, openedIslandMenu;
     private ulong actor;
     private DateTimeOffset began, stageAt;
-    private DateTimeOffset nextDismount;
+    private DateTimeOffset nextDismount, nextDialogueAction;
     private int inventoryBefore;
     private uint gilBefore;
+    private uint purchaseShopId;
     public bool Active { get; private set; }
     public string Status { get; private set; } = "请选择常用功能。";
 
@@ -59,6 +62,7 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
         origin = world; began = now; actor = 0;
         requestedPier = ownsLifestream = confirmed = commenced = openedIslandMenu = false;
         nextDismount = now;
+        nextDialogueAction = now;
         Active = true;
         if (purchase)
         {
@@ -156,29 +160,47 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
                     ChangeStage(Stage.Menu, now, "等待NPC菜单。");
                     break;
                 case Stage.Menu:
-                    if (now - stageAt > TimeSpan.FromSeconds(15)) { Stop("无法确认NPC菜单，请检查解锁状态或对话。"); return; }
+                    if (now - stageAt > TimeSpan.FromSeconds(20)) { Stop("NPC对话超时。" + DialogueDetail()); return; }
                     if (!OwnTarget()) { Stop("NPC目标已改变。"); return; }
+                    if (now < nextDialogueAction) break;
                     if (purchase)
                     {
                         if (Addon("Shop") is not null) { Buy(now); break; }
-                        if (!confirmed && TrySelectOption(text => text == "购买道具" || text == "购买物品")) confirmed = true;
+                        if (!confirmed && TrySelectOption(text => text is "购买" or "购买道具" or "购买物品" or "购买消耗品"))
+                        {
+                            confirmed = true;
+                            nextDialogueAction = now.AddMilliseconds(900);
+                            Status = "已选择购买，等待商店打开。";
+                            break;
+                        }
                     }
                     else if (TrySelectOption(IsIslandOption))
                     {
                         confirmed = false;
+                        nextDialogueAction = now.AddMilliseconds(600);
                         ChangeStage(Stage.Enter, now, $"已选择{islandName}，等待进岛。");
                     }
                     else if (!openedIslandMenu && TrySelectOption(text => text.Trim() is "进入禁地优雷卡" or "前往禁地优雷卡"))
                     {
                         openedIslandMenu = true;
                         stageAt = now;
+                        nextDialogueAction = now.AddMilliseconds(900);
+                        break;
                     }
+                    if (stage == Stage.Menu && AdvanceTalk(purchase ? VendorName : "罗德尼"))
+                        nextDialogueAction = now.AddMilliseconds(400);
                     break;
                 case Stage.Enter:
-                    if (now - stageAt >= TimeSpan.FromSeconds(90)) { Stop("未确认进入所选岛屿。"); return; }
+                    if (now - stageAt >= TimeSpan.FromSeconds(90)) { Stop("未确认进入所选岛屿。" + DialogueDetail()); return; }
+                    if (now < nextDialogueAction) break;
                     if (!confirmed && ConfirmPrompt(text => text.Contains(islandName, StringComparison.Ordinal)))
+                    {
                         confirmed = true;
-                    if (!commenced && ConfirmDuty()) commenced = true;
+                        nextDialogueAction = now.AddMilliseconds(900);
+                        break;
+                    }
+                    if (!commenced && ConfirmDuty()) { commenced = true; break; }
+                    if (OwnTarget() && AdvanceTalk("罗德尼")) nextDialogueAction = now.AddMilliseconds(400);
                     break;
                 case Stage.Purchase:
                     VerifyPurchase(now);
@@ -210,7 +232,7 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
 
     private IGameObject? FindNpc(Vector3 player) => objects
         .Where(o => o.Address != 0 && o.IsTargetable && o.ObjectKind == ObjectKind.EventNpc
-            && (purchase ? o.Name.TextValue == "调查队的补给负责人" : o.BaseId == Rodney && o.Name.TextValue == "罗德尼"))
+            && (purchase ? o.Name.TextValue == VendorName : o.BaseId == Rodney && o.Name.TextValue == "罗德尼"))
         .MinBy(o => Vector3.DistanceSquared(o.Position, player));
 
     private bool OwnTarget() => actor != 0 && TargetSystem.Instance() != null
@@ -220,64 +242,133 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
 
     private bool IsIslandOption(string text)
     {
-        text = text.Trim();
+        text = text.Trim().TrimEnd('。', '！', '？');
         foreach (var prefix in new[] { "进入", "前往", "参加", "探索" })
         {
             if (!text.StartsWith(prefix, StringComparison.Ordinal)) continue;
             text = text[prefix.Length..].TrimStart();
             break;
         }
-        return text == islandName || text == "禁地优雷卡 " + islandName || text == "禁地优雷卡：" + islandName
-            || text == "禁地优雷卡" + islandName;
+        const string title = "禁地优雷卡";
+        if (text.StartsWith(title, StringComparison.Ordinal))
+            text = text[title.Length..].TrimStart(' ', '　', ':', '：', '·');
+        return text == islandName;
     }
 
     private AtkUnitBase* Addon(string name)
     {
         var addon = gui.GetAddonByName(name);
-        return addon.IsNull || !addon.IsVisible || !addon.IsReady ? null : (AtkUnitBase*)addon.Address;
+        if (!addon.IsNull && addon.IsVisible && addon.IsReady) return (AtkUnitBase*)addon.Address;
+        var manager = RaptureAtkUnitManager.Instance();
+        if (manager == null) return null;
+        var units = &manager->AllLoadedUnitsList;
+        for (var i = 0; i < Math.Min((int)units->Count, units->Entries.Length); i++)
+        {
+            var unit = units->Entries[i].Value;
+            if (unit != null && unit->IsVisible && unit->IsReady && unit->NameString == name) return unit;
+        }
+        return null;
     }
 
-    private bool HasDialog() => Addon("SelectString") != null || Addon("SelectYesno") != null
+    private bool HasDialog() => Addon("SelectString") != null || Addon("SelectIconString") != null || Addon("SelectYesno") != null
         || Addon("Talk") != null || Addon("Shop") != null || Addon("ContentsFinderConfirm") != null;
 
     private bool TrySelectOption(Func<string, bool> matches)
     {
-        var menu = (AddonSelectString*)Addon("SelectString");
-        if (menu == null) return false;
-        var popup = &menu->PopupMenu.PopupMenu;
-        if (popup->EntryNames == null || popup->List == null || popup->EntryCount is < 1 or > 32
-            || popup->List->ListLength < popup->EntryCount) return false;
+        if (Addon("SelectYesno") != null || Addon("ContentsFinderConfirm") != null) return false;
+        var menu = Addon("SelectString");
+        var iconMenu = Addon("SelectIconString");
+        if ((menu == null) == (iconMenu == null)) return false;
+        var popup = menu != null ? &((AddonSelectString*)menu)->PopupMenu.PopupMenu
+            : &((AddonSelectIconString*)iconMenu)->PopupMenu.PopupMenu;
+        if (popup->EntryNames == null || popup->List == null || popup->EntryCount is < 1 or > 32) return false;
         var selected = -1;
         for (var i = 0; i < popup->EntryCount; i++)
         {
-            if (popup->List->GetItemDisabledState(i) || !matches(popup->EntryNames[i].ToString())) continue;
+            if (!matches(SeString.Parse(popup->EntryNames[i].AsSpan()).TextValue.Trim())) continue;
             if (selected >= 0) return false;
             selected = i;
         }
-        return selected >= 0 && Callback((AtkUnitBase*)menu, [selected]);
+        return selected >= 0 && !popup->List->GetItemDisabledState(selected)
+            && Callback(menu != null ? menu : iconMenu, [selected]);
+    }
+
+    private bool AdvanceTalk(string speaker)
+    {
+        if (Addon("SelectString") != null || Addon("SelectIconString") != null || Addon("SelectYesno") != null
+            || Addon("Shop") != null || Addon("ContentsFinderConfirm") != null) return false;
+        var talk = Addon("Talk");
+        var stage = AtkStage.Instance();
+        if (talk == null || stage == null || stage->AtkEventTarget.VirtualTable == null
+            || !VisibleText(talk).Contains(speaker)) return false;
+        AtkEvent dialogue = default;
+        dialogue.Listener = &talk->AtkEventListener;
+        dialogue.Target = &stage->AtkEventTarget;
+        dialogue.State.StateFlags = (AtkEventStateFlags)0x84;
+        AtkEventData eventData = default;
+        var id = talk->Id;
+        foreach (var type in new[] { AtkEventType.MouseDown, AtkEventType.MouseClick, AtkEventType.MouseUp })
+        {
+            var current = Addon("Talk");
+            if (current != talk || current->Id != id) break;
+            current->ReceiveEvent(type, 0, &dialogue, &eventData);
+        }
+        return true;
+    }
+
+    private static List<string> VisibleText(AtkUnitBase* unit)
+    {
+        var result = new List<string>();
+        var nodes = &unit->UldManager;
+        if (nodes->NodeList == null) return result;
+        for (var i = 0; i < Math.Min((int)nodes->NodeListCount, 512); i++)
+        {
+            var node = nodes->NodeList[i];
+            if (node == null || node->Type != NodeType.Text || !node->IsVisible()) continue;
+            var ancestor = node->ParentNode;
+            for (var depth = 0; ancestor != null && ancestor->IsVisible() && depth < 64; depth++)
+                ancestor = ancestor->ParentNode;
+            if (ancestor != null) continue;
+            var text = SeString.Parse(((AtkTextNode*)node)->NodeText.AsSpan()).TextValue.Trim();
+            if (text.Length > 0) result.Add(text);
+        }
+        return result;
+    }
+
+    private string DialogueDetail()
+    {
+        foreach (var name in new[] { "SelectYesno", "ContentsFinderConfirm", "SelectIconString", "SelectString", "Talk", "Shop" })
+        {
+            var unit = Addon(name);
+            if (unit != null) return $" 当前窗口 {name}：{string.Join(" / ", VisibleText(unit).Take(8))}";
+        }
+        return "";
     }
 
     private bool ConfirmPrompt(Func<string, bool> matches)
     {
         var confirm = (AddonSelectYesno*)Addon("SelectYesno");
         return confirm != null && confirm->PromptText != null
-            && matches(confirm->PromptText->NodeText.ToString()) && Callback((AtkUnitBase*)confirm, [0]);
+            && matches(SeString.Parse(confirm->PromptText->NodeText.AsSpan()).TextValue)
+            && ClickButton((AtkUnitBase*)confirm, confirm->YesButton);
     }
 
     private bool ConfirmDuty()
     {
         var addon = (AddonContentsFinderConfirm*)Addon("ContentsFinderConfirm");
-        if (addon == null || addon->AtkTextNode230 == null
-            || !addon->AtkTextNode230->NodeText.ToString().Contains(islandName, StringComparison.Ordinal)) return false;
-        var button = addon->CommenceButton;
-        if (button == null || button->OwnerNode == null || !button->IsEnabled) return false;
+        return addon != null && VisibleText((AtkUnitBase*)addon).Any(text => text.Contains(islandName, StringComparison.Ordinal))
+            && ClickButton((AtkUnitBase*)addon, addon->CommenceButton);
+    }
+
+    private static bool ClickButton(AtkUnitBase* addon, AtkComponentButton* button)
+    {
+        if (button == null || button->OwnerNode == null || !button->IsEnabled || !button->OwnerNode->AtkResNode.IsVisible()) return false;
         var entry = button->OwnerNode->AtkResNode.AtkEventManager.Event;
         for (var i = 0; entry != null && i < 32; i++, entry = entry->NextEvent)
         {
-            if (entry->State.EventType != AtkEventType.ButtonClick || entry->Listener != (AtkEventListener*)addon) continue;
-            var click = *entry;
-            AtkEventData data = default;
-            addon->ReceiveEvent(AtkEventType.ButtonClick, (int)entry->Param, &click, &data);
+            if (entry->State.EventType != AtkEventType.ButtonClick || entry->Listener != &addon->AtkEventListener
+                || entry->Target == null || entry->Target->VirtualTable == null || entry->Param > int.MaxValue) continue;
+            addon->ReceiveEvent(AtkEventType.ButtonClick, (int)entry->Param, entry);
             return true;
         }
         return false;
@@ -313,6 +404,7 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
         inventoryBefore = inventory->GetInventoryItemCount(Potion);
         if (matches.Count != 1 || gilBefore < Quantity * UnitPrice)
         { Stop("恢复药售价、商品条目或金币不足，已停止购买。"); return; }
+        purchaseShopId = shop->Id;
         if (!Callback(shop, [0, matches[0], Quantity])) { Stop("购买指令未提交。"); return; }
         confirmed = false;
         ChangeStage(Stage.Purchase, now, "已提交购买99个恢复药，等待验证。");
@@ -324,10 +416,10 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
         if (inventory != null && inventory->GetInventoryItemCount(Potion) - inventoryBefore == Quantity
             && (long)gilBefore - inventory->GetGil() == Quantity * UnitPrice)
         { Stop("已购买99个优雷卡恢复药。"); return; }
-        if (now - stageAt >= TimeSpan.FromSeconds(15)) { Stop("未确认购买结果，请查看背包和商店。"); return; }
-        if (confirmed || !OwnTarget() || Addon("Shop") == null) return;
+        if (now - stageAt >= TimeSpan.FromSeconds(15)) { Stop("未确认购买结果，请查看背包和商店。" + DialogueDetail()); return; }
+        if (confirmed) return;
         var proxy = ShopEventHandler.AgentProxy.Instance();
-        if (proxy == null || proxy->Handler == null || proxy->Handler->TransactionItemId != Potion
+        if (proxy == null || proxy->AddonId != purchaseShopId || proxy->Handler == null || proxy->Handler->TransactionItemId != Potion
             || proxy->Handler->TransactionItemCount != Quantity) return;
         if (ConfirmPrompt(text => text.Contains("优雷卡恢复药", StringComparison.Ordinal)
             && text.Contains("99", StringComparison.Ordinal))) confirmed = true;

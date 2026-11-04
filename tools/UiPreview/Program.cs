@@ -27,7 +27,7 @@ unsafe class Program
         io.DisplaySize = new Vector2(1280, 780);
         io.DeltaTime = 1f / 60;
         var mapCharacters = "";
-        if (args.Contains("--map") || args.Contains("--automation"))
+        if (args.Contains("--map") || args.Contains("--automation") || args.Contains("--bunny"))
         {
             using var glyphGame = new Lumina.GameData("D:/Program Files (x86)/FFXIV/game/sqpack", new Lumina.LuminaOptions { DefaultExcelLanguage = Lumina.Data.Language.ChineseSimplified });
             mapCharacters = string.Concat(glyphGame.Excel.GetSheet<Lumina.Excel.Sheets.Fate>()!.Where(f => f.EurekaFate == 1).Select(f => f.Name.ExtractText()));
@@ -39,7 +39,12 @@ unsafe class Program
             mapCharacters+=string.Concat(c.Actions.Select(a=>glyphGame.Excel.GetSheet<Lumina.Excel.Sheets.Action>()!.GetRow(a.Action).Name.ExtractText()));
             mapCharacters+=string.Concat(c.Shards.SelectMany(s=>s.Mnemes.Append(s.Item)).Select(id=>glyphGame.Excel.GetSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText()));
         }
-        var characters = Directory.GetFiles("Windows", "*.cs").Concat(Directory.GetFiles("Data", "*.cs")).Concat(Directory.GetFiles("Inventory", "*.cs")).Concat(Directory.GetFiles("Automation", "*.cs")).Concat(Directory.GetFiles("Weather", "*.cs")).Concat(Directory.GetFiles("Fates", "*.cs"))
+        if(args.Contains("--bunny"))
+        {
+            using var glyphGame=new Lumina.GameData("D:/Program Files (x86)/FFXIV/game/sqpack",new Lumina.LuminaOptions{DefaultExcelLanguage=Lumina.Data.Language.ChineseSimplified});
+            mapCharacters+=string.Concat(ULKHelper.Bunnies.BunnyLootCatalog.All.SelectMany(l=>l.Items).Distinct().Select(id=>glyphGame.Excel.GetSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText()));
+        }
+        var characters = Directory.GetFiles("Windows", "*.cs").Concat(Directory.GetFiles("Data", "*.cs")).Concat(Directory.GetFiles("Inventory", "*.cs")).Concat(Directory.GetFiles("Automation", "*.cs")).Concat(Directory.GetFiles("Weather", "*.cs")).Concat(Directory.GetFiles("Fates", "*.cs")).Concat(Directory.GetFiles("Bunnies", "*.cs"))
             .Append("tools/WeatherTests/Program.cs").Append("tools/UiPreview/Program.cs").SelectMany(File.ReadAllText).Concat(mapCharacters).Where(c => c > 255).Distinct().Order().ToArray();
         var ranges = new List<ushort> { 0x20, 0xFF };
         foreach (var character in characters) { ranges.Add(character); ranges.Add(character); }
@@ -64,16 +69,18 @@ unsafe class Program
         using var logosService=new ULKHelper.Logos.LogosService();
         var logosPage=new LogosPage(id=>logosGame.Excel.GetSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText(),id=>logosGame.Excel.GetSheet<Lumina.Excel.Sheets.Action>()!.GetRow(id).Name.ExtractText(),()=>new LogosWorld(1167,"沃仙曦染","陆行鸟"),logosService,null);
         if(args.Contains("--logos-recipes"))SetField(logosPage,"section",1);
+        if(args.Contains("--logos-stone"))SetField(logosPage,"selectedAction",12991u);
         var page = new ItemStatisticsPage(args.Contains("--live") ? new LiveFixtureProvider() : null);
         var automationFixture = new AutomationFixture();
         var debugPage = new DebugTestsPage(automationFixture, new ULKHelper.SettingsStore(Path.GetFullPath("artifacts/ui/debug-settings.json")));
         IReadOnlyList<WeatherZone> weatherZones = [];
         FateMapPage? fateMapPage = null;
-        if (args.Contains("--weather") || args.Contains("--map") || args.Contains("--automation"))
+        BunnyPage? bunnyPage=null;
+        if (args.Contains("--weather") || args.Contains("--map") || args.Contains("--automation") || args.Contains("--bunny"))
         {
             using var game = new Lumina.GameData("D:/Program Files (x86)/FFXIV/game/sqpack", new Lumina.LuminaOptions { DefaultExcelLanguage = Lumina.Data.Language.ChineseSimplified });
             weatherZones = WeatherCatalogLoader.Load(game.Excel.GetSheet<Lumina.Excel.Sheets.TerritoryType>()!);
-            if (args.Contains("--map") || args.Contains("--automation"))
+            if (args.Contains("--map") || args.Contains("--automation") || args.Contains("--bunny"))
             {
                 var maps = FateCatalogLoader.Load(game.Excel.GetSheet<Lumina.Excel.Sheets.TerritoryType>()!, game.Excel.GetSheet<Lumina.Excel.Sheets.Fate>()!);
                 var textureSource = new MapFixtureTextures();
@@ -86,7 +93,9 @@ unsafe class Program
                     textures.Add(new(bytes, tex.Header.Width, tex.Header.Height));
                     textureSource.Handles[map.TexturePath] = new ImTextureID((ulong)textures.Count);
                 }
-                fateMapPage = new(new MapFixtureProvider(maps), textureSource, weatherZones, automationFixture);
+                var bunnyIsland=maps.First(m=>m.Territory==(args.Contains("--hydatos")?827u:args.Contains("--pyros")?795u:763u));
+                bunnyPage=new(new BunnyFixture(bunnyIsland,args.Contains("--bunny-unique")),id=>logosGame.Excel.GetSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText());
+                fateMapPage = new(new MapFixtureProvider(maps), textureSource, weatherZones, automationFixture, bunnyPage);
                 SetField(fateMapPage, "follow", false);
                 if (args.Contains("--pagos")) SetField(fateMapPage, "islandIndex", 1);
                 if (args.Contains("--pyros")) SetField(fateMapPage, "islandIndex", 2);
@@ -128,6 +137,11 @@ unsafe class Program
         ValidateCatalog();
         for (var frame = 0; frame < 8; frame++)
         {
+            if(args.Contains("--bunny-details"))
+            {
+                io.AddMousePosEvent((io.DisplaySize.X-16)*1.4f/2.4f+175,132);
+                if(frame==3)io.AddMouseButtonEvent(0,true);if(frame==4)io.AddMouseButtonEvent(0,false);
+            }
             if(args.Contains("--logos-recipes"))
             {
                 io.AddMousePosEvent(-100,-100);
@@ -211,7 +225,9 @@ unsafe class Program
             ImGui.SetNextWindowSize(io.DisplaySize);
             ImGui.Begin("优雷卡助手", ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoScrollbar);
             var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 5) / 6;
-            if (ImGui.BeginTabBar("##MainPages"))
+            if(args.Contains("--bunny")){if(ImGui.BeginChild("##BunnyPreview",Vector2.Zero))fateMapPage!.Draw();ImGui.EndChild();}
+            else if(args.Contains("--logos-direct")){if(ImGui.BeginChild("##DirectLogos",Vector2.Zero))logosPage.Draw();ImGui.EndChild();}
+            else if (ImGui.BeginTabBar("##MainPages"))
             {
                 ImGui.SetNextItemWidth(tabWidth);
                 if (ImGui.BeginTabItem("物品统计", args.Contains("--automation") || args.Contains("--weather") || args.Contains("--map") || args.Contains("--debug") || args.Contains("--logos") ? 0 : ImGuiTabItemFlags.SetSelected))
@@ -295,6 +311,20 @@ unsafe class Program
     static object GetField(object target, string name) => target.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(target)!;
     static void SetField(object target, string name, object value) => target.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(target, value);
 
+    sealed class BunnyFixture : ULKHelper.Bunnies.IBunnyTracker
+    {
+        public ULKHelper.Bunnies.BunnySnapshot Snapshot{get;}
+        public BunnyFixture(IslandMap map,bool unique)
+        {
+            var points=ULKHelper.Bunnies.BunnyCatalog.Load();var selected=points.First(p=>p.Territory==map.Territory);
+            var target=MapProjection.MapToWorld(new(selected.X,selected.Y),map);
+            var player=target+new Vector3(400,0,0);var search=new ULKHelper.Bunnies.BunnySearch(points);search.Begin(map);
+            search.Add(new(player,ULKHelper.Bunnies.BunnyDistance.FarAway,"离线模拟：财宝好像是在西方向很远的地方！",DateTimeOffset.Now));
+            if(unique){search.Begin(map);player=target;search.Add(new(player,ULKHelper.Bunnies.BunnyDistance.Here,"离线模拟：发现了财宝！！",DateTimeOffset.Now.AddSeconds(1)));}
+            Snapshot=new(map.Territory,true,player,points.Where(p=>p.Territory==map.Territory).ToArray(),search.Candidates,search.Clues,"离线模拟：多个候选与线索距离圈",search.Conflict);
+        }
+        public void Undo(){}public void Reset(){}public void Manual(ULKHelper.Bunnies.BunnyDistance distance,ULKHelper.Bunnies.BunnyDirection? direction=null){}
+    }
     sealed class MapFixtureTextures : IMapTextures
     {
         public readonly Dictionary<string, ImTextureID> Handles = new();

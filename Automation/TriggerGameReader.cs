@@ -3,6 +3,7 @@ using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using ULKHelper.Fates;
 
 namespace ULKHelper.Automation;
@@ -23,6 +24,14 @@ internal sealed class TriggerGameReader(IObjectTable objects, IDataManager data)
     public unsafe IReadOnlyList<TriggerMob> Read(uint territory)
     {
         var result = new List<TriggerMob>(); var localId = objects.LocalPlayer?.GameObjectId;
+        var enemies = new HashSet<uint>();
+        var ui = UIState.Instance();
+        if (ui != null)
+        {
+            var haters = ui->Hater.Haters;
+            foreach (var hater in haters[..Math.Clamp(ui->Hater.HaterCount, 0, haters.Length)])
+                if (hater.Enmity > 0) enemies.Add(hater.EntityId);
+        }
         foreach (var npc in objects.OfType<IBattleNpc>().Where(n => n.Address != 0 && n.MaxHp > 0))
         {
         var elementalLevel=EurekaNpcLevel.Read(npc);
@@ -30,10 +39,11 @@ internal sealed class TriggerGameReader(IObjectTable objects, IDataManager data)
         foreach (var rule in Rules.Where(r => r.Territory == territory && r.Level == elementalLevel && r.NameIds.Contains(npc.NameId)))
         {
             var dead = npc.IsDead || npc.CurrentHp == 0;
-            var aggro = localId != null && npc.TargetObjectId == localId;
-            result.Add(new(npc.GameObjectId, rule.FateId, npc.Position, dead, aggro));
+            var aggro = enemies.Contains(npc.EntityId) || localId != null && npc.TargetObjectId == localId;
+            var engaged = ((Character*)npc.Address)->InCombat;
+            result.Add(new(npc.GameObjectId, rule.FateId, npc.Position, dead, aggro, npc.IsTargetable, engaged, npc.CurrentHp));
             // Don't turn mobs pulled after the player into false spawn distributions.
-            if (!dead && !((Character*)npc.Address)->InCombat && areas.Count < 4096)
+            if (!dead && !engaged && areas.Count < 4096)
                 areas[(rule.FateId, (int)MathF.Floor(npc.Position.X / 20), (int)MathF.Floor(npc.Position.Z / 20))] = new(rule.FateId, npc.Position);
         }
         }

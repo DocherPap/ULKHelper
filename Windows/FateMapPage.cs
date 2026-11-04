@@ -11,7 +11,7 @@ internal interface IMapTextures
     ImTextureID? Get(string path, out string? error);
 }
 
-internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textures, IReadOnlyList<WeatherZone> weather, IAutomationHelpers? navigation = null)
+internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textures, IReadOnlyList<WeatherZone> weather, IAutomationHelpers? navigation = null, BunnyPage? bunnies = null)
 {
     private int islandIndex;
     private int pullBatch = 1, abandonStep = 2;
@@ -93,15 +93,21 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         ImGui.Checkbox("显示已观测小怪区域", ref showMobs);
         ImGui.SetNextItemWidth(-1); ImGui.SliderInt("##PullBatch", ref pullBatch, 1, 21, pullBatch == 21 ? "每批：无限" : "每批：%d 只");
         ImGui.SetNextItemWidth(-1); ImGui.SliderInt("##Abandon", ref abandonStep, 1, 7, abandonStep == 7 ? "放弃阈值：无限" : $"放弃阈值：{abandonStep * 50} 只");
-        ImGui.BeginDisabled(!auto.Active && (navigation == null || navigation.Snapshot.Navigating || triggerSelection.Ids.Count == 0 || triggerSelection.Ids.Count > cap || snapshot.CurrentTerritory != island.Territory));
+        var canStart = triggerSelection.Ids.Count > 0 ? triggerSelection.Ids.Count <= cap : current != null && CanAddTrigger(current, island);
+        ImGui.BeginDisabled(!auto.Active && (navigation == null || navigation.Snapshot.Navigating || !canStart || snapshot.CurrentTerritory != island.Territory));
         if (ImGui.Button(auto.Active ? "停止自动触发" : "自动触发"))
         {
             if (auto.Active) navigation?.Stop();
-            else navigation?.StartTrigger(triggerSelection.Ids.Select(id =>
+            else
             {
-                var f = island.Fates.First(f => f.Seed.Id == id);
-                return new TriggerPlan(id, f.Level, new(island.Territory, island.MapId, (selectedArea?.FateId == id ? selectedArea.Position : MapProjection.MapToWorld(new(f.Seed.X, f.Seed.Y), island)), f.Seed.ShortName), Mode(id), auto.Routes.GetValueOrDefault(id, []));
-            }).ToArray(), pullBatch, abandonStep);
+                if (triggerSelection.Ids.Count == 0 && current != null) triggerSelection.Add(current);
+                navigation?.StartTrigger(triggerSelection.Ids.Select(id =>
+                {
+                    var fate = island.Fates.First(f => f.Seed.Id == id);
+                    var centre = MapProjection.MapToWorld(new(fate.Seed.X, fate.Seed.Y), island);
+                    return new TriggerPlan(id, fate.Level, new(island.Territory, island.MapId, centre, fate.Seed.ShortName), Mode(id), auto.Routes.GetValueOrDefault(id, []));
+                }).ToArray(), pullBatch, abandonStep);
+            }
         }
         ImGui.EndDisabled(); ImGui.TextWrapped(auto.Status);
         ImGui.BeginDisabled(auto.Active);
@@ -113,7 +119,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             if (ImGui.SmallButton("加入列表")) triggerSelection.Add(current);
             ImGui.EndDisabled();
         }
-        else ImGui.TextDisabled("点击NM或小怪色块后加入列表；混选按最高难度限制数量。");
+        else ImGui.TextDisabled("选中 FATE 后可直接开始，也可先加入列表。");
         if (ImGui.BeginChild("##TriggerPlanRows", Vector2.Zero))
         {
             foreach (var id in triggerSelection.Ids.ToArray())
@@ -163,67 +169,64 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
     {
         var snapshot = provider.Snapshot;
         if (provider.Islands.Count == 0) { ImGui.TextWrapped(snapshot.Status); return; }
+        if(bunnies?.ConsumeReset()==true)ResetView();
         if (follow)
         {
             var current = provider.Islands.Select((value, index) => (value, index)).FirstOrDefault(p => p.value.Territory == snapshot.CurrentTerritory);
             if (current.value != null && islandIndex != current.index) { islandIndex = current.index; ResetView(); }
         }
-        ImGui.SetNextItemWidth(ImGui.CalcTextSize("常风之地").X + ImGui.GetFrameHeight() * 2);
-        if (ImGui.Combo("岛屿", ref islandIndex, provider.Islands.Select(i => i.Name).ToArray(), provider.Islands.Count))
-        { follow = false; ResetView(); }
-        ImGui.SameLine(); ImGui.Checkbox("跟随当前岛屿", ref follow);
-        ImGui.SameLine(); ImGui.Checkbox("含幸福兔", ref showBunnies);
-        ImGui.SameLine(); ImGui.Checkbox("显示简称", ref showLabels);
-        if (!notificationInitialized)
-        {
-            var settings = snapshot.Notifications ?? FateNotificationSettings.Default;
-            notificationEnabled = settings.Enabled; notificationChannel = (int)settings.Channel; notificationTemplate = settings.Template;
-            notificationInitialized = true;
-        }
-        var notificationChanged = ImGui.Checkbox("发送通知频道", ref notificationEnabled);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(ImGui.CalcTextSize("跨服通信贝 8").X + ImGui.GetFrameHeight() + ImGui.GetStyle().FramePadding.X * 2);
-        if (ImGui.Combo("##FateNotificationChannel", ref notificationChannel, FateNotificationText.ChannelNames, FateNotificationText.ChannelNames.Length))
-        { notificationEnabled = false; notificationChanged = true; }
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(-1);
-        notificationChanged |= ImGui.InputTextWithHint("##FateNotificationTemplate", "通知内容", ref notificationTemplate, 512);
-        if (notificationChanged) provider.ConfigureNotifications(new(notificationEnabled, (FateNotificationChannel)notificationChannel, notificationTemplate));
-        ImGui.TextDisabled("<位置> 代表位置，<名字> 代表 FATE 缩写。开启后仅通知新出现的 FATE。");
-        if (FateNotificationText.IsLocal((FateNotificationChannel)notificationChannel)) ImGui.TextDisabled("当前频道仅在本机显示。");
-        if (notificationEnabled && snapshot.NotificationStatus != null) ImGui.TextWrapped(snapshot.NotificationStatus);
-        if (navigation != null)
-        {
-            if (ImGui.Button("自动前往入口营地")) navigation.GoToEntrance();
-            ImGui.SameLine(); ImGui.BeginDisabled(!navigation.Snapshot.Navigating);
-            if (ImGui.Button("停止移动")) navigation.Stop();
-            ImGui.EndDisabled();
-            ImGui.TextWrapped(navigation.Snapshot.NavigationStatus);
-        }
-        if (snapshot.CrowdsourceStatus != null)
-            ImGui.TextWrapped($"{(snapshot.RoomId != 0 ? $"房间 {snapshot.RoomId} · " : "")}{snapshot.CrowdsourceStatus}");
-        var island = provider.Islands[islandIndex];
-        var now = DateTimeOffset.UtcNow;
-        if (now >= nextTiming)
-        {
-            timing.Clear();
-            markerTiming.Clear();
-            foreach (var point in island.Fates)
-            {
-                snapshot.Records.TryGetValue(point.Seed.Id, out var record);
-                timing[point.Seed.Id] = FateTiming.Describe(point, record, weather.FirstOrDefault(w => w.TerritoryId == island.Territory), now);
-                markerTiming[point.Seed.Id] = FateTiming.ForMarker(point, record, timing[point.Seed.Id], now);
-            }
-            nextTiming = now.AddSeconds(1);
-        }
-        var points = island.Fates.Where(f => (showBunnies || !f.Seed.Bunny)
-            && (search.Length == 0 || f.Name.Contains(search, StringComparison.OrdinalIgnoreCase) || f.Seed.ShortName.Contains(search, StringComparison.OrdinalIgnoreCase))).ToArray();
         LayoutSettings.RememberTable("##FateMapLayout");
         if (!ImGui.BeginTable("##FateMapLayout", 2, ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV)) return;
         try
         {
             ImGui.TableSetupColumn("地图", ImGuiTableColumnFlags.WidthStretch, 1.4f);
             ImGui.TableSetupColumn("点位与计时", ImGuiTableColumnFlags.WidthStretch, 1);
+            ImGui.TableNextRow(); ImGui.TableNextColumn();
+            ImGui.SetNextItemWidth(ImGui.CalcTextSize("常风之地").X + ImGui.GetFrameHeight() * 2);
+            if (ImGui.Combo("岛屿", ref islandIndex, provider.Islands.Select(i => i.Name).ToArray(), provider.Islands.Count))
+            { follow = false; ResetView(); }
+            ImGui.SameLine(); ImGui.Checkbox("跟随当前岛屿", ref follow);
+            ImGui.Checkbox("含幸福兔", ref showBunnies);
+            ImGui.SameLine(); ImGui.Checkbox("显示简称", ref showLabels);
+            if(bunnies!=null){ImGui.SameLine();bunnies.DrawVisibilityToggle();}
+            if (!notificationInitialized)
+            {
+                var settings = snapshot.Notifications ?? FateNotificationSettings.Default;
+                notificationEnabled = settings.Enabled; notificationChannel = (int)settings.Channel; notificationTemplate = settings.Template;
+                notificationInitialized = true;
+            }
+            var notificationChanged = ImGui.Checkbox("发送通知频道", ref notificationEnabled);
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(ImGui.CalcTextSize("跨服通信贝 8").X + ImGui.GetFrameHeight() + ImGui.GetStyle().FramePadding.X * 2);
+            if (ImGui.Combo("##FateNotificationChannel", ref notificationChannel, FateNotificationText.ChannelNames, FateNotificationText.ChannelNames.Length))
+            { notificationEnabled = false; notificationChanged = true; }
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(-1);
+            notificationChanged |= ImGui.InputTextWithHint("##FateNotificationTemplate", "通知内容", ref notificationTemplate, 512);
+            if (notificationChanged) provider.ConfigureNotifications(new(notificationEnabled, (FateNotificationChannel)notificationChannel, notificationTemplate));
+            ImGui.TextWrapped("<位置> 代表位置，<名字> 代表 FATE 缩写。开启后仅通知新出现的 FATE。");
+            if (notificationEnabled && snapshot.NotificationStatus is {} notificationStatus && notificationStatus!="等待进岛建立活动基线。")
+                ImGui.TextWrapped(notificationStatus);
+            if (snapshot.CrowdsourceStatus != null)
+                ImGui.TextWrapped($"{(snapshot.RoomId != 0 ? $"房间 {snapshot.RoomId} · " : "")}{snapshot.CrowdsourceStatus}");
+            var island = provider.Islands[islandIndex];
+            var now = DateTimeOffset.UtcNow;
+            if (now >= nextTiming)
+            {
+                timing.Clear();
+                markerTiming.Clear();
+                foreach (var point in island.Fates)
+                {
+                    snapshot.Records.TryGetValue(point.Seed.Id, out var record);
+                    timing[point.Seed.Id] = FateTiming.Describe(point, record, weather.FirstOrDefault(w => w.TerritoryId == island.Territory), now);
+                    markerTiming[point.Seed.Id] = FateTiming.ForMarker(point, record, timing[point.Seed.Id], now);
+                }
+                nextTiming = now.AddSeconds(1);
+            }
+            var points = island.Fates.Where(f => (showBunnies || !f.Seed.Bunny)
+                && (search.Length == 0 || f.Name.Contains(search, StringComparison.OrdinalIgnoreCase) || f.Seed.ShortName.Contains(search, StringComparison.OrdinalIgnoreCase))).ToArray();
+                ImGui.TableNextColumn();
+            bunnies?.DrawSummary(island);
             ImGui.TableNextRow(); ImGui.TableNextColumn();
             if (ImGui.BeginChild("##IslandMap", Vector2.Zero)) DrawMap(island, points, snapshot, now);
             ImGui.EndChild();
@@ -238,8 +241,6 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
 
     private void DrawMap(IslandMap island, IReadOnlyList<FateDefinition> points, FateMapSnapshot snapshot, DateTimeOffset now, IReadOnlySet<ushort>? planned = null, bool compactLabels = false)
     {
-        if (ImGui.SmallButton("还原视图")) { centre = new(.5f); zoom = 1; }
-        ImGui.SameLine(); ImGui.TextDisabled("滚轮缩放 · 拖动平移 · 点击点位选择");
         var space = ImGui.GetContentRegionAvail();
         var side = Math.Max(100, Math.Min(space.X, space.Y - ImGui.GetTextLineHeightWithSpacing()));
         var pos = ImGui.GetCursorScreenPos() + new Vector2(Math.Max(0, (space.X - side) / 2), 0);
@@ -330,6 +331,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             if (hovered && distance < Math.Max(12, radius * 2) * Math.Max(12, radius * 2) && distance < nearest)
             { nearest = distance; hoveredPoint = fate.Seed.Id; hoveredArea = null; }
         }
+        bunnies?.DrawOverlay(island,pos,side,zoom,uvMin,hovered&&hoveredPoint==null,dragged);
         if (snapshot.CurrentTerritory == island.Territory && snapshot.PlayerMapPosition is { } player)
         {
             var p = pos + (MapProjection.ToUv(player, island.SizeFactor) - uvMin) * side * zoom;
@@ -346,7 +348,8 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             ImGui.EndTooltip();
             if (ImGui.IsMouseReleased(ImGuiMouseButton.Left) && !dragged) { selected = id; selectedArea = hoveredArea; }
         }
-        ImGui.TextDisabled($"缩放 {zoom:0.0}×　点位 {points.Count}　蓝色圆点：自己");
+        if (ImGui.SmallButton("还原视图")) { centre = new(.5f); zoom = 1; }
+        ImGui.SameLine();ImGui.TextDisabled($"缩放 {zoom:0.0}×　点位 {points.Count}　蓝色圆点：自己");
     }
 
     private string TimingText(ushort id, DateTimeOffset now)

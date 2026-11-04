@@ -230,6 +230,7 @@ var birdLedger=new TriggerKillLedger([birdRule]);
 birdLedger.Observe(732,[new TriggerNpcLife(99,6822,TriggerMobCatalog.ElementalLevel(8)!.Value,false)],new HashSet<ushort>(),now);
 birdLedger.Observe(732,[new TriggerNpcLife(99,6822,8,true)],new HashSet<ushort>(),now.AddMilliseconds(250));
 Check(birdLedger.Snapshot.Single().Count==1,"现场回归：鸟妖按元素等级记录击杀");
+BunnyChecks.Run(Check,islands,game);
 Console.WriteLine($"{count} FATE/map checks passed.");
 
 sealed class SubscriptionHandler : HttpMessageHandler

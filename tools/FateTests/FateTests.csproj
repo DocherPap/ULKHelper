@@ -5,6 +5,9 @@
     <DalamudLibPath>$(APPDATA)/XIVLauncherCN/addon/Hooks/dev</DalamudLibPath>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../Bunnies/BunnySearch.cs" Link="BunnySearch.cs" />
+    <Compile Include="../../Bunnies/BunnyLootCatalog.cs" Link="BunnyLootCatalog.cs" />
+    <EmbeddedResource Include="../../Bunnies/points.json" LogicalName="ULKHelper.Bunnies.points.json" />
     <Reference Include="Lumina"><HintPath>$(DalamudLibPath)/Lumina.dll</HintPath></Reference>
     <Reference Include="Lumina.Excel"><HintPath>$(DalamudLibPath)/Lumina.Excel.dll</HintPath></Reference>
     <Compile Include="../../Fates/*.cs" Exclude="../../Fates/FateMapTracker.cs" Link="Fates/%(Filename)%(Extension)" />

@@ -27,9 +27,10 @@ internal sealed class LogosPage(Func<uint,string> itemName, Func<uint,string> ac
         if(service.Updated is {} updated)ImGui.TextDisabled($"获取时间：{updated:MM-dd HH:mm:ss}");
         ImGui.TextWrapped(stock.Status);
         ImGui.SetNextItemWidth(-1);ImGui.InputTextWithHint("##LogosSearch","搜索文理技能或碎晶",ref search,100);
+        var restoreSection=section;
         if(!ImGui.BeginTabBar("##LogosParts"))return;
-        if(ImGui.BeginTabItem("碎晶鉴定",firstDraw&&section==0?ImGuiTabItemFlags.SetSelected:0)){section=0;Appraisal();ImGui.EndTabItem();}
-        if(ImGui.BeginTabItem("技能合成",firstDraw&&section==1?ImGuiTabItemFlags.SetSelected:0)){section=1;Synthesis();ImGui.EndTabItem();}
+        if(ImGui.BeginTabItem("碎晶鉴定",firstDraw&&restoreSection==0?ImGuiTabItemFlags.SetSelected:0)){section=0;Appraisal();ImGui.EndTabItem();}
+        if(ImGui.BeginTabItem("技能合成",firstDraw&&restoreSection==1?ImGuiTabItemFlags.SetSelected:0)){section=1;Synthesis();ImGui.EndTabItem();}
         ImGui.EndTabBar();firstDraw=false;settings?.Put("logos.section",section);
     }
     private bool BeginColumns(string id)

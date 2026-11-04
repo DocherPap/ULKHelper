@@ -2,6 +2,20 @@ using System.Reflection;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
+if(args.FirstOrDefault()=="--bunny-loot"){
+ using var cn=new Lumina.GameData("D:/Program Files (x86)/FFXIV/game/sqpack",new Lumina.LuminaOptions{DefaultExcelLanguage=Lumina.Data.Language.ChineseSimplified});
+ using var en=new Lumina.GameData("D:/Program Files (x86)/FFXIV/game/sqpack",new Lumina.LuminaOptions{DefaultExcelLanguage=Lumina.Data.Language.English});
+ var names=new[]{"Pagos Sage","Pagos Spring Water","Happy Bunny Card","Stuffed Happy Bunny","Wooden Hakutaku Eye","Burning Hakutaku Eye","Earthen Hakutaku Eye","Damp Hakutaku Eye","Copycat Bulb","Modern Aesthetics - Form and Function","Archaeodemon Horns","Eldthurs Horn","Aethertight Flask","Aetherially Conductive Plate","Absolute Lance","Penthesilea's Spear","Eurekan Petrel Horn"};
+ foreach(var r in cn.Excel.GetSheet<Item>()!.Where(r=>r.Name.ExtractText().Contains("恒冰")&&r.Name.ExtractText().Contains("水")))Console.WriteLine($"WATER {r.RowId} {r.Name}");
+ foreach(var id in new uint[]{23348,23349,23027,24219,24630,24820,24904,24233,23049,23229,23213,23214,23215,23217,24338,24858,24998,24007,24008,24009,24010,24011,24013,24014})Console.WriteLine($"ITEM {id} {cn.Excel.GetSheet<Item>()!.GetRow(id).Name}");
+ Console.WriteLine("LOGTYPES "+string.Join(";",typeof(LogMessage).GetProperties().Select(p=>p.ToString())));return;}
+if(args.FirstOrDefault()=="--bunny-data"){
+ using var game=new Lumina.GameData("D:/Program Files (x86)/FFXIV/game/sqpack",new Lumina.LuminaOptions{DefaultExcelLanguage=Lumina.Data.Language.ChineseSimplified});
+ foreach(var r in game.Excel.GetSheet<Lumina.Excel.Sheets.Status>()!.Where(r=>r.Name.ExtractText().Contains("兔")||r.Name.ExtractText().Contains("幸福")||r.Description.ExtractText().Contains("兔")||r.Name.ExtractText().Contains("财宝")))Console.WriteLine($"STATUS {r.RowId} {r.Name} {r.Description}");
+ foreach(var r in game.Excel.GetSheet<EventItem>()!.Where(r=>r.Name.ExtractText().Contains("萝卜")))Console.WriteLine($"EVENTITEM {r.RowId} {r.Name}");
+ foreach(var r in game.Excel.GetSheet<LogMessage>()!.Where(r=>r.Text.ExtractText().Contains("财宝")||r.Text.ExtractText().Contains("胡萝卜")||r.Text.ExtractText().Contains("遥远")||r.Text.ExtractText().Contains("比较近")||r.Text.ExtractText().Contains("就在这")||r.Text.ExtractText().Contains("非常近")||r.Text.ExtractText().Contains("幸福兔")))Console.WriteLine($"LOG {r.RowId} Kind={r.LogKind.RowId} {r.Text}");
+ foreach(var t in new[]{typeof(Dalamud.Game.Text.XivChatType),typeof(FFXIVClientStructs.FFXIV.Client.Game.ActionManager)})foreach(var e in t.IsEnum?Enum.GetNames(t).Where(n=>n.Contains("System")||n.Contains("Message")):Array.Empty<string>())Console.WriteLine(e);
+ return;}
 if(args.FirstOrDefault()=="--logos-native"){
  foreach(var t in typeof(InventoryManager).Assembly.GetTypes().Where(t=>t.Name.Contains("Logos")||t.Name.Contains("Eureka")||t.Name.Contains("Magia")))
  {Console.WriteLine("TYPE "+t.FullName);foreach(var f in t.GetFields().Where(f=>!f.Name.Contains("Virtual")))Console.WriteLine(f);foreach(var p in t.GetProperties())Console.WriteLine(p);}

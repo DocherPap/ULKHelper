@@ -15,14 +15,27 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     private bool triggerAuto;
     private Assembly? triggerOwner;
     private object? triggerConfig, hostileBefore, hostileWritten, targetingBefore, targetingWritten;
+    private bool triggerSettingsWritten;
     private string? triggerModeBefore;
+    private object? triggerBossOwner;
+    private string? triggerPresetBefore;
+    private bool triggerAiSuspended, triggerRotationSuspended, triggerEnding;
+    private int triggerRestoreAttempts;
     private readonly TriggerMagia magia = new(objects);
-    public string? BeginTrigger()
+    public string? BeginTrigger(bool needsApproach)
     {
         try
         {
+            Error = null;
             if(magia.Pending && triggerModeBefore==null)return "等待上次魔素板还原。";
+            if (needsApproach)
+            {
+                if (!commands.Commands.ContainsKey("/bmrai")) return "普通自动触发需要BossMod Reborn自动靠近。";
+                foreach (var (field, _) in TriggerApproachSettings) _ = Read(field);
+            }
             hostileWritten=targetingWritten=null;
+            triggerSettingsWritten = false;
+            triggerRestoreAttempts = 0;
             triggerOwner=CurrentRotationOwner();
             if(triggerOwner==null)return "RSR未加载。";
             triggerConfig=RotationType("RotationSolver.Basic.Service").GetProperty("Config",BindingFlags.Static|BindingFlags.Public)?.GetValue(null)
@@ -40,14 +53,16 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         if(triggerModeBefore==null)return true;
         var actual=RotationType("RotationSolver.Basic.Service").GetProperty("Config",BindingFlags.Static|BindingFlags.Public)?.GetValue(null);
         if(!ReferenceEquals(actual,triggerConfig))return false;
-        if(hostileWritten!=null && !Equals(triggerConfig!.GetType().GetProperty("HostileType")!.GetValue(triggerConfig),hostileWritten))return false;
-        return targetingWritten==null || Equals(RotationType("RotationSolver.Basic.DataCenter").GetProperty("TargetingTypeOverride")!.GetValue(null),targetingWritten);
+        var configType = triggerConfig!.GetType();
+        return Equals(configType.GetProperty("HostileType")!.GetValue(triggerConfig), triggerSettingsWritten ? hostileWritten : hostileBefore)
+            && Equals(RotationType("RotationSolver.Basic.DataCenter").GetProperty("TargetingTypeOverride")!.GetValue(null),
+                triggerSettingsWritten ? targetingWritten : targetingBefore);
     }
     public bool PrepareTarget(ulong id,bool fighting)
     {
         if(!ReferenceEquals(triggerOwner,CurrentRotationOwner())||!TriggerSettingsHealthy())return false;
-        if((!fighting||!rotationOwned)&&!Target(id))return false;
-        var npc=fighting && targets.Target is IBattleNpc current ? current : objects.OfType<IBattleNpc>().FirstOrDefault(n=>n.GameObjectId==id);
+        if ((!fighting || !rotationOwned || !triggerAuto) && !Target(id)) return false;
+        var npc = objects.OfType<IBattleNpc>().FirstOrDefault(n => n.GameObjectId == id);
         var level=TriggerGameReader.Level();
         if(npc==null||level==null)return false;
         var npcLevel=EurekaNpcLevel.Read(npc);
@@ -55,31 +70,71 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         var tank=objects.LocalPlayer?.ClassJob.Value.Role==1;
         var attack=AutoTriggerRules.AttackMagia(level.Value,npcLevel.Value,tank);
         if(!magia.Apply(attack,npc.NameId))return false;
-        var property=triggerConfig!.GetType().GetProperty("HostileType")!;
-        hostileWritten=Enum.Parse(property.PropertyType,fighting?"TargetsHaveTarget":"AllTargetsCanAttack");property.SetValue(triggerConfig,hostileWritten);
-        var target=RotationType("RotationSolver.Basic.DataCenter").GetProperty("TargetingTypeOverride")!;
-        targetingWritten=fighting?Enum.Parse(Nullable.GetUnderlyingType(target.PropertyType)??target.PropertyType,"HighHP"):targetingBefore;
-        target.SetValue(null,targetingWritten);
-        if(rotationOwned && triggerAuto!=fighting) Disable();
-        triggerAuto=fighting;
+        if (!triggerSettingsWritten || triggerAuto != fighting)
+        {
+            var configType = triggerConfig!.GetType();
+            var hostile = configType.GetProperty("HostileType")!;
+            var target = RotationType("RotationSolver.Basic.DataCenter").GetProperty("TargetingTypeOverride")!;
+            hostileWritten = Enum.Parse(hostile.PropertyType, fighting ? "TargetsHaveTarget" : "AllTargetsCanAttack");
+            targetingWritten = fighting ? Enum.Parse(Nullable.GetUnderlyingType(target.PropertyType) ?? target.PropertyType, "HighHP") : targetingBefore;
+            triggerSettingsWritten = true;
+            hostile.SetValue(triggerConfig, hostileWritten);
+            target.SetValue(null, targetingWritten);
+            if (rotationOwned && triggerAuto != fighting)
+                RotationMode(fighting ? "Auto" : "Manual");
+            triggerAuto = fighting;
+        }
         return true;
     }
     public void EndTrigger()
     {
-        if(triggerModeBefore==null)return;
+        if (triggerModeBefore == null) return;
+        triggerEnding = true;
+        Disable();
+    }
+    private void RestoreTrigger()
+    {
+        var retry = false;
         try
         {
-            if(ReferenceEquals(triggerOwner,CurrentRotationOwner()))
+            if (ReferenceEquals(triggerOwner, CurrentRotationOwner()))
             {
-                var property=triggerConfig?.GetType().GetProperty("HostileType");
-                if(property!=null && Equals(property.GetValue(triggerConfig),hostileWritten))property.SetValue(triggerConfig,hostileBefore);
-                var target=RotationType("RotationSolver.Basic.DataCenter").GetProperty("TargetingTypeOverride")!;
-                if(Equals(target.GetValue(null),targetingWritten))target.SetValue(null,targetingBefore);
-                if(!RotationRequested())RotationMode(triggerModeBefore);
+                var actual = RotationType("RotationSolver.Basic.Service").GetProperty("Config")?.GetValue(null);
+                if (triggerSettingsWritten && ReferenceEquals(actual, triggerConfig))
+                {
+                    var hostile = actual!.GetType().GetProperty("HostileType")!;
+                    if (Equals(hostile.GetValue(actual), hostileWritten)) hostile.SetValue(actual, hostileBefore);
+                    var target = RotationType("RotationSolver.Basic.DataCenter").GetProperty("TargetingTypeOverride")!;
+                    if (Equals(target.GetValue(null), targetingWritten)) target.SetValue(null, targetingBefore);
+                }
+                triggerSettingsWritten = false;
+                if (triggerRotationSuspended && !RotationRequested()) RotationMode(triggerModeBefore!);
             }
+            triggerRotationSuspended = false;
         }
-        catch(Exception ex){Error="恢复触发设置失败："+ex.GetBaseException().Message;}
-        finally {triggerModeBefore=null;triggerOwner=null;triggerConfig=null;triggerAuto=false;magia.Restore();}
+        catch (Exception ex) { retry = true; Error = "恢复RSR设置失败：" + ex.GetBaseException().Message; }
+        try
+        {
+            if (triggerBossOwner != null && ReferenceEquals(triggerBossOwner, CurrentBossOwner()))
+            {
+                if (triggerAiSuspended && !AIActive())
+                {
+                    if (!commands.ProcessCommand(reborn ? "/bmrai on" : "/vbm ai on") || !AIActive())
+                        throw new InvalidOperationException("无法恢复BossMod AI。");
+                }
+                triggerAiSuspended = false;
+                if (triggerPresetBefore != null && string.IsNullOrEmpty(ActivePreset())
+                    && !plugin.GetIpcSubscriber<string, bool>("BossMod.Presets.SetActive").InvokeFunc(triggerPresetBefore))
+                    throw new InvalidOperationException("无法恢复BossMod循环预设。");
+            }
+            triggerPresetBefore = null;
+        }
+        catch (Exception ex) { retry = true; Error = "恢复BossMod设置失败：" + ex.GetBaseException().Message; }
+        if (retry && ++triggerRestoreAttempts < 3) return;
+        triggerModeBefore = null; triggerOwner = null; triggerConfig = null; triggerAuto = false;
+        triggerBossOwner = null; triggerPresetBefore = null;
+        triggerEnding = triggerAiSuspended = triggerRotationSuspended = triggerSettingsWritten = false;
+        magia.Restore();
     }
     public void ForgetMagia()=>magia.Forget();
     public void TickMagiaRestore(){if(triggerModeBefore==null)magia.Restore();}
@@ -89,7 +144,8 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     private object? bossOwner;
     private object? aiBehaviour;
     public string? Error { get; private set; }
-    public bool CleanupPending => rotationOwned || aiOwned || settings.Count > 0 || presetBefore != null || magia.Pending && triggerModeBefore==null;
+    private bool OwnedCleanupPending => rotationOwned || aiOwned || settings.Count > 0 || presetBefore != null;
+    public bool CleanupPending => OwnedCleanupPending || triggerEnding || magia.Pending && triggerModeBefore==null;
     public string DescribeState()
     {
         string rotation, ai;
@@ -102,7 +158,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             ai = $"BossMod AI={active} 本插件循环所有权={rotationOwned} AI所有权={aiOwned}";
         }
         catch (Exception ex) { ai = "BossMod 状态不可读：" + ex.GetBaseException().Message; }
-        return rotation + "\n" + ai;
+        return rotation + "\n" + ai + (Error is { } error ? "\n战斗控制：" + error : "");
     }
     private bool RotationActive() => plugin.GetIpcSubscriber<bool>("RotationSolverReborn.AutorotationActive").InvokeFunc();
     private Assembly? CurrentRotationOwner() => commands.Commands.TryGetValue("/rotation", out var c) ? c.Handler.Method.DeclaringType?.Assembly : null;
@@ -161,6 +217,13 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         settings[field] = (before, value);
         if (Config("AIConfig", field, value).Count != 0) throw new InvalidOperationException("无法设置BossMod配置：" + field);
     }
+    private string? ActivePreset() => plugin.GetIpcSubscriber<string?>("BossMod.Presets.GetActive").InvokeFunc();
+    private static readonly (string Field, string Value)[] TriggerApproachSettings =
+    [
+        ("FollowDuringCombat", "true"), ("FollowOutOfCombat", "true"), ("FollowDuringActiveBossModule", "true"),
+        ("AutoAFK", "false"), ("FocusTargetMaster", "false"), ("FollowRSRDesiredPositional", "false"),
+        ("DesiredPositional", "Any"),
+    ];
     public string? CheckReady()
     {
         try
@@ -190,6 +253,13 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             // This explicit start is authorized to close existing controls before taking a new session.
             var rotationOn = RotationRequested(); var aiOn = AIActive();
             _ = Read("ForbidActions"); _ = Read("ForbidMovement");
+            if (triggerModeBefore != null)
+            {
+                triggerBossOwner = CurrentBossOwner();
+                triggerPresetBefore = ActivePreset();
+                triggerRotationSuspended = rotationOn;
+                triggerAiSuspended = aiOn;
+            }
             if (rotationOn || RotationActive()) RotationMode("Off");
             if (aiOn && !commands.ProcessCommand(reborn ? "/bmrai off" : "/vbm ai off")) return "无法关闭已运行的BossMod AI。";
             plugin.GetIpcSubscriber<bool>("BossMod.Presets.ClearActive").InvokeFunc();
@@ -211,20 +281,27 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         if (manager->SyncedFateId == fateId) return true;
         return manager->GetCurrentFateId() == fateId && manager->LevelSync() != null;
     }
-    public bool Enable()
+    public bool Enable() => EnableWithAI(false);
+    public bool EnableTrigger(bool approach) => approach ? EnableWithAI(true) : EnableStationary();
+    private bool EnableWithAI(bool triggerApproach)
     {
         try
         {
             Error = null;
-            if (rotationOwned || aiOwned) return Healthy;
+            if (rotationOwned || aiOwned) return triggerApproach ? StationaryHealthy : Healthy;
             var error = CheckReady();
             if (error != null) { Error = error; return false; }
+            if (triggerApproach && !reborn) { Error = "普通自动触发的自动靠近需要BossMod Reborn。"; return false; }
+            if (triggerApproach && !ReferenceEquals(triggerBossOwner, CurrentBossOwner()))
+            { Error = "BossMod Reborn已更换，停止触发。"; return false; }
             bossOwner = CurrentBossOwner();
             Set("ForbidActions", "true"); Set("ForbidMovement", "false");
             if (!reborn) Set("GoalZoneFallback", "true");
             if (reborn)
             {
                 Set("ManualTarget", "true"); Set("FollowSlot", "0"); Set("FollowTarget", "true");
+                if (triggerApproach)
+                    foreach (var (field, value) in TriggerApproachSettings) Set(field, value);
                 presetBefore = plugin.GetIpcSubscriber<string>("BossMod.AI.GetPreset").InvokeFunc();
                 plugin.GetIpcSubscriber<string, object>("BossMod.AI.SetPreset").InvokeAction("");
             }
@@ -234,7 +311,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             if (!reborn && !commands.ProcessCommand("/vbm ai follow slot1")) throw new InvalidOperationException("BossMod跟随自身失败。");
             rotationOwned = true;
             rotationOwner = CurrentRotationOwner();
-            RotationMode("Manual");
+            RotationMode(triggerApproach && triggerAuto ? "Auto" : "Manual");
             if (!RotationRequested() || !RotationActive()) throw new InvalidOperationException("自动循环启动失败。");
             return true;
         }
@@ -256,8 +333,18 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     }
     public bool StationaryHealthy
     {
-        get { try { return rotationOwned && !aiOwned && ReferenceEquals(rotationOwner, CurrentRotationOwner())
-            && TriggerSettingsHealthy() && (triggerAuto ? RotationRequested() && !ManualRequested() : ManualRequested()) && RotationActive() && !AIActive(); } catch { return false; } }
+        get
+        {
+            try
+            {
+                return rotationOwned && ReferenceEquals(rotationOwner, CurrentRotationOwner())
+                    && TriggerSettingsHealthy() && RotationRequested() && ManualRequested() != triggerAuto && RotationActive()
+                    && (aiOwned ? ReferenceEquals(bossOwner, CurrentBossOwner()) && AIActive()
+                        && ReferenceEquals(aiBehaviour, RebornBehaviour())
+                        && settings.All(p => Read(p.Key).Equals(p.Value.Written, StringComparison.OrdinalIgnoreCase)) : !AIActive());
+            }
+            catch { return false; }
+        }
     }
     public bool Healthy
     {
@@ -273,7 +360,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         { aiOwned = false; settings.Clear(); presetBefore = null; bossOwner = null; }
         try
         {
-            if (rotationOwned && RotationRequested() && !ManualRequested() && !triggerAuto) rotationOwned = false;
+            if (rotationOwned && RotationRequested() && ManualRequested() == triggerAuto) rotationOwned = false;
             if (aiOwned && reborn && aiBehaviour != null && RebornBehaviour() is { } current && !ReferenceEquals(current, aiBehaviour)) aiOwned = false;
         }
         catch { }
@@ -315,7 +402,11 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             }
             catch { }
         }
-        if (!CleanupPending) { bossOwner = null; rotationOwner = null; aiBehaviour = null; }
-        return !CleanupPending;
+        if (!OwnedCleanupPending)
+        {
+            bossOwner = null; rotationOwner = null; aiBehaviour = null;
+            if (triggerEnding) RestoreTrigger();
+        }
+        return !OwnedCleanupPending;
     }
 }

@@ -16,7 +16,7 @@ Universalis依据当前服务器World ID调用 `GET /api/v2/aggregated/{world}/{
 
 按正在拉怪/击杀的实际小怪等级与AgentHUD元素等级：低级所有职业攻，同级到高2级坦克（ClassJob.Role=1）攻、其他防，高3级以上全防。原生/magiaattack、/magiadefense本机TextCommand行10/11已核对，通过框架线程ProcessChatBoxEntry执行。EurekaState只读六属性分配；按当前投入最高属性旋转，不要求达到5颗。本次没有已核实的野外重新分配接口，不能自动把散开的魔石分配为5，避免写猜测回调。命令发送不代表服务端旋转成功，需游戏内验证；充能不足可能不能还原。正常结束尝试旋转回原六属性分布，最多6次、每3秒一次；离岛/死亡丢弃恢复任务，不在其他岛继续。
 
-RSR本机7.5.7.15及官方源码交叉核对：Service.Config.HostileType（AllTargetsCanAttack / TargetsHaveTarget）、DataCenter.TargetingTypeOverride=HighHP、ChangeOperatingMode Manual / Auto。拉怪Manual/全部，原地击杀Auto/最高血量/已交战；自动阶段不每帧把RSR选出的高血量目标重新改成最近目标。快照保留原目标范围、排序覆盖、开关模式；还原时检查提供者身份及最后写入值，插件替换或用户覆盖不写回旧实例。原运行模式按Off/Manual/Auto恢复，复杂AutoDuty等子模式尚未专项验证。BossMod本流程不启动AI。
+RSR本机7.5.7.15及官方源码交叉核对：Service.Config.HostileType（AllTargetsCanAttack / TargetsHaveTarget）、DataCenter.TargetingTypeOverride=HighHP、ChangeOperatingMode Manual / Auto。拉怪Manual/全部，原地击杀Auto/最高血量/已交战；自动阶段不每帧把RSR选出的高血量目标重新改成最近目标。快照保留原目标范围、排序覆盖、开关模式；还原时检查提供者身份及最后写入值，插件替换或用户覆盖不写回旧实例。原运行模式按Off/Manual/Auto恢复，复杂AutoDuty等子模式尚未专项验证。trigger-waves.13起普通模式用BossMod Reborn AI自动靠近，记录路线模式仍保留原地击杀。见docs/AUTO_TRIGGER.md。
 
 官方参考：https://github.com/FFXIV-CombatReborn/RotationSolverReborn/blob/main/RotationSolver.Basic/Service.cs 、同目录DataCenter.cs。反射工具需本机依赖统一加载以避免Lumina版本差异导致内部Service类型被反射过滤。
 

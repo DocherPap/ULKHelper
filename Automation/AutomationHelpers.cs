@@ -116,6 +116,7 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
         SafeState(), conditions[ConditionFlag.Mounted], objects.LocalPlayer?.IsCasting ?? false, conditions[ConditionFlag.InCombat],
         TriggerGameReader.Level(), triggerReader.Read(world.Territory), fates.Where(f => f != null && f.TerritoryType.RowId == world.Territory
             && f.State is FateState.Preparing or FateState.Running or FateState.Ending).Select(f => f.FateId).ToHashSet());
+    public Func<string>? AdditionalDiagnostics {get;set;}
     public AutomationSnapshot Snapshot => snapshot;
     public SoloDebugSnapshot DebugSnapshot => debugSnapshot;
     public void RunDebug(SoloDebugAction action, uint crystalId = 0) => commands.Enqueue(() =>
@@ -157,7 +158,7 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
             + combat.DescribeState() + "\n"
             + $"当前绑定NM={follow.FateId} 传送测试={debug.Transferring}\n自动触发：{trigger.Status}\n已观测怪物区域={triggerReader.Areas.Count}\n"
             + $"当前目标：{targetText}\n附近小怪（80米内最多20只）：\n{string.Join("\n",nearbyMobs)}\n"
-            + $"水晶路线：{navigation.CrystalDecision ?? "未规划"}\n近处水晶/事件对象：\n" + string.Join("\n", crystalObjects);
+            + $"水晶路线：{navigation.CrystalDecision ?? "未规划"}\n近处水晶/事件对象：\n" + string.Join("\n", crystalObjects) + "\n" + AdditionalDiagnostics?.Invoke();
     }
     public void SelectLeader(PlayerIdentity identity) => commands.Enqueue(() => SetLeader(identity));
     private void SetLeader(PlayerIdentity identity)

@@ -17,3 +17,7 @@ The fourteen factual X/Z crystal positions and PlaceName row IDs in `Automation/
 # Logos reference data
 
 `Logos/catalog.json` is an unmodified copy of the factual recipe/appraisal catalog from https://github.com/Pop115/XivEureka/blob/main/XivEureka/Data/logos.json (retrieved 2026-11-03). Source author Pop115; distributed under AGPL-3.0, retained in `XivEureka-data-LICENSE.txt`. Original source identifies recipes as captured from https://ffxiv-eureka.com/logograms on 2026-10-11 and appraisal pools cross-checked with Item data on 2026-10-17. No XivEureka runtime implementation is copied. Chinese names are read from the user's local game files. Preserve this catalog, source attribution and license when distributing this data; the source catalog remains available at the linked URL and in this repository.
+
+# FFXIV Interactive Eureka Maps bunny locations
+
+`Bunnies/points.json` extracts all bunny lockbox positions and UUIDs from Kassanu/eureka-interactive-maps `data/zones/{pagos,pyros,hydatos}/zone.json`, retrieved 2026-11-03: https://github.com/Kassanu/eureka-interactive-maps . Copyright the upstream contributors; GPL-3.0, full license retained as `Eureka-interactive-maps-LICENSE.txt`. The derived JSON is included in source. Counts 54/58/30. Source metadata and data fingerprint are documented in `docs/BUNNY_TREASURE.md`. No upstream map images or runtime code are included. Game status names, messages, map textures and item names are read from the user's local game files.

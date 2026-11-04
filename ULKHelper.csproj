@@ -8,7 +8,7 @@
     <AssemblyName>ULKHelper</AssemblyName>
     <RootNamespace>ULKHelper</RootNamespace>
     <Version>0.1.1</Version>
-    <InformationalVersion>0.1.1-local.logos-ui.5</InformationalVersion>
+    <InformationalVersion>0.1.1-local.trigger-waves.16</InformationalVersion>
     <AssemblyVersion>0.1.1.0</AssemblyVersion>
     <Deterministic>true</Deterministic>
     <PathMap>$(MSBuildProjectDirectory)=/_/ULKHelper</PathMap>
@@ -17,6 +17,7 @@
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="Logos/catalog.json" />
+    <EmbeddedResource Include="Bunnies/points.json" />
     <Compile Remove="tools/**/*.cs;artifacts/**/*.cs" />
     <Reference Include="FFXIVClientStructs"><HintPath>$(DalamudLibPath)/FFXIVClientStructs.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="InteropGenerator.Runtime"><HintPath>$(DalamudLibPath)/InteropGenerator.Runtime.dll</HintPath><Private>false</Private></Reference>

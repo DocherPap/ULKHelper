@@ -20,6 +20,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly InventoryTracker inventoryTracker;
     private readonly AutomationHelpers automation;
     private readonly FateMapTracker fateTracker;
+    private readonly Bunnies.BunnyTracker bunnies;
     private readonly Logos.LogosService logos = new();
     private readonly Logos.LogosInventoryReader logosInventory;
     private bool disposed;
@@ -48,7 +49,9 @@ public sealed class Plugin : IDalamudPlugin
         }
         logosInventory=new(framework,objects,playerState,gameGui,logos.Catalog);
         fateTracker = new(dataManager, framework, clientState, objects, fates, gameGui, log, scanner, playerState, chat, settings);
-        mainWindow = new(inventoryTracker, automation, weatherZones, fateTracker, new GameMapTextures(textures), weatherError, settings, new LogosPage(id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText(), id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>()!.GetRow(id).Name.ExtractText(), () => objects.LocalPlayer is {} player ? new LogosWorld(player.CurrentWorld.RowId,player.CurrentWorld.Value.Name.ExtractText(),player.CurrentWorld.Value.DataCenter.Value.Name.ExtractText()) : null, logos, settings,()=>logosInventory.Snapshot));
+        bunnies=new(framework,clientState,objects,playerState,chat,fateTracker,log);
+        automation.AdditionalDiagnostics=bunnies.Describe;
+        mainWindow = new(inventoryTracker, automation, weatherZones, fateTracker, new GameMapTextures(textures), weatherError, settings, new LogosPage(id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText(), id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>()!.GetRow(id).Name.ExtractText(), () => objects.LocalPlayer is {} player ? new LogosWorld(player.CurrentWorld.RowId,player.CurrentWorld.Value.Name.ExtractText(),player.CurrentWorld.Value.DataCenter.Value.Name.ExtractText()) : null, logos, settings,()=>logosInventory.Snapshot), new BunnyPage(bunnies,id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText(),settings));
         windows.AddWindow(mainWindow);
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -76,6 +79,7 @@ public sealed class Plugin : IDalamudPlugin
         pluginInterface.UiBuilder.OpenMainUi -= OpenMainUi;
         commandManager.RemoveHandler(CommandName);
         windows.RemoveAllWindows();
+        bunnies.Dispose();
         logosInventory.Dispose();
         logos.Dispose();
         automation.Dispose();

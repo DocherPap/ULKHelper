@@ -9,6 +9,10 @@
     <DalamudLibPath Condition="'$(DalamudLibPath)' == ''">$(APPDATA)/XIVLauncherCN/addon/Hooks/dev</DalamudLibPath>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../Bunnies/BunnySearch.cs" Link="BunnySearch.cs"/>
+    <Compile Include="../../Bunnies/BunnyLootCatalog.cs" Link="BunnyLootCatalog.cs"/>
+    <Compile Include="../../Windows/BunnyPage.cs" Link="BunnyPage.cs"/>
+    <EmbeddedResource Include="../../Bunnies/points.json" LogicalName="ULKHelper.Bunnies.points.json"/>
     <Compile Include="../../Windows/LogosPage.cs" Link="LogosPage.cs" />
     <Compile Include="../../Logos/LogosOwnership.cs" Link="LogosOwnership.cs" />
     <Compile Include="../../Logos/LogosService.cs" Link="LogosService.cs" />

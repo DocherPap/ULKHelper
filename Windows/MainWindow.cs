@@ -24,18 +24,22 @@ internal sealed class MainWindow : Window
 
     public MainWindow(IStatisticsProvider statistics, AutomationHelpers helpers, IReadOnlyList<WeatherZone> weatherZones,
         IFateMapProvider fateProvider, IMapTextures mapTextures,
-        string? weatherError = null, SettingsStore? settings = null, LogosPage? logosPage = null) : base("优雷卡助手###ULKHelper.Main")
+        string? weatherError = null, SettingsStore? settings = null, LogosPage? logosPage = null, BunnyPage? bunnyPage = null) : base("优雷卡助手###ULKHelper.Main")
     {
         logos = logosPage!;
         itemStatistics = new(statistics);
         triggerMap = new(fateProvider, mapTextures, weatherZones, helpers);
         automation = new(helpers, triggerMap);
         weather = new(weatherZones, weatherError);
-        fateMap = new(fateProvider, mapTextures, weatherZones, helpers);
+        fateMap = new(fateProvider, mapTextures, weatherZones, helpers, bunnyPage);
         this.settings = settings;
         debugTests = new(helpers, settings);
-        selectedTab = Math.Clamp(settings?.Get("window.tab", 0) ?? 0, 0, 5);
-        if(settings?.Get("window.tabSchema",0)!=1 && selectedTab>=3)selectedTab=Math.Min(5,selectedTab+1);
+        selectedTab = settings?.Get("window.tab",0)??0;
+        var schema=settings?.Get("window.tabSchema",0)??0;
+        if(schema==0&&selectedTab>=3)selectedTab++;
+        if(schema<2&&selectedTab>=3)selectedTab++;
+        if(schema<3)selectedTab=selectedTab==3?2:selectedTab>3?selectedTab-1:selectedTab;
+        selectedTab=Math.Clamp(selectedTab,0,5);
         if (settings != null) { itemStatistics.Load(settings); weather.Load(settings); fateMap.Load(settings, "map"); triggerMap.Load(settings, "triggerMap"); automation.Load(settings); }
         Size = settings?.Get("window.size", new Vector2(1280, 780)) ?? new Vector2(1280, 780);
         SizeCondition = ImGuiCond.Once;
@@ -109,7 +113,7 @@ internal sealed class MainWindow : Window
             if (settings != null)
             {
                 itemStatistics.Save(settings); weather.Save(settings); fateMap.Save(settings, "map"); triggerMap.Save(settings, "triggerMap"); automation.Save(settings);
-                settings.Put("window.tabSchema",1); settings.Put("window.size", ImGui.GetWindowSize()); settings.Put("window.position", ImGui.GetWindowPos()); settings.Put("window.tab", selectedTab);
+                settings.Put("window.tabSchema",3); settings.Put("window.size", ImGui.GetWindowSize()); settings.Put("window.position", ImGui.GetWindowPos()); settings.Put("window.tab", selectedTab);
                 if (DateTimeOffset.UtcNow >= nextLayout || ImGui.IsMouseReleased(ImGuiMouseButton.Left)) { LayoutSettings.Capture(settings); nextLayout = DateTimeOffset.UtcNow.AddSeconds(1); }
                 settings.Flush();
             }

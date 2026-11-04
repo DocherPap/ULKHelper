@@ -3,8 +3,8 @@
     "Author": "DocherPap",
     "Name": "优雷卡助手",
     "InternalName": "ULKHelper",
-    "AssemblyVersion": "0.2.1.0",
-    "Changelog": "0.2.1：合并地图和自动化，加入兔子 FATE 自动寻宝、可命名的多条触发路线、元灵巡查回营及恒冰便捷选项。",
+    "AssemblyVersion": "0.2.2.0",
+    "Changelog": "0.2.2：重写自动触发路线和拉怪选项，增加位移后的路线恢复，调整车头跟随、头目待机和战后水晶待机流程。",
     "Description": "优雷卡装备与材料统计、四岛天气与 FATE 地图、幸福兔挖宝、文理技能、常用功能及自动化。",
     "Punchline": "优雷卡地图、装备统计与岛内便捷工具",
     "ApplicableVersion": "any",
@@ -16,11 +16,11 @@
       "eureka",
       "优雷卡"
     ],
-    "RepoUrl": "https://github.com/DocherPap/ULKHelper",
-    "DownloadLinkInstall": "https://github.com/DocherPap/ULKHelper/releases/download/latest/ULKHelper-0.2.1.0.zip",
-    "LastUpdate": 1793785916,
+    "LastUpdate": 1793825610,
+    "IsTestingExclusive": false,
+    "DownloadLinkUpdate": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.2.2/ULKHelper-0.2.2.0.zip",
+    "DownloadLinkInstall": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.2.2/ULKHelper-0.2.2.0.zip",
     "IsHide": false,
-    "DownloadLinkUpdate": "https://github.com/DocherPap/ULKHelper/releases/download/latest/ULKHelper-0.2.1.0.zip",
-    "IsTestingExclusive": false
+    "RepoUrl": "https://github.com/DocherPap/ULKHelper"
   }
 ]

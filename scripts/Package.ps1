@@ -34,7 +34,7 @@ Compress-Archive -LiteralPath $files -DestinationPath $zip -Force
 $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText("$zip.sha256", "$hash  $zipName`n", [Text.UTF8Encoding]::new($false))
 $entry = $manifest | ConvertTo-Json -Depth 10 | ConvertFrom-Json
-$download = "https://github.com/$Repository/releases/download/$tag/$zipName"
+$download = "https://raw.githubusercontent.com/$Repository/main/dist/$tag/$zipName"
 foreach ($pair in @{
     RepoUrl = "https://github.com/$Repository"
     DownloadLinkInstall = $download
@@ -47,4 +47,4 @@ $utf8 = [Text.UTF8Encoding]::new($false)
 $standalone = (ConvertTo-Json -InputObject @($entry) -Depth 20) + "`n"
 [IO.File]::WriteAllText((Join-Path $root 'repo.json'), $standalone, $utf8)
 [IO.File]::WriteAllText((Join-Path $dist 'repo.json'), $standalone, $utf8)
-Write-Output "已生成 $zip、SHA256 和 ULKHelper 独立 repo.json。尚未上传或发布。"
+Write-Output "已生成 $zip、SHA256 和 ULKHelper 独立 repo.json。将新版 dist 目录和根目录 repo.json 一起提交并推送到 main。"

@@ -46,9 +46,6 @@ internal sealed partial class AutomationHelpers
         follow.Stop();
         navigation.Stop();
         arrivalGame.Reset();
-#if DEBUG
-        if (debug.Active) debug.Stop("已停止测试。", DateTimeOffset.UtcNow);
-#endif
     }
 
     public void RunCommon(CommonAction action, MapDestination? elemental = null) => commands.Enqueue(() =>
@@ -102,7 +99,7 @@ internal sealed partial class AutomationHelpers
         }
         if (!CanMove() || objects.LocalPlayer is not { } player)
         { commonStatus = "请脱战并结束交互后重试。"; return; }
-        if (commonJourney.Active || trigger.Active || follow.Active || navigation.Active || DebugActive || combat.CleanupPending)
+        if (commonJourney.Active || trigger.Active || follow.Active || navigation.Active || combat.CleanupPending)
         { commonStatus = "请先停止当前任务。"; return; }
 
         if (action is CommonAction.Entrance or CommonAction.Potion or CommonAction.Anemos or CommonAction.Pagos or CommonAction.Pyros or CommonAction.Hydatos)

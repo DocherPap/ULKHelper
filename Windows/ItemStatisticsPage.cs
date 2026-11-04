@@ -10,24 +10,21 @@ internal sealed class ItemStatisticsPage
     private static readonly Vector4 BrightGreen = new(.30f, .91f, .48f, 1);
     private static readonly Vector4 PaleGreen = new(.58f, .76f, .63f, 1);
     private static readonly Vector4 Muted = new(.53f, .57f, .60f, 1);
-    private static readonly Vector4 PreviewColor = new(.89f, .74f, .42f, 1);
-    private static readonly string[] Sources = ["背包", "兵装库", "陆行鸟背包", "投影台", "收藏柜"];
+    private static readonly Vector4 InventoryStatusColor = new(.89f, .74f, .42f, 1);
     private readonly bool[] selectedJobs = Enumerable.Repeat(true, StatisticsCatalog.Jobs.Length).ToArray();
     private readonly bool[] selectedCategories = Enumerable.Repeat(true, StatisticsCatalog.CategoryNames.Length).ToArray();
     private bool byJob;
     private bool overall;
-    private bool showExamples = true;
     private EquipmentSection[] sections = [];
     private MaterialPreview[] materials = [];
-    private readonly IStatisticsProvider? statistics;
+    private readonly IStatisticsProvider statistics;
     private long inventoryRevision = -1;
-    private bool HasOwnership => showExamples || statistics?.HasData == true;
+    private bool HasOwnership => statistics.HasData;
 
-    public ItemStatisticsPage(IStatisticsProvider? statistics = null)
+    public ItemStatisticsPage(IStatisticsProvider statistics)
     {
         this.statistics = statistics;
-        showExamples = statistics == null;
-        RebuildPreview();
+        RebuildStatistics();
     }
     public void Load(SettingsStore settings)
     {
@@ -36,7 +33,7 @@ internal sealed class ItemStatisticsPage
         var categories = settings.Get("statistics.categories", selectedCategories);
         Array.Copy(jobs, selectedJobs, Math.Min(jobs.Length, selectedJobs.Length));
         Array.Copy(categories, selectedCategories, Math.Min(categories.Length, selectedCategories.Length));
-        RebuildPreview();
+        RebuildStatistics();
     }
     public void Save(SettingsStore settings)
     {
@@ -46,10 +43,10 @@ internal sealed class ItemStatisticsPage
 
     public void Draw()
     {
-        if (statistics != null && inventoryRevision != statistics.Revision)
+        if (inventoryRevision != statistics.Revision)
         {
             inventoryRevision = statistics.Revision;
-            RebuildPreview();
+            RebuildStatistics();
         }
         // Initial weights; ImGui retains widths adjusted by dragging the column borders.
         LayoutSettings.RememberTable("##StatisticsLayoutWideMaterials");
@@ -110,39 +107,21 @@ internal sealed class ItemStatisticsPage
 
         ImGui.Spacing();
         SectionHeader("拥有物品更新状态");
-        if (statistics != null)
+        foreach (var source in MergeRetainerStatuses(statistics.Sources))
         {
-            foreach (var source in MergeRetainerStatuses(statistics.Sources))
-            {
-                ImGui.TextWrapped(source.Label);
-                var state = source.ReadThisSession ? "已更新" : source.UpdatedAt != null ? "已缓存" : "未获取";
-                if (ImGui.GetContentRegionAvail().X >= ImGui.CalcTextSize(state).X + ImGui.GetStyle().ItemSpacing.X)
-                    ImGui.SameLine();
-                ImGui.TextColored(source.ReadThisSession ? BrightGreen : Muted, state);
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip(source.UpdatedAt is { } time
-                        ? $"最后获取：{time.ToLocalTime():yyyy-MM-dd HH:mm:ss}\n保存于当前角色的本地缓存。"
-                        : "请打开此来源获取库存；未获取不代表没有物品。");
-            }
-            ImGui.Spacing();
-            ImGui.TextWrapped("库存自动更新；缓存来源保留上次获取的结果。");
-        }
-        else
-        {
-            for (var i = 0; i < Sources.Length; i++)
-            {
-                ImGui.TextUnformatted(Sources[i]);
+            ImGui.TextWrapped(source.Label);
+            var state = source.ReadThisSession ? "已更新" : source.UpdatedAt != null ? "已缓存" : "未获取";
+            if (ImGui.GetContentRegionAvail().X >= ImGui.CalcTextSize(state).X + ImGui.GetStyle().ItemSpacing.X)
                 ImGui.SameLine();
-                var updated = showExamples && i < 2;
-                ImGui.TextColored(updated ? BrightGreen : Muted, updated ? "已更新" : "未获取");
-            }
-            ImGui.Spacing();
-            ImGui.Separator();
-            changed |= ImGui.Checkbox("示例进度", ref showExamples);
-            ImGui.TextColored(PreviewColor, "仅 UI 预览");
-            ImGui.TextWrapped("未读取角色物品；示例进度仅用于预览。");
+            ImGui.TextColored(source.ReadThisSession ? BrightGreen : Muted, state);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(source.UpdatedAt is { } time
+                    ? $"最后获取：{time.ToLocalTime():yyyy-MM-dd HH:mm:ss}\n保存于当前角色的本地缓存。"
+                    : "请打开此来源获取库存；未获取不代表没有物品。");
         }
-        if (changed) RebuildPreview();
+        ImGui.Spacing();
+        ImGui.TextWrapped("库存自动更新；缓存来源保留上次获取的结果。");
+        if (changed) RebuildStatistics();
     }
 
     private static IEnumerable<SourceSnapshot> MergeRetainerStatuses(IReadOnlyList<SourceSnapshot> sources)
@@ -174,7 +153,7 @@ internal sealed class ItemStatisticsPage
     private void DrawEquipment()
     {
         SectionHeader("拥有情况");
-        ImGui.TextColored(PreviewColor, statistics?.StatusText ?? (showExamples ? "示例预览 · 非角色实际数据" : "拥有情况尚未获取"));
+        ImGui.TextColored(InventoryStatusColor, statistics.StatusText);
         DrawLegend();
         DrawPane("##EquipmentScroll", () =>
         {
@@ -287,7 +266,7 @@ internal sealed class ItemStatisticsPage
         var fit = Math.Clamp((side - 12) / fullWidth, 0, 1);
         var x = origin.X + (side - fullWidth * fit) / 2;
         var owned = GetOwnedStages(card);
-        var latest = GetCompletedStage(card, owned);
+        var latest = statistics.CompletedStage(card);
         for (var i = 0; i < radii.Length; i++)
         {
             var radius = radii[i] * fit;
@@ -309,7 +288,7 @@ internal sealed class ItemStatisticsPage
             if (card.Note.Length > 0) ImGui.TextUnformatted(card.Note);
             ImGui.Separator();
             var owned = GetOwnedStages(card);
-            var latest = GetCompletedStage(card, owned);
+            var latest = statistics.CompletedStage(card);
             for (var i = 0; i < card.Stages.Length; i++)
             {
                 var stage = card.Stages[i];
@@ -443,7 +422,7 @@ internal sealed class ItemStatisticsPage
         finally { ImGui.EndTooltip(); }
     }
 
-    private void RebuildPreview()
+    private void RebuildStatistics()
     {
         EquipmentCard[] visible;
         if (byJob)
@@ -462,11 +441,10 @@ internal sealed class ItemStatisticsPage
                     .OrderBy(c => c.SpecialArmor && c.Name.StartsWith("朱红", StringComparison.Ordinal)).ToArray()))
                 .Where(s => s.Cards.Length > 0).ToArray();
         }
-        materials = statistics?.Summarize(visible) ?? StatisticsPreview.Summarize(visible, showExamples);
+        materials = statistics.Summarize(visible);
     }
 
-    private int[] GetOwnedStages(EquipmentCard card) => statistics?.OwnedStages(card) ?? StatisticsPreview.GetOwnedStages(card, showExamples);
-    private int GetCompletedStage(EquipmentCard card, int[] owned) => statistics?.CompletedStage(card) ?? owned.DefaultIfEmpty(-1).Max();
+    private int[] GetOwnedStages(EquipmentCard card) => statistics.OwnedStages(card);
 
     private static void DrawCardBackground(Vector2 origin, Vector2 size, bool hovered)
     {

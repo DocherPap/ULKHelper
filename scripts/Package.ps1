@@ -5,13 +5,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-if ((Get-Content (Join-Path $root 'ULKHelper.csproj') -Raw) -match '<Version>[^<]*-debug') {
-    throw '调试分支不能生成正式库链或覆盖0.1.0发布包。请使用 scripts/Package-Debug.ps1。'
-}
-if (Test-Path (Join-Path $root '.git')) {
-    $currentBranch = & git -C $root branch --show-current
-    if ($currentBranch -eq 'codex/solo-debug-tests') { throw '调试分支不能生成正式库链或覆盖0.1.0发布包。请使用 scripts/Package-Debug.ps1。' }
-}
+$currentBranch = & git -C $root branch --show-current
+if ($LASTEXITCODE -ne 0 -or $currentBranch -ne 'main') { throw '正式打包只允许在 main 分支运行。' }
 if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'Repository 应为 owner/repo。' }
 if (-not $SkipBuild) {
     $buildArgs = @('build', (Join-Path $root 'ULKHelper.csproj'), '-c', 'Release', '--nologo')
@@ -24,6 +19,9 @@ $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
 $dll = Join-Path $root 'bin/Release/net10.0-windows/ULKHelper.dll'
 $identity = [Reflection.AssemblyName]::GetAssemblyName($dll)
 if ($identity.Name -ne 'ULKHelper' -or $manifest.InternalName -ne 'ULKHelper' -or $identity.Version.ToString() -ne $manifest.AssemblyVersion) { throw 'DLL 与清单名称或版本不一致。' }
+if ([Diagnostics.FileVersionInfo]::GetVersionInfo($dll).ProductVersion -match '-(?:testing|debug)') {
+    throw '检测到测试分支的 DLL。请在 main 重新生成 Release 构建。'
+}
 $version = $identity.Version.ToString()
 $tag = 'v' + (($version.Split('.')[0..2]) -join '.')
 $dist = Join-Path $root "dist/$tag"

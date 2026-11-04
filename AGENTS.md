@@ -1,5 +1,7 @@
 # 优雷卡助手开发约定
 
+- 正式发布只使用 `main`。本地调试使用 `codex/testing`，测试入口、现场记录、离线检查和 UI 预览集中于该分支；生产修复先落到 main，再同步至测试分支。以下 0.2.0 Debug 构建内置测试的描述为历史。
+
 - 0.2.0 正式版为六页，调试测试页与记录仅 Debug 构建启用。发布只使用 DocherPap/ULKHelper 的独立 repo.json，见 docs/RELEASE.md。
 
 - 最新七页顺序：常用功能、物品统计、天气预报、地图/FATE、文理技能、自动化、调试测试。黄金港行程用 Lifestream 接驳、vnavmesh 步行，岛内营地和水晶用步行导航。显式点击才触发购物、进岛和喊话；组队两个选项默认关闭，仅岛内生效。详见 docs/COMMON_ACTIONS.md。

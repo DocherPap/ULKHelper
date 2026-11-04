@@ -1,0 +1,9 @@
+/bin/
+/obj/
+**/bin/
+**/obj/
+/dist/debug/
+/artifacts/branch-validation/
+/artifacts/debug-*-checks.txt
+/artifacts/inventory-tests/
+/artifacts/ui/

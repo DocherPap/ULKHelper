@@ -28,15 +28,6 @@ internal sealed class SettingsStore
         try { return values.TryGetValue(key, out var value) ? value.Deserialize<T>(Options) ?? fallback : fallback; }
         catch { return fallback; }
     }
-    public T ReadFromDisk<T>(string key, T fallback)
-    {
-        try
-        {
-            var saved = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(path), Options);
-            return saved != null && saved.TryGetValue(key, out var value) ? value.Deserialize<T>(Options) ?? fallback : fallback;
-        }
-        catch (Exception ex) { error?.Invoke(ex); return fallback; }
-    }
     public void Put<T>(string key, T value)
     {
         var json = JsonSerializer.SerializeToElement(value, Options);

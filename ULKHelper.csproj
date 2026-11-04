@@ -14,9 +14,6 @@
     <DalamudLibPath Condition="'$(DalamudLibPath)' == ''">$(DALAMUD_HOME)</DalamudLibPath>
     <DalamudLibPath Condition="'$(DalamudLibPath)' == '' And Exists('$(APPDATA)/XIVLauncherCN/addon/Hooks/dev/Dalamud.dll')">$(APPDATA)/XIVLauncherCN/addon/Hooks/dev</DalamudLibPath>
   </PropertyGroup>
-  <ItemGroup Condition="'$(Configuration)' != 'Debug'">
-    <Compile Remove="Windows/DebugTestsPage.cs;Automation/SoloDebugHelper.cs;Automation/DebugRecording.cs" />
-  </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Logos/catalog.json" />
     <EmbeddedResource Include="Bunnies/points.json" />

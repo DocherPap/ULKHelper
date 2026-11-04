@@ -16,16 +16,9 @@ internal sealed class MainWindow : Window
     private readonly FateMapPage fateMap;
     private readonly FateMapPage triggerMap;
     private readonly SettingsStore? settings;
-#if DEBUG
-    private readonly DebugTestsPage debugTests;
-#endif
     private readonly LogosPage logos;
     private readonly CommonPage common;
-#if DEBUG
-    private const int TabCount = 7;
-#else
     private const int TabCount = 6;
-#endif
     private bool firstDraw = true;
     private int selectedTab;
     private DateTimeOffset nextLayout;
@@ -42,9 +35,6 @@ internal sealed class MainWindow : Window
         weather = new(weatherZones, weatherError);
         fateMap = new(fateProvider, mapTextures, weatherZones, helpers, bunnyPage);
         this.settings = settings;
-#if DEBUG
-        debugTests = new(helpers, settings);
-#endif
         selectedTab = settings?.Get("window.tab",0)??0;
         var schema=settings?.Get("window.tabSchema",0)??0;
         if(schema==0&&selectedTab>=3)selectedTab++;
@@ -118,15 +108,6 @@ internal sealed class MainWindow : Window
                 try { DrawPage(DrawAutomationPage); }
                 finally { ImGui.EndTabItem(); }
             }
-#if DEBUG
-            ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("调试测试", firstDraw && restoreTab == 6 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
-            {
-                selectedTab = 6;
-                try { DrawPage(debugTests.Draw); }
-                finally { ImGui.EndTabItem(); }
-            }
-#endif
         }
         finally
         {

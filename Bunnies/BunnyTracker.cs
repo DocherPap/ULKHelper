@@ -22,7 +22,6 @@ internal sealed class BunnyTracker : IBunnyTracker, IDisposable
     private DateTimeOffset buffSeen;private bool wasBuff;private (uint Territory,uint Map,uint Instance,ulong Player,uint Room) context;
     private volatile BunnySnapshot snapshot=new(0,false,null,[],new HashSet<string>(),[],"等待幸福兔状态。");
     public BunnySnapshot Snapshot=>snapshot;
-    public string Describe()=> $"兔子挖宝：{snapshot.Status} 活跃={snapshot.Active} 候选={snapshot.Candidates.Count}/{snapshot.Points.Count} 线索={snapshot.Clues.Count} 矛盾={snapshot.Conflict} 已旗标={snapshot.Flagged}\n最后提示={snapshot.Clues.LastOrDefault()?.Text}";
     public BunnyTracker(IFramework framework,IClientState client,IObjectTable objects,IPlayerState player,IChatGui chat,IFateMapProvider maps,IPluginLog log)
     {this.framework=framework;this.client=client;this.objects=objects;this.player=player;this.chat=chat;this.maps=maps;this.log=log;search=new(points);framework.Update+=Tick;chat.ChatMessage+=Chat;}
     private void Begin(IslandMap map){generation++;flagAttempts=0;nextFlag=default;search.Begin(map);}

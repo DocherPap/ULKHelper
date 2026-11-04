@@ -270,7 +270,7 @@ internal sealed unsafe class InventoryTracker : IStatisticsProvider, IDisposable
     }
     public MaterialPreview[] Summarize(IEnumerable<EquipmentCard> cards)
     {
-        lock (sync) return catalog == null ? StatisticsPreview.Summarize(cards, false) : projection!.Summarize(cards);
+        lock (sync) return catalog == null ? MaterialRequirements.WithoutInventory(cards) : projection!.Summarize(cards);
     }
 
     private void Save()

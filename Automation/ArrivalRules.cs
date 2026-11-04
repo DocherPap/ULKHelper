@@ -5,7 +5,7 @@ namespace ULKHelper.Automation;
 internal sealed record ArrivalParticipant(ulong Id, Vector3 Position, bool Alive, bool Party, bool Attacking);
 internal sealed record ArrivalFate(ushort Id, int StartedAt, Vector3 Centre, float Radius, bool? NeedsSync, float? HpRatio,
     IReadOnlyList<ArrivalParticipant> Participants, int? IslandPlayerCount = null, bool RequireIslandRoster = false,
-    ulong BossId = 0, bool BossAlive = true, bool BossTargetable = false, bool Synced = false);
+    ulong BossId = 0, bool BossAlive = true, bool BossTargetable = false, bool Synced = false, Vector3? BossPosition = null);
 internal sealed record ArrivalFrame(WorldContext World, Vector3 Player, bool Safe, bool Mounted, bool Casting, bool InCombat, ArrivalFate? Fate);
 internal sealed record PullDecision(bool Started, int Players, int Attackers, int PartyAttackers);
 

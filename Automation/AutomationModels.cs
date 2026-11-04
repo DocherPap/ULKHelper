@@ -21,6 +21,7 @@ internal interface IAutomationHelpers
     void RenameTriggerRoute(ushort fateId, int index, string name) { }
     void ClearTriggerRoute(ushort fateId) { }
     void SelectLeader(PlayerIdentity identity);
+    void ClearLeader() { }
     void SelectCurrentTargetAsLeader() { }
     void Listen(bool enabled);
     void Navigate();

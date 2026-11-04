@@ -27,20 +27,26 @@ internal sealed class LeaderListenerHelper
         Status = "车头已选定，可开始监听。";
     }
 
-    public void SetListening(bool enabled)
+    public void SetListening(bool enabled, bool shoutOnly = false)
     {
         Listening = enabled && Leader != null;
-        Status = Listening ? "正在监听说话、呼喊、喊话频道。" : "监听已停止。";
+        Status = Listening ? (shoutOnly ? "正在监听车头的喊话频道。" : "正在监听说话、呼喊、喊话频道。") : "监听已停止。";
     }
 
-    public void Reset()
+    public void Reset(string reason = "角色或地图变化，请重新选择车头。")
     {
         Listening = false; Destination = null; Leader = null; history.Clear();
-        Status = "角色或地图变化，请重新选择车头。";
+        Status = reason;
+    }
+
+    public void ClearDestination(bool clearHistory = true)
+    {
+        Destination = null;
+        if (clearHistory) history.Clear();
     }
 
     public bool Receive(PlayerIdentity sender, string channel, string text, MapDestination? link,
-        uint territory, uint map, Vector3 player, DateTimeOffset time, Func<MapDestination, bool> mark)
+        uint territory, uint map, Vector3 player, DateTimeOffset time, Func<MapDestination, bool> mark, bool following = false)
     {
         if (!Listening || Leader != sender) return false;
         var result = "已记录，未发现坐标。";
@@ -48,7 +54,8 @@ internal sealed class LeaderListenerHelper
         {
             if (!NavigationRules.Finite(link.Position)) result = "坐标无效，已跳过。";
             else if (link.Territory != territory || link.Map != map) result = "坐标不在当前地图，已跳过。";
-            else if (NavigationRules.Overlaps(player, link.Position)) result = "坐标在玩家 25 米内，已跳过。";
+            else if ((!following || Destination != null) && NavigationRules.Overlaps(following ? Destination!.Position : player, link.Position))
+                result = "坐标在 25 米内，已跳过。";
             else if (mark(link)) { Destination = link; result = "已在地图标记目的地。"; }
             else result = "地图标记失败。";
         }

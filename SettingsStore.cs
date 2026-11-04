@@ -34,6 +34,14 @@ internal sealed class SettingsStore
         if (values.TryGetValue(key, out var old) && old.GetRawText() == json.GetRawText()) return;
         values[key] = json; dirty = true;
     }
+    public void RemoveKeysWithPrefix(string prefix)
+    {
+        foreach (var key in values.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
+        {
+            values.Remove(key);
+            dirty = true;
+        }
+    }
     public void Flush(bool force = false)
     {
         if (readOnly || !dirty || !force && DateTimeOffset.UtcNow < nextSave) return;

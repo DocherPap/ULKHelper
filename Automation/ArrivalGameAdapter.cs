@@ -67,7 +67,7 @@ internal sealed class ArrivalGameAdapter(IObjectTable objects, IPartyList party,
             ? hud->ExpContentLevel : null, fate.MaxLevel, manager != null && manager->SyncedFateId == fate.FateId);
         return new(fate.FateId, fate.StartTimeEpoch, fate.Position, fate.Radius, sync, hp, participants, islandPlayers, true,
             boss?.GameObjectId ?? 0, boss?.IsDead != true, boss?.IsTargetable == true,
-            manager != null && manager->SyncedFateId == fate.FateId);
+            manager != null && manager->SyncedFateId == fate.FateId, boss?.Position);
     }
 
     public EncounterObservation ReadEncounter(MapDestination destination, DateTimeOffset now, int? islandPlayers, ushort? boundId)

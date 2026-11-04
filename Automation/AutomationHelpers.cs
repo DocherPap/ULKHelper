@@ -68,6 +68,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         this.playerState = playerState;
         this.targets = targets; commonParty = party;
         this.settings = settings;
+        settings?.RemoveKeysWithPrefix("leader.");
         mesh = new VnavmeshAdapter(plugin); this.data = data;
         mounts = new(objects, data);
         arrivalGame = new(objects, party, fates, mounts);
@@ -78,7 +79,9 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         combat = new(plugin, commandManager, objects, targets);
         follow = new(navigation, mesh, mounts, combat);
         kills = new(objects, fates, data);
-        trigger = new(mesh, mounts, combat, new IslandCrystalGameAdapter(objects, gui, data)); triggerReader = new(objects, data);
+        trigger = new(mesh, mounts, combat, new IslandCrystalGameAdapter(objects, gui, data),
+            new TriggerMobility(objects, data, mesh).TryUse);
+        triggerReader = new(objects, data);
         commonJourney = new(plugin, mesh, client, objects, gui, data, conditions, arrivalGame, pagosWeather, message => chat.Print(message));
         commonJourney.CheckPagosRing = settings?.Get("common.checkPagosRing", false) ?? false;
         autoInvite = settings?.Get("common.autoInvite", false) ?? false;
@@ -175,7 +178,6 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             if (trigger.Active) return;
             if (BunnyAutomationActive || SurveyActive || commonJourney.Active || follow.Active || navigation.Active || combat.CleanupPending) { trigger.Stop("请先停止当前任务，等待控制恢复。"); return; }
             if (copy.Any(p => !triggerReader.Rules.Any(r => r.FateId == p.FateId && r.Territory == client.TerritoryType))) { trigger.Stop("所选FATE没有已核实的本岛击杀规则。"); return; }
-            if (copy.Any(p => p.Mode == TriggerMode.Recorded) && mounts.Selected == 0) { trigger.Stop("特殊触发请先选择坐骑。"); return; }
             var verified = copy.Select(p => p with { Level = data.GetExcelSheet<Lumina.Excel.Sheets.Fate>()!.GetRow(p.FateId).ClassJobLevel,
                 Route = triggerRoutes.GetValueOrDefault(p.FateId)?.Current.ToArray() ?? [] }).ToArray();
             trigger.Start(verified, ReadTriggerFrame(Context()), batch, maxKills, DateTimeOffset.UtcNow, useRotation, useBmr);
@@ -186,21 +188,26 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         TriggerGameReader.Level(), triggerReader.Read(world.Territory), fates.Where(f => f != null && f.TerritoryType.RowId == world.Territory
             && f.State is FateState.Preparing or FateState.Running or FateState.Ending).Select(f => f.FateId).ToHashSet(),
         CanMountForTravel: mounts.Selected != 0,
-        Loading: conditions[ConditionFlag.BetweenAreas] || conditions[ConditionFlag.BetweenAreas51] || objects.LocalPlayer == null);
+        Loading: conditions[ConditionFlag.BetweenAreas] || conditions[ConditionFlag.BetweenAreas51] || objects.LocalPlayer == null,
+        RangedJob: objects.LocalPlayer?.ClassJob.Value.Role is 3 or 4);
     public AutomationSnapshot Snapshot => snapshot;
     public void SelectLeader(PlayerIdentity identity) => commands.Enqueue(() => SetLeader(identity));
     private void SetLeader(PlayerIdentity identity)
     {
         if (trigger.Active) return;
         follow.Stop("车头已更换。"); listener.Select(identity);
-        if (playerState.ContentId != 0) { settings?.Put("leader." + playerState.ContentId, identity); settings?.Flush(); }
     }
+    public void ClearLeader() => commands.Enqueue(() =>
+    {
+        if (follow.Following) follow.Stop("车头已清除。");
+        listener.Reset("车头已清除，请重新选择。");
+    });
     public void SelectCurrentTargetAsLeader() => commands.Enqueue(() =>
     {
         if (targets.Target is not Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player || player.HomeWorld.RowId == 0) return;
         SetLeader(new(player.Name.TextValue, player.HomeWorld.RowId));
     });
-    public void Listen(bool enabled) => commands.Enqueue(() => { if (!enabled && !trigger.Active) follow.Stop("监听已停止。"); listener.SetListening(enabled); });
+    public void Listen(bool enabled) => commands.Enqueue(() => { if (!enabled && !trigger.Active) follow.Stop("监听已停止。"); listener.SetListening(enabled, follow.Following); });
     public void RefreshPlayers() => commands.Enqueue(roster.Refresh);
     public void SelectMount(uint id) => commands.Enqueue(() => { if (!trigger.Active && !follow.Active) { mounts.Select(id); settings?.Put("mount", mounts.Selected); settings?.Flush(); } });
     public void NavigateTo(MapDestination destination) => commands.Enqueue(() => StartPointNavigation(destination));
@@ -227,7 +234,11 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         if (listener.Leader == null) { follow.Stop("请先选择车头。"); return; }
         if (mounts.Selected == 0) { follow.Stop("请先选择已解锁且可移动的坐骑。"); return; }
         arrivalGame.Reset();
-        if (follow.Start(Context(), DateTimeOffset.UtcNow)) listener.SetListening(true);
+        if (follow.Start(Context(), DateTimeOffset.UtcNow))
+        {
+            listener.ClearDestination(clearHistory: false);
+            listener.SetListening(true, shoutOnly: true);
+        }
     });
     public void Stop() => commands.Enqueue(StopTasks);
     public void Navigate() => commands.Enqueue(() =>
@@ -266,12 +277,16 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             var transferScreen = conditions[ConditionFlag.BetweenAreas] || conditions[ConditionFlag.BetweenAreas51] || objects.LocalPlayer == null;
             world = NavigationRules.TransferContext(world, previous, client.IsLoggedIn,
                 navigation.Transferring || surveyTravel.Transferring || trigger.Transferring || commonJourney.Transferring
-                || bunnyTravel.Transferring, transferScreen);
+                || bunnyTravel.Transferring || follow.Transferring, transferScreen);
+            if (!client.IsLoggedIn && listener.Leader != null) listener.Reset();
             if (world != previous)
             {
                 wasNearPagosDragon = false;
                 nextDragonCheck = default;
-                listener.Reset(); navigation.Stop("角色或地图变化，导航已停止。");
+                if (!client.IsLoggedIn || world.PlayerId != 0 && previous.PlayerId != 0 && world.PlayerId != previous.PlayerId)
+                    listener.Reset();
+                else listener.ClearDestination();
+                navigation.Stop("角色或地图变化，导航已停止。");
                 follow.Stop("角色或地图变化，已停止跟随。"); arrivalGame.Reset(); usingFollow = false;
                 trigger.Stop("切区或角色变化，触发已停止。"); triggerReader.Reset();
                 roster.Reset(); invited.Clear(); lastAccepted = default;
@@ -279,8 +294,6 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                 mounts.Reset(); nextMounts = default;
                 while (commands.TryDequeue(out var ignored)) { }
                 previous = world; nextPlayers = default;
-                var savedLeader = settings?.Get<PlayerIdentity?>("leader." + world.PlayerId, null);
-                if (world.PlayerId != 0 && savedLeader != null) listener.Select(savedLeader);
             }
             while (commands.TryDequeue(out var command)) command();
             var journeyWasActive = commonJourney.Active;
@@ -322,7 +335,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                 var observation = follow.Goal is { } destination && local != null
                     ? arrivalGame.ReadEncounter(destination, now, roster.OtherPlayers(new(local.Name.TextValue, local.HomeWorld.RowId), now), follow.FateId)
                     : new EncounterObservation(null);
-                follow.Tick(new(world, local?.Position ?? Vector3.Zero, SafeState(navigation.Interacting || navigation.Transferring),
+                follow.Tick(new(world, local?.Position ?? Vector3.Zero, SafeState(follow.Interacting || follow.Transferring),
                     conditions[ConditionFlag.Mounted], local?.IsCasting ?? false, conditions[ConditionFlag.InCombat], observation.Fate),
                     transferScreen && client.IsLoggedIn && local?.IsDead != true && !conditions[ConditionFlag.InCombat]
                         && !conditions[ConditionFlag.WatchingCutscene], ReadFates(), observation, now);
@@ -377,6 +390,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             if (identity != current.Leader) return;
             var text = content.TextValue;
             var channel = message.LogKind.ToString();
+            if (current.Following && message.LogKind != XivChatType.Shout) return;
             var receivedAt = DateTimeOffset.UtcNow;
             var link = content.Payloads.OfType<MapLinkPayload>().FirstOrDefault();
             if (link == null)
@@ -391,12 +405,12 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             // Chat callbacks only enqueue managed copies; all map/game operations happen in Update.
             commands.Enqueue(() =>
             {
-                if (objects.LocalPlayer is not { } player) return;
+                if (objects.LocalPlayer is not { } player || follow.Following && channel != nameof(XivChatType.Shout)) return;
                 var before = listener.Destination;
                 listener.Receive(identity, channel, text, goal, client.TerritoryType, client.MapId,
                     player.Position, receivedAt,
                     destination => gui.OpenMapWithMapLink(new MapLinkPayload(destination.Territory, destination.Map,
-                        (int)MathF.Round(destination.Position.X * 1000), (int)MathF.Round(destination.Position.Z * 1000))));
+                        (int)MathF.Round(destination.Position.X * 1000), (int)MathF.Round(destination.Position.Z * 1000))), follow.Following);
                 if (follow.Following && listener.Destination is { } accepted && !ReferenceEquals(before, accepted)) follow.Receive(accepted);
             });
         }

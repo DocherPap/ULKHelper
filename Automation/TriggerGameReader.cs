@@ -41,7 +41,7 @@ internal sealed class TriggerGameReader(IObjectTable objects, IDataManager data)
             var dead = npc.IsDead || npc.CurrentHp == 0;
             var aggro = enemies.Contains(npc.EntityId) || localId != null && npc.TargetObjectId == localId;
             var engaged = ((Character*)npc.Address)->InCombat;
-            result.Add(new(npc.GameObjectId, rule.FateId, npc.Position, dead, aggro, npc.IsTargetable, engaged, npc.CurrentHp));
+            result.Add(new(npc.GameObjectId, rule.FateId, npc.Position, dead, aggro, npc.IsTargetable, engaged, npc.CurrentHp, npc.HitboxRadius));
             // Don't turn mobs pulled after the player into false spawn distributions.
             if (!dead && !engaged && areas.Count < 4096)
                 areas[(rule.FateId, (int)MathF.Floor(npc.Position.X / 20), (int)MathF.Floor(npc.Position.Z / 20))] = new(rule.FateId, npc.Position);

@@ -20,7 +20,13 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
     private (ushort Fate, int Route) nameDraftKey;
     private string nameDraft = "";
     private readonly Dictionary<ushort, TriggerMode> triggerModes = new();
-    private TriggerMode Mode(ushort id) => triggerModes.GetValueOrDefault(id, AutoTriggerRules.DefaultMode(id));
+    private readonly Dictionary<ushort, TriggerPull> triggerPulls = new();
+    private TriggerMode? defaultRoute;
+    private TriggerPull? defaultPull;
+    private TriggerMode Mode(ushort id) => triggerModes.GetValueOrDefault(id, defaultRoute ?? AutoTriggerRules.DefaultMode(id));
+    private TriggerPull Pull(ushort id) => triggerPulls.GetValueOrDefault(id, defaultPull ?? TriggerPlan.DefaultPull(AutoTriggerRules.DefaultMode(id)));
+    private TriggerPull EffectivePull(FateDefinition fate, int? playerLevel) =>
+        AutoTriggerRules.CanPassBy(playerLevel, fate.Level) ? Pull(fate.Seed.Id) : TriggerPull.Attack;
     private bool CanAddTrigger(FateDefinition candidate, IslandMap island)
     {
         var level = navigation?.TriggerSnapshot.Level;
@@ -41,6 +47,10 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         useTriggerBmr = settings.Get("trigger.useBmr", true);
         foreach (var p in settings.Get("trigger.modes", new Dictionary<ushort, TriggerMode>()))
             if (Enum.IsDefined(p.Value)) triggerModes[p.Key] = p.Value;
+        foreach (var p in settings.Get("trigger.pullMethods", triggerModes.ToDictionary(p => p.Key, p => TriggerPlan.DefaultPull(p.Value))))
+            if (Enum.IsDefined(p.Value)) triggerPulls[p.Key] = p.Value;
+        defaultRoute = settings.Get<TriggerMode?>("trigger.defaultRoute", null);
+        defaultPull = settings.Get<TriggerPull?>("trigger.defaultPull", null);
     }
     public void Save(SettingsStore settings, string key)
     {
@@ -49,6 +59,9 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         settings.Put(key + ".elementals", showElementals);
         settings.Put("trigger.batch", pullBatch); settings.Put("trigger.abandon", abandonStep);
         settings.Put("trigger.showMobs", showMobs); settings.Put("trigger.modes", triggerModes);
+        settings.Put("trigger.pullMethods", triggerPulls);
+        settings.Put("trigger.defaultRoute", defaultRoute);
+        settings.Put("trigger.defaultPull", defaultPull);
         settings.Put("trigger.useRotation", useTriggerRotation); settings.Put("trigger.useBmr", useTriggerBmr);
         settings.Put(key + ".zoom", zoom); settings.Put(key + ".centre", centre); settings.Put(key + ".search", search);
     }
@@ -76,59 +89,56 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         var auto = navigation?.TriggerSnapshot ?? AutoTriggerSnapshot.Empty;
         var cap = auto.Level is { } level ? AutoTriggerRules.Capacity(level, island.Fates.Where(f => triggerSelection.Ids.Contains(f.Seed.Id)).Select(f => (int)f.Level)) : 0;
         ImGui.TextUnformatted($"自动触发列表（{triggerSelection.Ids.Count}/{cap}） 元素等级：{auto.Level?.ToString() ?? "未获取"}");
-        ImGui.SetNextItemWidth((ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemSpacing.X) / 2);
-        ImGui.SliderInt("##PullBatch", ref pullBatch, 1, 21, pullBatch == 21 ? "每批：无限" : "每批：%d 只");
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(-1); ImGui.SliderInt("##Abandon", ref abandonStep, 1, 7, abandonStep == 7 ? "放弃阈值：无限" : $"放弃阈值：{abandonStep * 50} 只");
         FateDefinition? nearby = null;
-        if (triggerSelection.Ids.Count == 0 && (current == null || !CanAddTrigger(current, island))
-            && snapshot.CurrentTerritory == island.Territory && snapshot.PlayerMapPosition is { } player)
+        if (snapshot.CurrentTerritory == island.Territory && snapshot.PlayerMapPosition is { } player)
         {
             var position = MapProjection.MapToWorld(player, island);
-            nearby = points.Where(f => CanAddTrigger(f, island)
+            nearby = points.Where(f => f.Trigger.Contains("击杀 ")
                     && snapshot.Records.GetValueOrDefault(f.Seed.Id)?.Active != true)
                 .Select(f =>
                 {
                     var distance = NavigationRules.Distance(position, MapProjection.MapToWorld(new(f.Seed.X, f.Seed.Y), island));
-                    var special = Mode(f.Seed.Id) == TriggerMode.Recorded;
-                    var route = auto.SelectedRoute(f.Seed.Id);
-                    if (special && route.Length > 0)
-                        distance = Math.Min(distance, NavigationRules.Distance(position, route[0]));
-                    return (Fate: f, Distance: distance, Special: special);
+                    return (Fate: f, Distance: distance);
                 })
-                .Where(entry => entry.Distance <= 100)
-                .OrderByDescending(entry => entry.Special).ThenBy(entry => entry.Distance)
+                .Where(entry => entry.Distance <= 150)
+                .OrderBy(entry => entry.Distance)
                 .Select(entry => entry.Fate)
                 .FirstOrDefault();
         }
-        var routeTarget = nearby ?? current;
-        nearbyRoutePreview = nearby?.Seed.Id ?? 0;
-        var canStart = triggerSelection.Ids.Count > 0 ? triggerSelection.Ids.Count <= cap
-            : routeTarget != null && CanAddTrigger(routeTarget, island)
-                && (Mode(routeTarget.Seed.Id) != TriggerMode.Recorded || auto.SelectedRoute(routeTarget.Seed.Id).Length >= 2);
+        var routeTarget = current?.Trigger.Contains("击杀 ") == true ? current : nearby;
+        nearbyRoutePreview = routeTarget?.Seed.Id ?? 0;
+        var ids = triggerSelection.Ids.Count > 0 ? triggerSelection.Ids.ToArray()
+            : routeTarget != null && CanAddTrigger(routeTarget, island) ? [routeTarget.Seed.Id] : Array.Empty<ushort>();
+        var canStart = ids.Length > 0 && (triggerSelection.Ids.Count == 0 || ids.Length <= cap)
+            && ids.All(id => Mode(id) != TriggerMode.Recorded || auto.SelectedRoute(id).Length >= 2);
         ImGui.BeginDisabled(!auto.Active && (navigation == null || navigation.Snapshot.Navigating || !canStart || snapshot.CurrentTerritory != island.Territory));
-        var buttonLabel = auto.Active ? "停止自动触发" : nearby != null ? $"自动触发 · {nearby.Seed.ShortName}" : "自动触发";
+        var buttonLabel = auto.Active ? "停止自动触发" : ids.Length == 1 && routeTarget?.Seed.Id == ids[0] ? $"自动触发 · {routeTarget.Seed.ShortName}" : "自动触发";
         if (ImGui.Button(buttonLabel + "###AutoTriggerStartStop", new Vector2(-1, ImGui.GetFrameHeight() * 1.6f)))
         {
             if (auto.Active) navigation?.Stop();
             else
             {
-                if (nearby == null && triggerSelection.Ids.Count == 0 && current != null) triggerSelection.Add(current);
-                var ids = nearby != null ? new[] { nearby.Seed.Id } : triggerSelection.Ids.ToArray();
                 navigation?.StartTrigger(ids.Select(id =>
                 {
                     var fate = island.Fates.First(f => f.Seed.Id == id);
                     var centre = MapProjection.MapToWorld(new(fate.Seed.X, fate.Seed.Y), island);
-                    return new TriggerPlan(id, fate.Level, new(island.Territory, island.MapId, centre, fate.Seed.ShortName), Mode(id), auto.SelectedRoute(id));
+                    return new TriggerPlan(id, fate.Level, new(island.Territory, island.MapId, centre, fate.Seed.ShortName), Mode(id), auto.SelectedRoute(id), EffectivePull(fate, auto.Level));
                 }).ToArray(), pullBatch, abandonStep, useTriggerRotation, useTriggerBmr);
             }
         }
         ImGui.EndDisabled();
         ImGui.BeginDisabled(auto.Active);
-        if (routeTarget != null && CanAddTrigger(routeTarget, island))
-            DrawTriggerMode(routeTarget.Seed.Id, "触发模式");
+        DrawTriggerMode(routeTarget, auto.Level);
+        ImGui.BeginDisabled((routeTarget == null ? defaultRoute : Mode(routeTarget.Seed.Id)) == TriggerMode.Recorded);
+        ImGui.SetNextItemWidth((ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemSpacing.X) / 2);
+        ImGui.SliderInt("##PullBatch", ref pullBatch, 1, 21, pullBatch == 21 ? "每批：无限" : "每批：%d 只");
+        ImGui.EndDisabled();
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(-1); ImGui.SliderInt("##Abandon", ref abandonStep, 1, 7, abandonStep == 7 ? "放弃阈值：无限" : $"放弃阈值：{abandonStep * 50} 只");
         if (routeTarget != null && Mode(routeTarget.Seed.Id) == TriggerMode.Recorded)
             DrawTriggerRoutes(routeTarget.Seed.Id, auto, island, snapshot.CurrentTerritory == island.Territory);
+        else if (routeTarget == null)
+            DrawTriggerRoutes(0, auto, island, false);
         ImGui.Checkbox("自动循环", ref useTriggerRotation);
         ImGui.SameLine();
         ImGui.Checkbox("BMR AI", ref useTriggerBmr);
@@ -156,7 +166,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
                 ImGui.TextUnformatted(point.Seed.ShortName);
                 ImGui.SameLine();
                 if (ImGui.SmallButton("移除")) triggerSelection.Remove(id);
-                DrawTriggerMode(id, "##TriggerMode");
+                DrawTriggerMode(point, navigation?.TriggerSnapshot.Level);
                 if (Mode(id) == TriggerMode.Recorded && selected != id && ImGui.SmallButton("选择路线")) selected = id;
                 ImGui.TextWrapped("触发：" + point.Trigger);
                 ImGui.TextDisabled(snapshot.CurrentTerritory == island.Territory
@@ -168,14 +178,38 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         ImGui.EndDisabled();
     }
 
-    private void DrawTriggerMode(ushort id, string label)
+    private void DrawTriggerMode(FateDefinition? fate, int? playerLevel)
     {
-        var mode = (int)Mode(id);
-        ImGui.SetNextItemWidth(-1);
-        if (ImGui.Combo(label, ref mode, new[] { "普通：攻击拉怪", "特殊：骑乘记录路线" }, 2))
+        var id = fate?.Seed.Id;
+        var pull = fate != null ? EffectivePull(fate, playerLevel) : defaultPull ?? TriggerPull.Attack;
+        var canPassBy = fate == null || AutoTriggerRules.CanPassBy(playerLevel, fate.Level);
+        var mode = (int)(id is { } target ? Mode(target) : defaultRoute ?? TriggerMode.Normal);
+        ImGui.SetNextItemWidth((ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemSpacing.X) / 2);
+        var pullOpen = ImGui.BeginCombo("##TriggerPull", pull == TriggerPull.Attack ? "拉怪：攻击拉怪" : "拉怪：路过拉怪");
+        if (pullOpen)
         {
-            triggerModes[id] = (TriggerMode)mode;
-            selected = id;
+            if (ImGui.Selectable("攻击拉怪", pull == TriggerPull.Attack)) SetPull(TriggerPull.Attack);
+            ImGui.BeginDisabled(!canPassBy);
+            if (ImGui.Selectable("路过拉怪", pull == TriggerPull.PassBy)) SetPull(TriggerPull.PassBy);
+            if (!canPassBy && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip(AutoTriggerRules.PassByLevelWarning);
+            ImGui.EndDisabled();
+            ImGui.EndCombo();
+        }
+        else if (!canPassBy && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(AutoTriggerRules.PassByLevelWarning);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(-1);
+        if (ImGui.Combo("##TriggerRoute", ref mode, new[] { "路线：自动拉怪", "路线：预设路线" }, 2))
+        {
+            if (id is { } routeFate) triggerModes[routeFate] = (TriggerMode)mode;
+            else defaultRoute = (TriggerMode)mode;
+        }
+
+        void SetPull(TriggerPull value)
+        {
+            if (id is { } pullFate) triggerPulls[pullFate] = value;
+            else defaultPull = value;
         }
     }
 
@@ -184,6 +218,13 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         var set = auto.Routes.GetValueOrDefault(id);
         var count = set?.Paths.Length ?? 0;
         ImGui.PushID($"routes-{id}");
+        if (set == null)
+        {
+            ImGui.BeginDisabled();
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.BeginCombo("##Route", "无预设路线")) ImGui.EndCombo();
+            ImGui.EndDisabled();
+        }
         if (set != null)
         {
             ImGui.SetNextItemWidth(-1);
@@ -327,23 +368,21 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
                 ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(itemSpacing.X, Math.Min(itemSpacing.Y, 2)));
                 var textLine = ImGui.GetTextLineHeightWithSpacing();
                 var bunnyHeight = bunnies == null ? 0 : ImGui.GetFrameHeightWithSpacing() * 3 + textLine * 3 + 8;
-                var reservedLines = 5.7f + (navigation != null ? 10.7f : 0)
-                    + (automation != null && navigation != null ? 4.8f : 0);
-                var line = Math.Min(textLine, Math.Max(1, (ImGui.GetContentRegionAvail().Y - bunnyHeight - textLine * 3 - 18) / reservedLines));
-                if (ImGui.BeginChild("##SelectedFateDetails", new Vector2(0, line * 5.7f), false, pinned))
+                var triggerHeight = ImGui.GetFrameHeightWithSpacing() * 7.6f + textLine * 2 + 6;
+                if (ImGui.BeginChild("##SelectedFateDetails", new Vector2(0, textLine * 5.7f), false, pinned))
                     DrawSelectedFate(island, snapshot);
                 ImGui.EndChild();
                 ImGui.Separator();
                 if (navigation != null)
                 {
-                    if (ImGui.BeginChild("##PinnedTrigger", new Vector2(0, line * 10.7f), false, pinned))
+                    if (ImGui.BeginChild("##PinnedTrigger", new Vector2(0, triggerHeight), false, pinned))
                         DrawTriggerPlanner(island, snapshot);
                     ImGui.EndChild();
                 }
                 if (automation != null && navigation != null)
                 {
                     ImGui.Separator();
-                    if (ImGui.BeginChild("##PinnedFollow", new Vector2(0, line * 4.8f), false, pinned))
+                    if (ImGui.BeginChild("##PinnedFollow", new Vector2(0, textLine * 4.8f), false, pinned))
                         automation.DrawFollow(navigation.Snapshot);
                     ImGui.EndChild();
                 }
@@ -507,7 +546,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             draw.AddCircleFilled(p, 5, 0xFFFFD070); draw.AddCircle(p, 7, 0xFFFFFFFF, 16, 2);
         }
         var routePreview = nearbyRoutePreview != 0 ? nearbyRoutePreview : selected;
-        if (planned != null && navigation != null && island.Fates.Any(f => f.Seed.Id == routePreview))
+        if (planned != null && navigation != null && Mode(routePreview) == TriggerMode.Recorded && island.Fates.Any(f => f.Seed.Id == routePreview))
         {
             var route = navigation.TriggerSnapshot.SelectedRoute(routePreview);
             var markers = route.Select(point => pos + (MapProjection.ToUv(MapProjection.WorldToMap(point, island),

@@ -19,7 +19,7 @@ internal interface IFellingCombat
 internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigationMesh mesh, IArrivalActions mounts, IFellingCombat combat) : IDisposable
 {
     private readonly DestinationNavigationHelper approach = new(mesh);
-    private enum Phase { Waiting, Travel, WaitApproach, Prepare, Fight, Remount, Park, Standby }
+    private enum Phase { Waiting, Travel, WaitApproach, Prepare, Fight, Remount, ParkDelay, Park, Standby }
     private Phase phase;
     private WorldContext context;
     private MapDestination? pending, goal, last;
@@ -28,9 +28,8 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
     private (ushort Id, int Start)? encounter;
     private bool pulled;
     private bool repeat;
+    private bool bossApproached;
     private string? lastAction;
-    private MapDestination? watch;
-    private (ushort Id, int Start)? completed;
     private IslandCrystal? standbyCrystal;
     private bool parkStarted;
     private readonly Dictionary<ushort, int> finishedFates = new();
@@ -47,14 +46,14 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
         if (world.Territory is not (732 or 763 or 795 or 827)) { Status = "请先进入优雷卡岛内。"; return false; }
         var error = combat.PrepareStart();
         if (error != null) { Status = error; return false; }
-        repeat = repeatFollowing; lastAction = null; completed = null; finishedFates.Clear(); watch = null; context = world; sessionAt = phaseAt = now; phase = Phase.Waiting; Active = true;
+        repeat = repeatFollowing; lastAction = null; finishedFates.Clear(); context = world; sessionAt = phaseAt = now; phase = Phase.Waiting; Active = true;
         Status = "等待车头的新坐标（本次跟随最长2小时）。"; return true;
     }
     public void Receive(MapDestination destination)
     {
         if (!Active || destination.Territory != context.Territory || destination.Map != context.Map
             || !NavigationRules.Finite(destination.Position)) return;
-        if (last != null && NavigationRules.Distance(last.Position, destination.Position) <= 1) return;
+        if ((pending ?? goal ?? last) is { } previous && NavigationRules.Overlaps(previous.Position, destination.Position)) return;
         last = pending = destination;
     }
     public bool StartAtBoss(WorldContext world, MapDestination destination, ArrivalFate fate, Vector3 boss,
@@ -63,6 +62,7 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
         if (!Start(world, now, repeatFollowing: false)) return false;
         goal = destination;
         encounter = (fate.Id, fate.StartedAt);
+        bossApproached = true;
         pulled = false;
         missingAt = default;
         attempts = 0;
@@ -87,34 +87,34 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
         {
             if (frame.World != context || !frame.Safe && !(Transferring && transferScreen)) { Stop("角色状态或地图变化，跟随已停止。"); return; }
             if (now - sessionAt >= TimeSpan.FromHours(2)) { Stop("本次跟随达到2小时上限。"); return; }
-            if (pending == null && !frame.InCombat && watch != null && phase is Phase.Park or Phase.Standby && FreshFate(watch, fates) != null)
-            { pending = watch; watch = null; }
-            if (pending != null && !frame.InCombat && phase is Phase.Waiting or Phase.Travel or Phase.Prepare or Phase.Park or Phase.Standby)
+            if (pending != null && !frame.InCombat && !Transferring
+                && phase is Phase.Waiting or Phase.Travel or Phase.WaitApproach or Phase.Prepare or Phase.ParkDelay or Phase.Park or Phase.Standby)
             {
                 if (!combat.Disable()) { Stop("未能关闭上一场战斗控制。"); return; }
                 var error = combat.CheckReady();
                 if (error != null) { Stop(error); return; }
                 var next = pending; pending = null;
-                if (repeat && (completed != null || pulled) && FreshFate(next, fates) == null)
-                {
-                    watch = next;
-                    if (phase is not (Phase.Park or Phase.Standby)) Park(frame, now);
-                }
-                else
-                {
-                watch = null; travel.Stop(); approach.Stop(); goal = next;
+                travel.Stop(); approach.Stop(); goal = next;
                 encounter = null; pulled = false; attempts = 0; missingAt = default; phaseAt = now;
+                bossApproached = false;
+                if (FreshFate(next, fates) is { } near) encounter = (near.Id, near.StartedAt);
+                observation = new(null);
                 phase = Phase.Travel;
-                travel.Start(goal, context, frame.Player, fates, now, true);
+                travel.Start(goal, context, frame.Player, [], now, true, waitWithoutFate: false);
                 if (!travel.Active) { Stop(travel.Status); return; }
-                }
+            }
+            if (phase == Phase.ParkDelay)
+            {
+                if (!frame.InCombat && now - phaseAt >= TimeSpan.FromSeconds(3)) Park(frame, now);
+                else Status = "等待新坐标，3秒后前往最近水晶。";
+                return;
             }
             if (phase is Phase.Park or Phase.Standby) { TickPark(frame, now); return; }
             if (phase == Phase.Waiting) return;
             if (phase == Phase.WaitApproach)
             {
-                if (observation.Ended) { Stop("目标FATE已结束。"); return; }
-                if (observation.Fate is { } waiting && ArrivalRules.IsPulled(waiting).Started)
+                if (observation.Ended) { Finish(now); RemountImmediately(frame, now); return; }
+                if (!repeat && observation.Fate is { } waiting && ArrivalRules.IsPulled(waiting).Started)
                     approach.Stop();
                 else
                 {
@@ -126,10 +126,23 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
             }
             if (phase == Phase.Travel)
             {
-                travel.Tick(frame.World, frame.Player, frame.Safe, transferScreen, frame.Mounted, frame.Casting, fates, now, frame.InCombat);
+                if (encounter == null && FreshFate(goal!, fates) is { } near) encounter = (near.Id, near.StartedAt);
+                if (!travel.Transferring && NavigationRules.Distance(frame.Player, goal!.Position) <= 50
+                    && encounter is { } known && observation.Fate is { BossPosition: { } boss } nearby && nearby.Id == known.Id)
+                {
+                    ApproachBoss(frame, boss, now);
+                    return;
+                }
+                travel.Tick(frame.World, frame.Player, frame.Safe, transferScreen, frame.Mounted, frame.Casting, [], now, frame.InCombat);
                 Status = travel.Status;
                 if (travel.Active) return;
                 if (travel.TakeArrival() == null) { Stop(travel.Status); return; }
+                if (encounter == null)
+                {
+                    if (!repeat) { Stop("已到达车头坐标。"); return; }
+                    BeginParkDelay(now);
+                    return;
+                }
                 phase = Phase.Prepare; phaseAt = nextAction = now; attempts = 0;
             }
             if (phase == Phase.Remount)
@@ -140,16 +153,19 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
                 if (frame.Mounted)
                 {
                     if (!repeat) { Stop("本次战斗已结束并上坐骑。"); return; }
-                    var latest = pending ?? last ?? goal;
-                    if (latest != null && FreshFate(latest, fates) == null)
-                    { watch = latest; pending = null; Park(frame, now); return; }
-                    pending ??= latest;
-                    phase = Phase.Waiting; goal = null; encounter = null; Status = "已上坐骑，等待车头的新坐标。"; return;
+                    BeginParkDelay(phaseAt);
+                    if (pending != null) phase = Phase.Waiting;
+                    return;
                 }
                 Act(mounts.Mount, "召唤所选坐骑", now); return;
             }
             if (observation.Ended && encounter != null) { Finish(now); RemountImmediately(frame, now); return; }
             var fate = observation.Fate;
+            if (phase == Phase.Prepare && !bossApproached && fate?.BossPosition is { } loadedBoss)
+            {
+                ApproachBoss(frame, loadedBoss, now);
+                return;
+            }
             if (phase == Phase.Prepare && frame.Mounted && !frame.Casting)
             {
                 if (fate != null && (pulled || ArrivalRules.IsPulled(fate).Started) && fate.BossId != 0 && fate.BossTargetable)
@@ -165,7 +181,6 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
                     if (!frame.InCombat && now - missingAt >= TimeSpan.FromSeconds(5)) { Finish(now); return; }
                     if (now - missingAt >= TimeSpan.FromSeconds(15)) { Stop("目标事件不可见，已关闭战斗控制。"); return; }
                 }
-                else if (repeat && completed != null) { watch = goal ?? last; Park(frame, now); return; }
                 else if (now - phaseAt > TimeSpan.FromMinutes(5)) Stop("等待NM超时。");
                 Status = "等待目的地附近的目标NM。"; return;
             }
@@ -216,7 +231,6 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
     }
     private void Finish(DateTimeOffset now)
     {
-        completed = encounter;
         if (encounter is { } ended) finishedFates[ended.Id] = ended.Start;
         approach.Stop(); combat.Disable(); phase = Phase.Remount; phaseAt = nextAction = now; attempts = 0;
         Status = "目标事件已结束，关闭战斗控制并准备上坐骑。";
@@ -225,6 +239,25 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
     {
         if (combat.Disable() && !frame.Mounted && !frame.InCombat && !frame.Casting)
             Act(mounts.Mount, "召唤所选坐骑", now);
+    }
+    private void ApproachBoss(ArrivalFrame frame, Vector3 boss, DateTimeOffset now)
+    {
+        travel.Stop();
+        bossApproached = true;
+        phase = Phase.WaitApproach;
+        phaseAt = now;
+        approach.Start(goal! with { Position = ArrivalRules.Position(frame.Player, boss, 20) },
+            context, frame.Player, [], now, waitWithoutFate: false, unknownHeight: false);
+        if (!approach.Active) Stop(approach.Status);
+        else Status = "前往头目20米处，等待开怪。";
+    }
+    private void BeginParkDelay(DateTimeOffset now)
+    {
+        goal = null;
+        encounter = null;
+        phase = Phase.ParkDelay;
+        phaseAt = now;
+        Status = "等待新坐标，3秒后前往最近水晶。";
     }
     private FateEntry? FreshFate(MapDestination destination, IReadOnlyList<FateEntry> fates) => NavigationRules.FindFate(destination.Position,
         fates.Where(f => !Same(f, encounter) && !(finishedFates.TryGetValue(f.Id, out var start)
@@ -238,8 +271,8 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
         standbyCrystal = IslandCrystalRoutes.Nearest(context.Territory, frame.Player);
         if (standbyCrystal == null) { Stop("未找到当前岛屿的水晶。"); return; }
         phase = Phase.Park; phaseAt = nextAction = now; attempts = 0; lastAction = null; parkStarted = false;
-        goal = watch; encounter = null; pulled = false;
-        Status = "车头坐标附近没有新的NM，前往最近水晶待机。";
+        goal = null; encounter = null; pulled = false;
+        Status = "前往最近水晶待机。";
     }
     private void TickPark(ArrivalFrame frame, DateTimeOffset now)
     {
@@ -264,7 +297,7 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
     }
     public void Stop(string reason = "已停止跟随伐木。")
     {
-        Active = false; pending = goal = last = watch = null; encounter = null;
+        Active = false; pending = goal = last = null; encounter = null;
         travel.Stop(); approach.Stop(); combat.Disable(); Status = reason;
     }
     public void Dispose() { Stop(); approach.Dispose(); }

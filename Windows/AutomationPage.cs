@@ -49,6 +49,8 @@ internal sealed class AutomationPage(IAutomationHelpers helpers, FateMapPage? ma
         ImGui.SameLine();
         ImGui.BeginDisabled(leader == null);
         if (ImGui.SmallButton(state.Listening ? "停止监听" : "开始监听")) helpers.Listen(!state.Listening);
+        ImGui.SameLine();
+        if (ImGui.SmallButton("清除车头")) helpers.ClearLeader();
         ImGui.EndDisabled();
         ImGui.SameLine();
         if (ImGui.SmallButton("当前目标设为车头")) helpers.SelectCurrentTargetAsLeader();

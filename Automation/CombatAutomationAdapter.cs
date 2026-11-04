@@ -4,6 +4,7 @@ using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Dalamud.Plugin.Ipc;
 using FFXIVClientStructs.FFXIV.Client.Game.Fate;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
 
 namespace ULKHelper.Automation;
 
@@ -14,6 +15,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     private bool reborn, rotationOwned, aiOwned;
     private bool triggerAuto;
     private bool triggerSession, triggerUseRotation, triggerUseAi;
+    private bool recordedPullOnly;
     private Assembly? triggerOwner;
     private object? overridesBefore, overridesWritten, targetingBefore, targetingWritten;
     private bool triggerSettingsWritten;
@@ -21,6 +23,8 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     private object? triggerBossOwner;
     private string? triggerPresetBefore;
     private bool triggerAiSuspended, triggerRotationSuspended, triggerEnding;
+    private bool triggerAutoAttackOwned;
+    private ulong triggerPullTarget;
     private int triggerRestoreAttempts;
     public string? BeginTrigger(bool needsApproach, bool useRotation, bool useBmr)
     {
@@ -35,6 +39,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
                     foreach (var (field, _) in TriggerApproachSettings) _ = Read(field);
             }
             triggerSession = true;
+            recordedPullOnly = false;
             triggerUseRotation = useRotation;
             triggerUseAi = useBmr;
             overridesWritten = targetingWritten = null;
@@ -85,18 +90,35 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         target.SetValue(null, targetingWritten);
     }
 
-    public bool PrepareTarget(ulong id, bool fighting, IReadOnlyList<ulong>? eligible = null)
+    public unsafe bool PrepareTarget(ulong id, bool fighting, IReadOnlyList<ulong>? eligible = null)
     {
         if (triggerUseRotation && (!ReferenceEquals(triggerOwner, CurrentRotationOwner()) || !TriggerSettingsHealthy())) return false;
         if ((!fighting || !rotationOwned || !triggerAuto || eligible?.Contains(targets.Target?.GameObjectId ?? 0) == false)
             && !Target(id)) return false;
         if (rotationOwned && triggerAuto != fighting) ApplyTriggerMode(fighting);
         triggerAuto = fighting;
+        triggerPullTarget = fighting ? 0 : id;
+        var ui = UIState.Instance();
+        if (!fighting && ui != null && !ui->WeaponState.AutoAttackState.Get())
+        {
+            ui->WeaponState.AutoAttackState.Set(true);
+            triggerAutoAttackOwned |= ui->WeaponState.AutoAttackState.Get();
+        }
         return true;
+    }
+    public unsafe void ReleasePullAttack()
+    {
+        var ui = UIState.Instance();
+        if (triggerAutoAttackOwned && ui != null && ui->WeaponState.AutoAttackState.Get())
+            ui->WeaponState.AutoAttackState.Set(false);
+        triggerAutoAttackOwned = false;
+        if (triggerPullTarget != 0 && targets.Target?.GameObjectId == triggerPullTarget) targets.Target = null;
+        triggerPullTarget = 0;
     }
     public void EndTrigger()
     {
         if (!triggerSession) return;
+        ReleasePullAttack();
         triggerEnding = true;
         Disable();
     }
@@ -287,7 +309,17 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             return "BossMod Reborn 已更换或有其他 AI 正在运行。";
         return null;
     }
-    public bool EnableTrigger(bool approach) => triggerUseAi ? EnableWithAI(approach, !approach) : EnableStationary();
+    public bool EnableTrigger(bool approach)
+    {
+        recordedPullOnly = false;
+        return triggerUseAi ? EnableWithAI(approach, !approach) : EnableStationary();
+    }
+
+    public bool EnableRecordedPull()
+    {
+        recordedPullOnly = true;
+        return EnableStationary();
+    }
     private bool EnableWithAI(bool triggerApproach, bool stationary = false)
     {
         try
@@ -349,7 +381,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             {
                 return (!triggerUseRotation || rotationOwned && ReferenceEquals(rotationOwner, CurrentRotationOwner())
                     && TriggerSettingsHealthy() && RotationRequested() && ManualRequested() != triggerAuto && RotationActive())
-                    && (!triggerUseAi || aiOwned && ReferenceEquals(bossOwner, CurrentBossOwner()) && AIActive()
+                    && (!triggerUseAi || recordedPullOnly || aiOwned && ReferenceEquals(bossOwner, CurrentBossOwner()) && AIActive()
                         && ReferenceEquals(aiBehaviour, RebornBehaviour())
                         && settings.All(p => Read(p.Key).Equals(p.Value.Written, StringComparison.OrdinalIgnoreCase)));
             }

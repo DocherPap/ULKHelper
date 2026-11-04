@@ -29,6 +29,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
     public bool Active { get; private set; }
     public string Status { get; private set; } = "尚未开始导航。";
     public Vector3? Target => Active ? target : null;
+    public bool OwnsMovement => Active && !mesh.Busy && NavigationRules.OwnsRoute(mesh.Route, issued);
 
     public MapDestination? TakeArrival() { var value = arrival; arrival = null; return value; }
 

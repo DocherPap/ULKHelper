@@ -29,6 +29,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
     {
         islandIndex = Math.Clamp(settings.Get(key + ".island", 0), 0, Math.Max(0, provider.Islands.Count - 1));
         follow = settings.Get(key + ".follow", true); showBunnies = settings.Get(key + ".bunnies", true); showLabels = settings.Get(key + ".labels", true);
+        showElementals = settings.Get(key + ".elementals", true);
         zoom = Math.Clamp(settings.Get(key + ".zoom", 1f), 1, 4); centre = settings.Get(key + ".centre", new Vector2(.5f));
         search = settings.Get(key + ".search", "");
         pullBatch = Math.Clamp(settings.Get("trigger.batch", 1), 1, 21); abandonStep = Math.Clamp(settings.Get("trigger.abandon", 2), 1, 7);
@@ -40,12 +41,13 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
     {
         settings.Put(key + ".island", islandIndex); settings.Put(key + ".follow", follow);
         settings.Put(key + ".bunnies", showBunnies); settings.Put(key + ".labels", showLabels);
+        settings.Put(key + ".elementals", showElementals);
         if (key == "triggerMap")
         { settings.Put("trigger.batch", pullBatch); settings.Put("trigger.abandon", abandonStep);
           settings.Put("trigger.showMobs", showMobs); settings.Put("trigger.modes", triggerModes); }
         settings.Put(key + ".zoom", zoom); settings.Put(key + ".centre", centre); settings.Put(key + ".search", search);
     }
-    private bool follow = true, showBunnies = true, showLabels = true, dragged;
+    private bool follow = true, showBunnies = true, showLabels = true, showElementals = true, dragged;
     private string search = "";
     private ushort selected;
     private MobArea? selectedArea;
@@ -74,13 +76,14 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         { follow = false; ResetView(); }
         ImGui.SameLine(); ImGui.Checkbox("跟随岛屿", ref follow);
         ImGui.SameLine(); ImGui.Checkbox("简称", ref showLabels);
+        ImGui.SameLine(); ImGui.Checkbox("元灵", ref showElementals);
         var island = provider.Islands[islandIndex];
         triggerSelection.SetIsland(island.Territory);
         var now = DateTimeOffset.UtcNow;
         UpdateTiming(island, snapshot, now);
         var points = island.Fates.Where(f => !f.Seed.Bunny).ToArray();
         var availableHeight = ImGui.GetContentRegionAvail().Y;
-        var reserved = Math.Min(availableHeight * .65f, ImGui.GetTextLineHeightWithSpacing() * (13 + triggerSelection.Ids.Count * 2)) + 12;
+        var reserved = Math.Min(availableHeight * .65f, ImGui.GetTextLineHeightWithSpacing() * (14 + triggerSelection.Ids.Count * 2)) + 12;
         var mapHeight = Math.Max(170, availableHeight - reserved);
         if (ImGui.BeginChild("##TriggerIslandMap", new Vector2(0, mapHeight)))
             DrawMap(island, points, snapshot, now, triggerSelection.Ids.ToHashSet(), true);
@@ -93,15 +96,33 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         ImGui.Checkbox("显示已观测小怪区域", ref showMobs);
         ImGui.SetNextItemWidth(-1); ImGui.SliderInt("##PullBatch", ref pullBatch, 1, 21, pullBatch == 21 ? "每批：无限" : "每批：%d 只");
         ImGui.SetNextItemWidth(-1); ImGui.SliderInt("##Abandon", ref abandonStep, 1, 7, abandonStep == 7 ? "放弃阈值：无限" : $"放弃阈值：{abandonStep * 50} 只");
-        var canStart = triggerSelection.Ids.Count > 0 ? triggerSelection.Ids.Count <= cap : current != null && CanAddTrigger(current, island);
+        FateDefinition? nearby = null;
+        if (triggerSelection.Ids.Count == 0 && (current == null || !CanAddTrigger(current, island))
+            && snapshot.CurrentTerritory == island.Territory && snapshot.PlayerMapPosition is { } player)
+        {
+            var position = MapProjection.MapToWorld(player, island);
+            nearby = points.Where(f => CanAddTrigger(f, island)
+                    && snapshot.Records.GetValueOrDefault(f.Seed.Id)?.Active != true
+                    && (Mode(f.Seed.Id) != TriggerMode.Recorded || auto.Routes.GetValueOrDefault(f.Seed.Id)?.Length >= 2))
+                .Select(f => (Fate: f, Distance: NavigationRules.Distance(position,
+                    MapProjection.MapToWorld(new(f.Seed.X, f.Seed.Y), island))))
+                .Where(entry => entry.Distance <= 100)
+                .OrderBy(entry => entry.Distance)
+                .Select(entry => entry.Fate)
+                .FirstOrDefault();
+        }
+        var canStart = triggerSelection.Ids.Count > 0 ? triggerSelection.Ids.Count <= cap
+            : nearby != null || current != null && CanAddTrigger(current, island);
         ImGui.BeginDisabled(!auto.Active && (navigation == null || navigation.Snapshot.Navigating || !canStart || snapshot.CurrentTerritory != island.Territory));
-        if (ImGui.Button(auto.Active ? "停止自动触发" : "自动触发"))
+        var buttonLabel = auto.Active ? "停止自动触发" : nearby != null ? $"自动触发 · {nearby.Seed.ShortName}" : "自动触发";
+        if (ImGui.Button(buttonLabel + "###AutoTriggerStartStop", new Vector2(-1, ImGui.GetFrameHeight() * 1.6f)))
         {
             if (auto.Active) navigation?.Stop();
             else
             {
-                if (triggerSelection.Ids.Count == 0 && current != null) triggerSelection.Add(current);
-                navigation?.StartTrigger(triggerSelection.Ids.Select(id =>
+                if (nearby == null && triggerSelection.Ids.Count == 0 && current != null) triggerSelection.Add(current);
+                var ids = nearby != null ? new[] { nearby.Seed.Id } : triggerSelection.Ids.ToArray();
+                navigation?.StartTrigger(ids.Select(id =>
                 {
                     var fate = island.Fates.First(f => f.Seed.Id == id);
                     var centre = MapProjection.MapToWorld(new(fate.Seed.X, fate.Seed.Y), island);
@@ -119,7 +140,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             if (ImGui.SmallButton("加入列表")) triggerSelection.Add(current);
             ImGui.EndDisabled();
         }
-        else ImGui.TextDisabled("选中 FATE 后可直接开始，也可先加入列表。");
+        else ImGui.TextWrapped("可选中 FATE 或加入列表。未选中时，可直接启动 100 米内最近的可触发 FATE。");
         if (ImGui.BeginChild("##TriggerPlanRows", Vector2.Zero))
         {
             foreach (var id in triggerSelection.Ids.ToArray())
@@ -189,6 +210,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             ImGui.Checkbox("含幸福兔", ref showBunnies);
             ImGui.SameLine(); ImGui.Checkbox("显示简称", ref showLabels);
             if(bunnies!=null){ImGui.SameLine();bunnies.DrawVisibilityToggle();}
+            ImGui.SameLine(); ImGui.Checkbox("显示元灵", ref showElementals);
             if (!notificationInitialized)
             {
                 var settings = snapshot.Notifications ?? FateNotificationSettings.Default;
@@ -332,12 +354,38 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             { nearest = distance; hoveredPoint = fate.Seed.Id; hoveredArea = null; }
         }
         bunnies?.DrawOverlay(island,pos,side,zoom,uvMin,hovered&&hoveredPoint==null,dragged);
+        ElementalMapPoint? hoveredElemental = null;
+        if (showElementals && snapshot.Elementals is { } elementals)
+        {
+            foreach (var elemental in elementals)
+            {
+                if (elemental.Territory != island.Territory || elemental.MapId != island.MapId) continue;
+                var marker = pos + (MapProjection.ToUv(elemental.Position, island.SizeFactor) - uvMin) * side * zoom;
+                var radius = elemental.Visible ? 6 : 4;
+                var top = marker - new Vector2(0, radius);
+                var right = marker + new Vector2(radius, 0);
+                var bottom = marker + new Vector2(0, radius);
+                var left = marker - new Vector2(radius, 0);
+                if (elemental.Visible) draw.AddQuadFilled(top, right, bottom, left, 0xFFEFE259);
+                else draw.AddQuad(top, right, bottom, left, 0xCCEFE259, 1.5f);
+                if (hovered && hoveredPoint == null && Vector2.DistanceSquared(marker, io.MousePos) <= 64)
+                    hoveredElemental = elemental;
+            }
+        }
         if (snapshot.CurrentTerritory == island.Territory && snapshot.PlayerMapPosition is { } player)
         {
             var p = pos + (MapProjection.ToUv(player, island.SizeFactor) - uvMin) * side * zoom;
             draw.AddCircleFilled(p, 5, 0xFFFFD070); draw.AddCircle(p, 7, 0xFFFFFFFF, 16, 2);
         }
         draw.PopClipRect();
+        if (hoveredElemental is { } elementalPoint && !dragged)
+        {
+            ImGui.BeginTooltip();
+            ImGui.TextUnformatted(elementalPoint.Visible ? "元灵 · 当前可见" : "元灵 · 历史记录");
+            ImGui.TextUnformatted($"({elementalPoint.Position.X:0.0}, {elementalPoint.Position.Y:0.0})");
+            ImGui.TextUnformatted($"最后观察 {elementalPoint.LastSeen.ToLocalTime():MM-dd HH:mm}");
+            ImGui.EndTooltip();
+        }
         if (hoveredPoint is { } id)
         {
             var fate = island.Fates.First(p => p.Seed.Id == id);

@@ -14,7 +14,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     private bool reborn, rotationOwned, aiOwned;
     private bool triggerAuto;
     private Assembly? triggerOwner;
-    private object? triggerConfig, hostileBefore, hostileWritten, targetingBefore, targetingWritten;
+    private object? overridesBefore, overridesWritten, targetingBefore, targetingWritten;
     private bool triggerSettingsWritten;
     private string? triggerModeBefore;
     private object? triggerBossOwner;
@@ -33,35 +33,57 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
                 if (!commands.Commands.ContainsKey("/bmrai")) return "普通自动触发需要BossMod Reborn自动靠近。";
                 foreach (var (field, _) in TriggerApproachSettings) _ = Read(field);
             }
-            hostileWritten=targetingWritten=null;
+            overridesWritten = targetingWritten = null;
             triggerSettingsWritten = false;
             triggerRestoreAttempts = 0;
             triggerOwner=CurrentRotationOwner();
             if(triggerOwner==null)return "RSR未加载。";
-            triggerConfig=RotationType("RotationSolver.Basic.Service").GetProperty("Config",BindingFlags.Static|BindingFlags.Public)?.GetValue(null)
-                ?? throw new InvalidOperationException("无法读取RSR配置。");
-            hostileBefore=triggerConfig.GetType().GetProperty("HostileType")!.GetValue(triggerConfig);
-            targetingBefore=RotationType("RotationSolver.Basic.DataCenter").GetProperty("TargetingTypeOverride")!.GetValue(null);
+            overridesBefore = RsrStateProperty("IpcOverrides").GetValue(null);
+            targetingBefore = RsrStateProperty("TargetingTypeOverride").GetValue(null);
             if(!magia.Begin())return magia.Error;
             triggerModeBefore=RotationRequested()?(ManualRequested()?"Manual":"Auto"):"Off";
             return null;
         }
         catch(Exception ex){return "触发设置准备失败："+ex.GetBaseException().Message;}
     }
-    private bool TriggerSettingsHealthy()
+    private PropertyInfo RsrStateProperty(string name) =>
+        RotationType("RotationSolver.Basic.DataCenter").GetProperty(name)
+        ?? throw new InvalidOperationException("RSR状态接口不可用：" + name);
+
+    private bool TriggerSettingsHealthy() => triggerModeBefore == null
+        || (Equals(RsrStateProperty("IpcOverrides").GetValue(null), triggerSettingsWritten ? overridesWritten : overridesBefore)
+            && Equals(RsrStateProperty("TargetingTypeOverride").GetValue(null), triggerSettingsWritten ? targetingWritten : targetingBefore));
+
+    private void CaptureTriggerOverrides()
     {
-        if(triggerModeBefore==null)return true;
-        var actual=RotationType("RotationSolver.Basic.Service").GetProperty("Config",BindingFlags.Static|BindingFlags.Public)?.GetValue(null);
-        if(!ReferenceEquals(actual,triggerConfig))return false;
-        var configType = triggerConfig!.GetType();
-        return Equals(configType.GetProperty("HostileType")!.GetValue(triggerConfig), triggerSettingsWritten ? hostileWritten : hostileBefore)
-            && Equals(RotationType("RotationSolver.Basic.DataCenter").GetProperty("TargetingTypeOverride")!.GetValue(null),
-                triggerSettingsWritten ? targetingWritten : targetingBefore);
+        overridesWritten = RsrStateProperty("IpcOverrides").GetValue(null);
+        targetingWritten = RsrStateProperty("TargetingTypeOverride").GetValue(null);
+        triggerSettingsWritten = true;
     }
-    public bool PrepareTarget(ulong id,bool fighting)
+
+    private void ApplyTriggerMode(bool fighting)
+    {
+        var overrides = RsrStateProperty("IpcOverrides");
+        var hostile = overrides.PropertyType.GetProperty("HostileType")!;
+        var target = RsrStateProperty("TargetingTypeOverride");
+        var rangeType = Nullable.GetUnderlyingType(hostile.PropertyType) ?? hostile.PropertyType;
+        var range = Enum.Parse(rangeType, fighting ? "TargetsHaveTarget" : "AllTargetsCanAttack");
+        var constructor = overrides.PropertyType.GetConstructor([hostile.PropertyType, typeof(bool?), typeof(bool?), typeof(bool?)])
+            ?? throw new InvalidOperationException("当前RSR不支持临时目标范围。");
+        var temporary = constructor.Invoke([range, fighting ? null : false, false, null]);
+        RotationMode(fighting ? "Auto" : "Manual");
+        CaptureTriggerOverrides();
+        overrides.SetValue(null, temporary);
+        overridesWritten = temporary;
+        targetingWritten = fighting ? Enum.Parse(Nullable.GetUnderlyingType(target.PropertyType) ?? target.PropertyType, "HighHP") : targetingBefore;
+        target.SetValue(null, targetingWritten);
+    }
+
+    public bool PrepareTarget(ulong id, bool fighting, IReadOnlyList<ulong>? eligible = null)
     {
         if(!ReferenceEquals(triggerOwner,CurrentRotationOwner())||!TriggerSettingsHealthy())return false;
-        if ((!fighting || !rotationOwned || !triggerAuto) && !Target(id)) return false;
+        if ((!fighting || !rotationOwned || !triggerAuto || eligible?.Contains(targets.Target?.GameObjectId ?? 0) == false)
+            && !Target(id)) return false;
         var npc = objects.OfType<IBattleNpc>().FirstOrDefault(n => n.GameObjectId == id);
         var level=TriggerGameReader.Level();
         if(npc==null||level==null)return false;
@@ -70,20 +92,8 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         var tank=objects.LocalPlayer?.ClassJob.Value.Role==1;
         var attack=AutoTriggerRules.AttackMagia(level.Value,npcLevel.Value,tank);
         if(!magia.Apply(attack,npc.NameId))return false;
-        if (!triggerSettingsWritten || triggerAuto != fighting)
-        {
-            var configType = triggerConfig!.GetType();
-            var hostile = configType.GetProperty("HostileType")!;
-            var target = RotationType("RotationSolver.Basic.DataCenter").GetProperty("TargetingTypeOverride")!;
-            hostileWritten = Enum.Parse(hostile.PropertyType, fighting ? "TargetsHaveTarget" : "AllTargetsCanAttack");
-            targetingWritten = fighting ? Enum.Parse(Nullable.GetUnderlyingType(target.PropertyType) ?? target.PropertyType, "HighHP") : targetingBefore;
-            triggerSettingsWritten = true;
-            hostile.SetValue(triggerConfig, hostileWritten);
-            target.SetValue(null, targetingWritten);
-            if (rotationOwned && triggerAuto != fighting)
-                RotationMode(fighting ? "Auto" : "Manual");
-            triggerAuto = fighting;
-        }
+        if (rotationOwned && triggerAuto != fighting) ApplyTriggerMode(fighting);
+        triggerAuto = fighting;
         return true;
     }
     public void EndTrigger()
@@ -99,16 +109,14 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         {
             if (ReferenceEquals(triggerOwner, CurrentRotationOwner()))
             {
-                var actual = RotationType("RotationSolver.Basic.Service").GetProperty("Config")?.GetValue(null);
-                if (triggerSettingsWritten && ReferenceEquals(actual, triggerConfig))
+                var restore = triggerSettingsWritten && TriggerSettingsHealthy();
+                if (triggerRotationSuspended && !RotationRequested()) RotationMode(triggerModeBefore!);
+                if (restore)
                 {
-                    var hostile = actual!.GetType().GetProperty("HostileType")!;
-                    if (Equals(hostile.GetValue(actual), hostileWritten)) hostile.SetValue(actual, hostileBefore);
-                    var target = RotationType("RotationSolver.Basic.DataCenter").GetProperty("TargetingTypeOverride")!;
-                    if (Equals(target.GetValue(null), targetingWritten)) target.SetValue(null, targetingBefore);
+                    RsrStateProperty("IpcOverrides").SetValue(null, overridesBefore);
+                    RsrStateProperty("TargetingTypeOverride").SetValue(null, targetingBefore);
                 }
                 triggerSettingsWritten = false;
-                if (triggerRotationSuspended && !RotationRequested()) RotationMode(triggerModeBefore!);
             }
             triggerRotationSuspended = false;
         }
@@ -131,7 +139,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         }
         catch (Exception ex) { retry = true; Error = "恢复BossMod设置失败：" + ex.GetBaseException().Message; }
         if (retry && ++triggerRestoreAttempts < 3) return;
-        triggerModeBefore = null; triggerOwner = null; triggerConfig = null; triggerAuto = false;
+        triggerModeBefore = null; triggerOwner = null; overridesBefore = null; triggerAuto = false;
         triggerBossOwner = null; triggerPresetBefore = null;
         triggerEnding = triggerAiSuspended = triggerRotationSuspended = triggerSettingsWritten = false;
         magia.Restore();
@@ -149,7 +157,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     public string DescribeState()
     {
         string rotation, ai;
-        try { rotation = $"RSR 开关={RotationRequested()} 实际运行={RotationActive()} Manual={ManualRequested()}"; }
+        try { rotation = $"RSR 开关={RotationRequested()} 实际运行={RotationActive()} Manual={ManualRequested()} 目标范围={RsrStateProperty("CurrentTargetToHostileType").GetValue(null)} 排序={RsrStateProperty("TargetingTypeOverride").GetValue(null) ?? "默认"}"; }
         catch (Exception ex) { rotation = "RSR 状态不可读：" + ex.GetBaseException().Message; }
         try
         {
@@ -260,7 +268,11 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
                 triggerRotationSuspended = rotationOn;
                 triggerAiSuspended = aiOn;
             }
-            if (rotationOn || RotationActive()) RotationMode("Off");
+            if (rotationOn || RotationActive())
+            {
+                RotationMode("Off");
+                if (triggerModeBefore != null) CaptureTriggerOverrides();
+            }
             if (aiOn && !commands.ProcessCommand(reborn ? "/bmrai off" : "/vbm ai off")) return "无法关闭已运行的BossMod AI。";
             plugin.GetIpcSubscriber<bool>("BossMod.Presets.ClearActive").InvokeFunc();
             return CheckReady();
@@ -311,7 +323,8 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             if (!reborn && !commands.ProcessCommand("/vbm ai follow slot1")) throw new InvalidOperationException("BossMod跟随自身失败。");
             rotationOwned = true;
             rotationOwner = CurrentRotationOwner();
-            RotationMode(triggerApproach && triggerAuto ? "Auto" : "Manual");
+            if (triggerApproach) ApplyTriggerMode(triggerAuto);
+            else RotationMode("Manual");
             if (!RotationRequested() || !RotationActive()) throw new InvalidOperationException("自动循环启动失败。");
             return true;
         }
@@ -325,7 +338,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             var error = CheckReady();
             if (error != null) { Error = error; return false; }
             rotationOwner = CurrentRotationOwner(); rotationOwned = true;
-            RotationMode(triggerAuto ? "Auto" : "Manual");
+            ApplyTriggerMode(triggerAuto);
             if (!StationaryHealthy) throw new InvalidOperationException("自动循环未启用。");
             return true;
         }
@@ -361,6 +374,8 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         try
         {
             if (rotationOwned && RotationRequested() && ManualRequested() == triggerAuto) rotationOwned = false;
+            if (rotationOwned && triggerModeBefore != null && RotationRequested() && !TriggerSettingsHealthy())
+                rotationOwned = false;
             if (aiOwned && reborn && aiBehaviour != null && RebornBehaviour() is { } current && !ReferenceEquals(current, aiBehaviour)) aiOwned = false;
         }
         catch { }
@@ -368,7 +383,12 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         {
             try
             {
-                if (RotationRequested()) RotationMode("Off");
+                if (RotationRequested())
+                {
+                    var ownsOverrides = triggerModeBefore != null && TriggerSettingsHealthy();
+                    RotationMode("Off");
+                    if (ownsOverrides) CaptureTriggerOverrides();
+                }
                 if (!RotationRequested()) rotationOwned = false;
             }
             catch { if (!commands.Commands.ContainsKey("/rotation")) rotationOwned = false; }
@@ -408,5 +428,31 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             if (triggerEnding) RestoreTrigger();
         }
         return !OwnedCleanupPending;
+    }
+
+    public void SuppressEmergencyResume()
+    {
+        triggerRotationSuspended = triggerAiSuspended = false;
+        triggerPresetBefore = null;
+    }
+
+    public string EmergencyStop()
+    {
+        var failures = new List<string>();
+        try
+        {
+            if (commands.Commands.ContainsKey("/rotation") && RotationRequested()) RotationMode("Off");
+        }
+        catch { failures.Add("RSR"); }
+        try
+        {
+            if (commands.Commands.ContainsKey("/bmrai") && RebornBehaviour() != null)
+                commands.ProcessCommand("/bmrai off");
+            else if (commands.Commands.ContainsKey("/vbm")
+                && plugin.GetIpcSubscriber<bool>("BossMod.AI.IsEnabled").InvokeFunc())
+                commands.ProcessCommand("/vbm ai off");
+        }
+        catch { failures.Add("BossMod AI"); }
+        return failures.Count == 0 ? "已执行紧急停止。" : $"已停止本插件任务，未能确认关闭：{string.Join("、", failures)}。";
     }
 }

@@ -19,7 +19,7 @@ internal interface IFellingCombat
 internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigationMesh mesh, IArrivalActions mounts, IFellingCombat combat) : IDisposable
 {
     private readonly DestinationNavigationHelper approach = new(mesh);
-    private enum Phase { Waiting, Travel, Prepare, Fight, Remount, Park, Standby }
+    private enum Phase { Waiting, Travel, WaitApproach, Prepare, Fight, Remount, Park, Standby }
     private Phase phase;
     private WorldContext context;
     private MapDestination? pending, goal, last;
@@ -57,6 +57,29 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
         if (last != null && NavigationRules.Distance(last.Position, destination.Position) <= 1) return;
         last = pending = destination;
     }
+    public bool StartAtBoss(WorldContext world, MapDestination destination, ArrivalFate fate, Vector3 boss,
+        Vector3 player, DateTimeOffset now)
+    {
+        if (!Start(world, now, repeatFollowing: false)) return false;
+        goal = destination;
+        encounter = (fate.Id, fate.StartedAt);
+        pulled = false;
+        missingAt = default;
+        attempts = 0;
+        nextAction = now;
+        phase = Phase.WaitApproach;
+        if (ArrivalRules.IsPulled(fate).Started)
+        {
+            phase = Phase.Prepare;
+            Status = "已检测到开怪，准备接管战斗。";
+            return true;
+        }
+        var standOff = ArrivalRules.Position(player, boss, 20);
+        approach.Start(destination with { Position = standOff }, world, player, [], now, false);
+        if (!approach.Active) { Stop(approach.Status); return false; }
+        Status = "前往头目20米处，等待开怪。";
+        return true;
+    }
     public void Tick(ArrivalFrame frame, bool transferScreen, IReadOnlyList<FateEntry> fates, EncounterObservation observation, DateTimeOffset now)
     {
         if (!Active) return;
@@ -88,6 +111,19 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
             }
             if (phase is Phase.Park or Phase.Standby) { TickPark(frame, now); return; }
             if (phase == Phase.Waiting) return;
+            if (phase == Phase.WaitApproach)
+            {
+                if (observation.Ended) { Stop("目标FATE已结束。"); return; }
+                if (observation.Fate is { } waiting && ArrivalRules.IsPulled(waiting).Started)
+                    approach.Stop();
+                else
+                {
+                    approach.Tick(frame.World, frame.Player, frame.Safe && !frame.InCombat, [], now);
+                    if (approach.Active) return;
+                    if (approach.TakeArrival() == null) { Stop(approach.Status); return; }
+                }
+                phase = Phase.Prepare; phaseAt = nextAction = now; attempts = 0;
+            }
             if (phase == Phase.Travel)
             {
                 if (frame.InCombat && observation.Fate is { } nearby && NavigationRules.Distance(frame.Player, nearby.Centre) <= 60)

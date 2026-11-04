@@ -14,6 +14,7 @@
     <Compile Include="../../Automation/IslandTravelHelper.cs" Link="IslandTravelHelper.cs" />
     <Compile Include="../../Automation/FellingFollowHelper.cs" Link="FellingFollowHelper.cs" />
     <Compile Include="../../Automation/SoloDebugHelper.cs" Link="SoloDebugHelper.cs" />
+    <Compile Include="../../Automation/DebugRecording.cs" Link="DebugRecording.cs" />
     <Compile Include="../../Automation/DestinationArrivalHelper.cs" Link="DestinationArrivalHelper.cs" />
   </ItemGroup>
 </Project>

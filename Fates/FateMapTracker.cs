@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using System.Numerics;
 using Dalamud.Game.ClientState.Fates;
+using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Plugin.Services;
 using ULKHelper.Crowdsource;
@@ -32,6 +34,15 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
     private volatile FateMapSnapshot snapshot = new(0, null, new Dictionary<ushort, FateRecord>(), "尚未进入优雷卡。");
     private bool disposed;
     private readonly SettingsStore? settings;
+    private const string ElementalSettingsKey = "map.elementalSightings";
+    private readonly List<ElementalMapPoint> elementalSightings = [];
+    private DateTimeOffset nextElementalSave;
+    private bool elementalDirty;
+    // BNpcName rows from CN 2026.10.06, keyed by the four Eureka territories.
+    private static readonly Dictionary<uint, uint> ElementalNames = new()
+    {
+        [732] = 7184, [763] = 7567, [795] = 7764, [827] = 8131,
+    };
     public IReadOnlyList<IslandMap> Islands { get; }
     public FateMapSnapshot Snapshot => snapshot;
 
@@ -47,6 +58,11 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
         settings?.Put("notifications", requestedNotifications);
         try { Islands = FateCatalogLoader.Load(data.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>()!, data.GetExcelSheet<Lumina.Excel.Sheets.Fate>()!); }
         catch (Exception ex) { Islands = []; error = "地图点位数据加载失败，请查看日志并重新加载插件。"; log.Error(ex, "加载优雷卡 FATE 目录失败"); }
+        elementalSightings.AddRange((settings?.Get<ElementalMapPoint[]>(ElementalSettingsKey, []) ?? [])
+            .Where(p => p != null && p.LastSeen != default && Islands.Any(i => i.Territory == p.Territory && i.MapId == p.MapId
+                && ValidMapPosition(p.Position, i)))
+            .GroupBy(p => p.Territory).SelectMany(g => g.OrderByDescending(p => p.LastSeen).Take(128))
+            .Select(p => p with { Visible = false }));
         ledger = new(Islands);
         notifications = new(Islands);
         notifications.Configure(requestedNotifications); notifications.Reset();
@@ -89,6 +105,7 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
             var world = (client.TerritoryType, client.MapId, client.Instance, client.IsLoggedIn ? playerState.ContentId : 0);
             if (world != session)
             {
+                SaveElementals();
                 ledger.Reset(); session = world; nextUpdate = default;
                 notifications.Reset();
                 lookup.Reset(); enteredAt = now; roomId = roomCandidate = 0; candidateSince = now;
@@ -100,6 +117,7 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
             if (now < nextUpdate && !changed) return;
             nextUpdate = now.AddMilliseconds(500);
             var island = Islands.FirstOrDefault(i => i.Territory == client.TerritoryType);
+            var elementals = ObserveElementals(island, now);
             var observations = new List<FateObservation>();
             if (island != null && client.IsLoggedIn)
             {
@@ -129,20 +147,70 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
             }
             snapshot = new(client.TerritoryType, island != null && objects.LocalPlayer is { } player ? MapProjection.WorldToMap(player.Position, island) : null,
                 ledger.Snapshot, error ?? (island == null ? "浏览模式：进入对应岛屿后读取一次众包记录。" : "本次实例本地观察 · 每 0.5 秒刷新 · 离岛后清空"),
-                roomId, island == null ? null : lookup.Attempted ? lookup.Status : roomReader.Status, notifications.Settings, notifications.Status);
+                roomId, island == null ? null : lookup.Attempted ? lookup.Status : roomReader.Status, notifications.Settings, notifications.Status, elementals);
         }
         catch (Exception ex)
         {
-            snapshot = snapshot with { Status = "FATE 状态读取失败，保留上次记录；活动数据将标为过期。" };
+            snapshot = snapshot with { Status = "FATE 状态读取失败，保留上次记录；活动数据将标为过期。",
+                Elementals = elementalSightings.ToArray() };
             nextUpdate = now.AddSeconds(1);
             if (now >= nextError) { nextError = now.AddSeconds(10); log.Warning(ex, "优雷卡地图状态更新失败"); }
         }
+    }
+
+    private static bool ValidMapPosition(Vector2 position, IslandMap island)
+    {
+        var uv = MapProjection.ToUv(position, island.SizeFactor);
+        return uv.X is >= 0 and <= 1 && uv.Y is >= 0 and <= 1;
+    }
+
+    private ElementalMapPoint[] ObserveElementals(IslandMap? island, DateTimeOffset now)
+    {
+        var visible = new HashSet<ElementalMapPoint>();
+        if (island != null && client.IsLoggedIn && objects.LocalPlayer != null
+            && client.MapId == island.MapId && ElementalNames.TryGetValue(island.Territory, out var nameId))
+        {
+            foreach (var npc in objects.OfType<IBattleNpc>())
+            {
+                if (npc.NameId != nameId || npc.IsDead) continue;
+                var position = MapProjection.WorldToMap(npc.Position, island);
+                if (!ValidMapPosition(position, island)) continue;
+                var index = elementalSightings.FindIndex(p => p.MapId == island.MapId
+                    && Vector2.DistanceSquared(p.Position, position) <= .01f);
+                var point = new ElementalMapPoint(island.Territory, island.MapId, position, now);
+                if (index < 0)
+                {
+                    var sameIsland = elementalSightings.Where(p => p.Territory == island.Territory).ToArray();
+                    if (sameIsland.Length >= 128) elementalSightings.Remove(sameIsland.MinBy(p => p.LastSeen)!);
+                    elementalSightings.Add(point);
+                    nextElementalSave = default;
+                }
+                else elementalSightings[index] = point;
+                visible.Add(point);
+                elementalDirty = true;
+            }
+        }
+        if (now >= nextElementalSave && elementalDirty)
+        {
+            SaveElementals();
+            nextElementalSave = now.AddMinutes(1);
+        }
+        return elementalSightings.Select(p => visible.Contains(p) ? p with { Visible = true } : p).ToArray();
+    }
+
+    private void SaveElementals()
+    {
+        if (!elementalDirty || settings == null) return;
+        settings.Put(ElementalSettingsKey, elementalSightings.ToArray());
+        settings.Flush();
+        elementalDirty = false;
     }
 
     public void Dispose()
     {
         if (disposed) return;
         disposed = true; framework.Update -= Update;
+        SaveElementals();
         lookup.Dispose(); http.Dispose();
         while (commands.TryDequeue(out _)) { }
     }

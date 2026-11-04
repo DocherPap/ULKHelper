@@ -14,7 +14,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     private Phase phase;
     private int dismounts;
     private DateTimeOffset nextDismount;
-    private bool requireMount, resumeFinal;
+    private bool requireMount, resumeFinal, useCrystals;
     private int mountAttempts;
     private DateTimeOffset nextMount;
     public bool Active { get; private set; }
@@ -23,20 +23,20 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     public string Status { get; private set; } = "尚未开始导航。";
     public string? CrystalDecision { get; private set; }
     public MapDestination? TakeArrival() { var result = arrival; arrival = null; return result; }
-    public void Start(MapDestination destination, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool summonMount = false)
+    public void Start(MapDestination destination, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool summonMount = false, bool useCrystals = true)
     {
         if (Active) { Status = "请先停止当前导航。"; return; }
         Stop(); CrystalDecision = null; goal = destination; context = world; origin = player; started = now;
         if (destination.Territory != world.Territory || destination.Map != world.Map || !NavigationRules.Finite(player))
         { Stop("目的地范围无效。"); return; }
-        requireMount = summonMount; resumeFinal = false; mountAttempts = 0; nextMount = now;
+        requireMount = summonMount; this.useCrystals = useCrystals; resumeFinal = false; mountAttempts = 0; nextMount = now;
         Active = true;
         if (requireMount) { phase = Phase.Mount; Status = "检查并召唤所选坐骑。"; return; }
         BeginJourney(player, fates, now);
     }
     private void BeginJourney(Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now)
     {
-        route = IslandCrystalRoutes.Choose(context.Territory, player, goal!.Position);
+        route = useCrystals ? IslandCrystalRoutes.Choose(context.Territory, player, goal!.Position) : null;
         CrystalDecision = route == null ? "水晶路线预计收益不足，直接前往。" : $"选择岛内水晶路线：{route.Source.PlaceNameId} → {route.Target.PlaceNameId}。";
         if (route == null) Final(player, fates, now);
         else

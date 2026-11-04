@@ -218,6 +218,25 @@ if (args.FirstOrDefault() == "--automation-api")
 if (args.Length > 0)
 {
     using var game = new Lumina.GameData(args[0], new Lumina.LuminaOptions { DefaultExcelLanguage = Lumina.Data.Language.ChineseSimplified });
+    if (args.Contains("--common-eureka"))
+    {
+        var names = new HashSet<string> { "罗德尼", "调查队的补给员" };
+        var npcs = game.Excel.GetSheet<ENpcResident>().Where(n => (names.Contains(n.Singular.ExtractText()) || n.Singular.ExtractText().Contains("补给"))).ToDictionary(n => n.RowId);
+        foreach (var row in game.Excel.GetSheet<Level>().Where(r => npcs.ContainsKey(r.Object.RowId) && r.Territory.RowId is 628 or 732 or 763 or 795 or 827))
+            Console.WriteLine($"{npcs[row.Object.RowId].Singular.ExtractText()} npc={row.Object.RowId} zone={row.Territory.RowId} map={row.Map.RowId} pos={row.X},{row.Y},{row.Z}");
+        foreach (var row in game.Excel.GetSheet<Aetheryte>().Where(r => r.Territory.RowId == 628))
+            Console.WriteLine($"Aetheryte {row.RowId} {row.PlaceName.ValueNullable?.Name.ExtractText()} {row.AethernetName.ValueNullable?.Name.ExtractText()}");
+        foreach (var row in game.Excel.GetSheet<Item>().Where(r => r.Name.ExtractText() == "优雷卡恢复药"))
+            Console.WriteLine($"Item {row.RowId} Price={row.PriceMid}");
+        return;
+    }
+    if (args.Contains("--elemental-data"))
+    {
+        var names = new HashSet<string> { "常风元灵", "恒冰元灵", "涌火元灵", "丰水元灵" };
+        foreach (var npc in game.Excel.GetSheet<BNpcName>().Where(n => names.Contains(n.Singular.ExtractText())))
+            Console.WriteLine($"{npc.RowId} {npc.Singular.ExtractText()}");
+        return;
+    }
     if (args.Contains("--crystal-data"))
     {
         foreach (var id in new uint[] { 2415,2429,2436,2463,2474,2472,2473,2531,2540,2541,2542,2876,2891,2892 })

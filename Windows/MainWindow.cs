@@ -18,6 +18,7 @@ internal sealed class MainWindow : Window
     private readonly SettingsStore? settings;
     private readonly DebugTestsPage debugTests;
     private readonly LogosPage logos;
+    private readonly CommonPage common;
     private bool firstDraw = true;
     private int selectedTab;
     private DateTimeOffset nextLayout;
@@ -27,6 +28,7 @@ internal sealed class MainWindow : Window
         string? weatherError = null, SettingsStore? settings = null, LogosPage? logosPage = null, BunnyPage? bunnyPage = null) : base("优雷卡助手###ULKHelper.Main")
     {
         logos = logosPage!;
+        common = new(helpers, fateProvider);
         itemStatistics = new(statistics);
         triggerMap = new(fateProvider, mapTextures, weatherZones, helpers);
         automation = new(helpers, triggerMap);
@@ -39,7 +41,8 @@ internal sealed class MainWindow : Window
         if(schema==0&&selectedTab>=3)selectedTab++;
         if(schema<2&&selectedTab>=3)selectedTab++;
         if(schema<3)selectedTab=selectedTab==3?2:selectedTab>3?selectedTab-1:selectedTab;
-        selectedTab=Math.Clamp(selectedTab,0,5);
+        if(schema<4 && (settings?.Get("window.tab",-1)??-1)>=0)selectedTab++;
+        selectedTab=Math.Clamp(selectedTab,0,6);
         if (settings != null) { itemStatistics.Load(settings); weather.Load(settings); fateMap.Load(settings, "map"); triggerMap.Load(settings, "triggerMap"); automation.Load(settings); }
         Size = settings?.Get("window.size", new Vector2(1280, 780)) ?? new Vector2(1280, 780);
         SizeCondition = ImGuiCond.Once;
@@ -57,51 +60,59 @@ internal sealed class MainWindow : Window
     {
         if (firstDraw && settings != null) LayoutSettings.Restore(settings);
         var restoreTab = selectedTab;
-        var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 5) / 6;
+        var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 6) / 7;
         if (!ImGui.BeginTabBar("##MainPages", ImGuiTabBarFlags.FittingPolicyResizeDown)) return;
         try
         {
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("物品统计", firstDraw && restoreTab == 0 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("常用功能", firstDraw && restoreTab == 0 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
                 selectedTab = 0;
+                try { DrawPage(common.Draw); }
+                finally { ImGui.EndTabItem(); }
+            }
+
+            ImGui.SetNextItemWidth(tabWidth);
+            if (ImGui.BeginTabItem("物品统计", firstDraw && restoreTab == 1 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            {
+                selectedTab = 1;
                 try { DrawPage(DrawItemStatisticsPage); }
                 finally { ImGui.EndTabItem(); }
             }
 
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("天气预报", firstDraw && restoreTab == 1 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("天气预报", firstDraw && restoreTab == 2 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
-                selectedTab = 1;
+                selectedTab = 2;
                 try { DrawPage(weather.Draw); }
                 finally { ImGui.EndTabItem(); }
             }
 
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("地图 / FATE", firstDraw && restoreTab == 2 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("地图 / FATE", firstDraw && restoreTab == 3 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
-                selectedTab = 2;
+                selectedTab = 3;
                 try { DrawPage(fateMap.Draw); }
                 finally { ImGui.EndTabItem(); }
             }
 
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("文理技能", firstDraw && restoreTab == 3 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("文理技能", firstDraw && restoreTab == 4 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
-                selectedTab = 3;
+                selectedTab = 4;
                 try { DrawPage(logos.Draw); } finally { ImGui.EndTabItem(); }
             }
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("自动化", firstDraw && restoreTab == 4 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("自动化", firstDraw && restoreTab == 5 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
-                selectedTab = 4;
+                selectedTab = 5;
                 try { DrawPage(DrawAutomationPage); }
                 finally { ImGui.EndTabItem(); }
             }
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("调试测试", firstDraw && restoreTab == 5 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("调试测试", firstDraw && restoreTab == 6 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
-                selectedTab = 5;
+                selectedTab = 6;
                 try { DrawPage(debugTests.Draw); }
                 finally { ImGui.EndTabItem(); }
             }
@@ -113,7 +124,7 @@ internal sealed class MainWindow : Window
             if (settings != null)
             {
                 itemStatistics.Save(settings); weather.Save(settings); fateMap.Save(settings, "map"); triggerMap.Save(settings, "triggerMap"); automation.Save(settings);
-                settings.Put("window.tabSchema",3); settings.Put("window.size", ImGui.GetWindowSize()); settings.Put("window.position", ImGui.GetWindowPos()); settings.Put("window.tab", selectedTab);
+                settings.Put("window.tabSchema",4); settings.Put("window.size", ImGui.GetWindowSize()); settings.Put("window.position", ImGui.GetWindowPos()); settings.Put("window.tab", selectedTab);
                 if (DateTimeOffset.UtcNow >= nextLayout || ImGui.IsMouseReleased(ImGuiMouseButton.Left)) { LayoutSettings.Capture(settings); nextLayout = DateTimeOffset.UtcNow.AddSeconds(1); }
                 settings.Flush();
             }

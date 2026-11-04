@@ -1,0 +1,21 @@
+# 常用功能
+
+- 「自动前往入口」以黄金港罗德尼为终点。「进入」四岛复用该行程，再选择可用的对应岛屿菜单并验证最终区域。外岛行程通过 Lifestream 前往黄金港和第一防波堤。已经在罗德尼附近时直接步行。当前在岛内时先自行离岛。
+- 返回营地和最近水晶只寻路，不交互。坐标和 FATE 寻路使用游戏地图旗标，FATE 必须在旗标 50 米内并已出现。两种寻路共用岛内坐骑处理。
+- 等待开怪选择 100 米内最近的活动 NM，需读到其可选中的首领，向距首领 20 米的位置靠近。复用跟随伐木的开怪证据、同步判断、战斗控制与清理。
+- 购买恢复药先核对补给负责人和已打开商店，确认唯一的 300 金币普通品质商品后提交一次 99 件购买。以库存增加 99 且金币减少 29700 验证完成。未确认结果时不自动重试。
+- 自动邀请与自动接受默认关闭，选项独立保存，只在四岛生效。自动邀请匹配修剪两侧空白后全为半角数字 1，或含连续三个半角 1 的喊话。邀请按岛内玩家实体 ID 发出并节流。自动接受每个已观察到的邀请只处理一次。
+- 元灵喊话使用本岛地图最近记录的元灵，插旗后发送 `<flag>yl`；求救发送 `<pos>999`。紧急停止同时停止本插件任务、vnavmesh、RSR 和 BossMod AI，并关闭自动组队选项。
+
+## 数据与接口
+
+本机国服 2026.10.06 游戏表核对黄金港 Territory 628、地图 370、罗德尼 1024517、以太之光 111、第一防波堤 113、恢复药 22306。常风、恒冰、丰水补给 NPC 在本机 Level 表核对。涌火补给点为 X16.7、Y23.8，运行时再匹配 NPC 名称。可用 `tools/InventoryInspect` 的 `--common-eureka` 重查。 [国服优雷卡资料](https://ff14.huijiwiki.com/wiki/禁地优雷卡) [涌火补给 NPC 官方坐标](https://na.finalfantasyxiv.com/lodestone/playguide/db/shop/d7a8965549c/)
+
+行程用 Lifestream IPC，购物和组队用本机 API 15 的原生结构。 [Lifestream IPC](https://github.com/NightmareXIV/Lifestream/blob/main/Lifestream/IPC/IPCProvider.cs) [购物回调参考](https://github.com/McVaxius/ADS/blob/main/docs/SHOP_PURCHASING.md) [组队原生接口](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/UI/Info/InfoProxyPartyInvite.cs)
+
+## 游戏内待测
+
+- 单人验证黄金港接驳、接近罗德尼、四岛选项及确认窗口。遇到未识别的菜单会等待超时并显示状态。
+- 单人验证各岛商店购买，尤其是涌火之地未加载 NPC 时的寻路。每次成功测试消耗 29700 金币。
+- 单人验证旗标、坐骑、水晶待机以及紧急停止；在活动 NM 附近验证等待、同步和战斗接管。
+- 与一名队友验证喊话匹配、邀请去重、自动接受以及岛外禁用。确认喊话模板在实际聊天窗口正确展开。

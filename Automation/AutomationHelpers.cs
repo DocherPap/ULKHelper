@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Numerics;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using Dalamud.Game.Chat;
 using Dalamud.Game.ClientState.Conditions;
@@ -14,7 +15,7 @@ using Dalamud.Plugin.Services;
 namespace ULKHelper.Automation;
 
 // Game operations run on framework thread. Leader coordinates move only in an explicitly started session.
-internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
+internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposable
 {
     private readonly IFramework framework;
     private readonly IClientState client;
@@ -40,6 +41,8 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
     private readonly FellingFollowHelper follow;
     private readonly TriggerKillGameTracker kills;
     private readonly SoloDebugHelper debug;
+    private readonly DebugRecording recording;
+    private DateTimeOffset nextRecordedPosition;
     private readonly AutoTriggerHelper trigger;
     private readonly TriggerGameReader triggerReader;
     private readonly Dictionary<ushort, Vector3[]> triggerRoutes = new();
@@ -66,7 +69,7 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
         this.framework = framework; this.client = client; this.objects = objects; this.fates = fates;
         this.conditions = conditions; this.chat = chat; this.gui = gui; this.log = log;
         this.playerState = playerState;
-        this.targets = targets;
+        this.targets = targets; commonParty = party;
         this.settings = settings;
         mesh = new VnavmeshAdapter(plugin); this.data = data;
         mounts = new(objects, data);
@@ -76,7 +79,12 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
         follow = new(navigation, mesh, mounts, combat);
         kills = new(objects, fates, data);
         debug = new(new IslandCrystalGameAdapter(objects, gui, data), mounts);
+        recording = new(Path.Combine(plugin.GetPluginConfigDirectory(), "debug-recordings"));
+        recording.LoadLatest();
         trigger = new(mesh, mounts, combat); triggerReader = new(objects, data);
+        commonJourney = new(plugin, mesh, client, objects, gui, data, conditions, arrivalGame);
+        autoInvite = settings?.Get("common.autoInvite", false) ?? false;
+        autoAccept = settings?.Get("common.autoAccept", false) ?? false;
         foreach (var pair in settings?.Get("trigger.routes", new Dictionary<ushort, Vector3[]>()) ?? new())
             if (pair.Value != null && pair.Value.Length <= 128 && pair.Value.All(NavigationRules.Finite)) triggerRoutes[pair.Key] = pair.Value;
         rosterSource = new(interop, data, objects);
@@ -102,23 +110,36 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
         var copy = plans.Select(p => p with { Route = p.Route.ToArray() }).ToArray();
         commands.Enqueue(() =>
         {
+            recording.Add(DateTimeOffset.Now, $"请求自动触发 | FATE={string.Join(",", copy.Select(p => p.FateId))} 批次档={batch} 放弃档={maxKills}");
             if (trigger.Active) return;
-            if (follow.Active || navigation.Active || debug.Active || combat.CleanupPending) { trigger.Stop("请先停止导航、跟随或测试，等待控制恢复。"); return; }
+            if (commonJourney.Active || follow.Active || navigation.Active || debug.Active || combat.CleanupPending) { trigger.Stop("请先停止当前任务，等待控制恢复。"); return; }
             if (copy.Any(p => !triggerReader.Rules.Any(r => r.FateId == p.FateId && r.Territory == client.TerritoryType))) { trigger.Stop("所选FATE没有已核实的本岛击杀规则。"); return; }
             if (copy.Any(p => p.Mode == TriggerMode.Recorded) && mounts.Selected == 0) { trigger.Stop("特殊触发请先选择坐骑。"); return; }
             var verified = copy.Select(p => p with { Level = data.GetExcelSheet<Lumina.Excel.Sheets.Fate>()!.GetRow(p.FateId).ClassJobLevel,
-                Route = triggerRoutes.GetValueOrDefault(p.FateId, []).ToArray(),
-                SearchPoints = triggerReader.Areas.Where(a => a.FateId == p.FateId).Select(a => a.Position).Take(128).ToArray() }).ToArray();
+                Route = triggerRoutes.GetValueOrDefault(p.FateId, []).ToArray() }).ToArray();
             trigger.Start(verified, ReadTriggerFrame(Context()), batch, maxKills, DateTimeOffset.UtcNow);
         });
     }
     private TriggerFrame ReadTriggerFrame(WorldContext world) => new(world, objects.LocalPlayer?.Position ?? Vector3.Zero,
         SafeState(), conditions[ConditionFlag.Mounted], objects.LocalPlayer?.IsCasting ?? false, conditions[ConditionFlag.InCombat],
         TriggerGameReader.Level(), triggerReader.Read(world.Territory), fates.Where(f => f != null && f.TerritoryType.RowId == world.Territory
-            && f.State is FateState.Preparing or FateState.Running or FateState.Ending).Select(f => f.FateId).ToHashSet());
+            && f.State is FateState.Preparing or FateState.Running or FateState.Ending).Select(f => f.FateId).ToHashSet(),
+        CanMountForTravel: mounts.Selected != 0);
     public Func<string>? AdditionalDiagnostics {get;set;}
     public AutomationSnapshot Snapshot => snapshot;
     public SoloDebugSnapshot DebugSnapshot => debugSnapshot;
+    public DebugRecordingSnapshot Recording => recording.Snapshot;
+    public void RecordDebug(bool enabled) => commands.Enqueue(() =>
+    {
+        var now = DateTimeOffset.Now;
+        if (enabled)
+        {
+            var version = typeof(Plugin).Assembly.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            recording.Start(now, version ?? "未知版本");
+            nextRecordedPosition = default;
+        }
+        else recording.Finish(now, "用户结束");
+    });
     public void RunDebug(SoloDebugAction action, uint crystalId = 0) => commands.Enqueue(() =>
     {
         if (action == SoloDebugAction.Inspect)
@@ -127,7 +148,7 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
             catch (Exception ex) { debug.Record("读取现场失败：" + ex.Message, DateTimeOffset.UtcNow); }
             return;
         }
-        if (trigger.Active || follow.Active || navigation.Active || combat.CleanupPending || debug.Active)
+        if (commonJourney.Active || trigger.Active || follow.Active || navigation.Active || combat.CleanupPending || debug.Active)
         { debug.Record("测试未开始：请先停止当前导航、跟随或测试，等待控制恢复。", DateTimeOffset.UtcNow); return; }
         try { ReadDiagnostics(); } catch (Exception ex) { diagnostics = "自动读取现场失败：" + ex.Message; }
         debug.Start(action, DebugFrame(Context(), false), IslandCrystalRoutes.All.FirstOrDefault(c => c.PlaceNameId == crystalId), DateTimeOffset.UtcNow);
@@ -183,28 +204,28 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
             StartPointNavigation(new(client.TerritoryType, client.MapId, ArrivalRules.Position(player.Position, crystal.Position, 7), "当前岛入口营地"), false);
         else { usingFollow = false; navigation.Stop("请先进入优雷卡岛内。"); }
     });
-    private void StartPointNavigation(MapDestination destination, bool useNm = true)
+    private void StartPointNavigation(MapDestination destination, bool useNm = true, bool useCrystals = true)
     {
-        if (trigger.Active || debug.Active) { debug.Record("请先停止自动触发或单次调试测试。", DateTimeOffset.UtcNow); return; }
+        if (commonJourney.Active || trigger.Active || debug.Active) { debug.Record("请先停止当前任务。", DateTimeOffset.UtcNow); return; }
         follow.Stop(); navigation.Stop(); arrivalGame.Reset(); usingFollow = false;
         if (!CanMove()) { navigation.Stop("当前角色状态不允许移动，请脱战并结束交互后重试。"); return; }
         pointNm = useNm;
-        navigation.Start(destination, Context(), objects.LocalPlayer!.Position, useNm ? ReadFates() : [], DateTimeOffset.UtcNow, mounts.Selected != 0);
+        navigation.Start(destination, Context(), objects.LocalPlayer!.Position, useNm ? ReadFates() : [], DateTimeOffset.UtcNow, mounts.Selected != 0, useCrystals);
     }
     public void Follow(bool enabled) => commands.Enqueue(() =>
     {
         if (!enabled) { if (trigger.Active) return; follow.Stop(); listener.SetListening(false); return; }
-        if (trigger.Active || debug.Active) { debug.Record("请先停止自动触发或单次调试测试。", DateTimeOffset.UtcNow); return; }
+        if (commonJourney.Active || trigger.Active || debug.Active) { debug.Record("请先停止当前任务。", DateTimeOffset.UtcNow); return; }
         usingFollow = true;
         if (listener.Leader == null) { follow.Stop("请先选择车头。"); return; }
         if (mounts.Selected == 0) { follow.Stop("请先选择已解锁且可移动的坐骑。"); return; }
         arrivalGame.Reset();
         if (follow.Start(Context(), DateTimeOffset.UtcNow)) listener.SetListening(true);
     });
-    public void Stop() => commands.Enqueue(() => { trigger.Stop(); follow.Stop(); navigation.Stop(); arrivalGame.Reset(); if (debug.Active) debug.Stop("已停止测试。", DateTimeOffset.UtcNow); });
+    public void Stop() => commands.Enqueue(StopTasks);
     public void Navigate() => commands.Enqueue(() =>
     {
-        if (trigger.Active || debug.Active) { debug.Record("请先停止自动触发或单次调试测试。", DateTimeOffset.UtcNow); return; }
+        if (commonJourney.Active || trigger.Active || debug.Active) { debug.Record("请先停止当前任务。", DateTimeOffset.UtcNow); return; }
         usingFollow = true; follow.Stop(); arrivalGame.Reset();
         if (listener.Destination is { } goal && objects.LocalPlayer is { } player && CanMove())
         {
@@ -243,7 +264,7 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
                 listener.Reset(); navigation.Stop("角色或地图变化，导航已停止。");
                 follow.Stop("角色或地图变化，已停止跟随。"); arrivalGame.Reset(); usingFollow = false;
                 combat.ForgetMagia(); trigger.Stop("切区或角色变化，触发已停止。"); triggerReader.Reset();
-                roster.Reset();
+                roster.Reset(); invited.Clear(); lastAccepted = default;
                 kills.Reset(); nextKills = default;
                 if (debug.Active) debug.Stop("切区/角色变化，测试停止。", now);
                 mounts.Reset(); nextMounts = default;
@@ -253,6 +274,10 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
                 if (world.PlayerId != 0 && savedLeader != null) listener.Select(savedLeader);
             }
             while (commands.TryDequeue(out var command)) command();
+            var journeyWasActive = commonJourney.Active;
+            commonJourney.Tick(Context(), now);
+            if (journeyWasActive && !commonJourney.Active) commonStatus = commonJourney.Status;
+            TickCommonParty(now);
             if (!trigger.Active && !follow.Active && combat.CleanupPending && now >= nextCleanup)
             { nextCleanup = now.AddSeconds(1); combat.Disable(); }
             if (SafeState() && playerState.ContentId != 0 && now >= nextMounts)
@@ -274,6 +299,7 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
                 nextTrigger = now.AddMilliseconds(250);
                 var frame = ReadTriggerFrame(world);
                 trigger.Tick(frame, now);
+                if (recording.Snapshot.Active) CaptureRecording(frame, now);
                 triggerSnapshot = new(trigger.Active, trigger.Status, frame.Level, triggerReader.Areas,
                     triggerRoutes.ToDictionary(p => p.Key, p => p.Value.ToArray()));
             }
@@ -301,7 +327,7 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
                 IslandCrystalRoutes.All.Where(c => c.Territory == client.TerritoryType)
                     .Select(c => new DebugCrystal(c.PlaceNameId, data.GetExcelSheet<Lumina.Excel.Sheets.PlaceName>()!.GetRow(c.PlaceNameId).Name.ExtractText())).ToArray(), debug.History);
             snapshot = new(players, listener.Leader, listener.Listening, listener.Status, listener.Destination,
-                listener.History, trigger.Active || follow.Active || navigation.Active, trigger.Active ? trigger.Status : usingFollow ? follow.Status : navigation.Status, roster.Snapshot,
+                listener.History, commonJourney.Active || trigger.Active || follow.Active || navigation.Active, commonJourney.Active ? commonJourney.Status : trigger.Active ? trigger.Status : usingFollow ? follow.Status : navigation.Status, roster.Snapshot,
                 mounts.Owned, mounts.Selected, follow.Following, combat.CleanupPending && !follow.Active && !trigger.Active ? "等待恢复战斗插件状态。" : follow.Status, kills.Snapshot);
             if (navigation.CrystalDecision != reportedCrystalDecision)
             {
@@ -311,9 +337,11 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
         }
         catch (Exception ex)
         {
+            recording.Add(DateTimeOffset.Now, "框架异常 | " + ex.GetBaseException().Message);
             if (debug.Active) debug.Stop("读取现场异常，调试测试已停止。", DateTimeOffset.UtcNow);
             debugSnapshot = debugSnapshot with { Active = false, Status = "读取现场异常：" + ex.Message };
             trigger.Stop("游戏状态读取失败，触发已停止。");
+            commonJourney.Stop("游戏状态读取失败，常用功能已停止。");
             triggerSnapshot = triggerSnapshot with { Active = false, Status = trigger.Status };
             navigation.Stop("游戏状态读取失败，导航已停止。");
             follow.Stop("游戏状态读取失败，已关闭战斗控制。"); arrivalGame.Reset();
@@ -322,18 +350,51 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
         }
     }
 
+    private void CaptureRecording(TriggerFrame frame, DateTimeOffset now)
+    {
+        var timestamp = now.ToLocalTime();
+        recording.Change(timestamp, "地图", $"区域={frame.World.Territory} 地图={frame.World.Map} 分线={frame.World.Instance}");
+        recording.Change(timestamp, "角色状态", $"可操作={frame.Safe} 元素等级={frame.Level} 战斗={frame.InCombat} 骑乘={frame.Mounted} 读条={frame.Casting}");
+        recording.Change(timestamp, "自动触发", $"运行={trigger.Active} {trigger.Status}");
+        recording.Change(timestamp, "导航", navigation.Status);
+        recording.Change(timestamp, "跟随", follow.Status);
+        recording.Change(timestamp, "调试测试", debug.Status);
+        recording.Change(timestamp, "战斗插件", combat.DescribeState().Replace('\n', ' '));
+        recording.Change(timestamp, "活跃FATE", string.Join(",", frame.ActiveFates.Order()));
+        var selected = targets.Target;
+        recording.Change(timestamp, "当前目标", selected == null ? "无" : selected is Dalamud.Game.ClientState.Objects.Types.IBattleNpc
+            ? $"{selected.GameObjectId} {selected.Name.TextValue}" : selected.ObjectKind.ToString());
+        recording.Change(timestamp, "已加载触发怪", string.Join(" ", frame.Mobs.OrderBy(m => m.FateId).ThenBy(m => m.Id)
+            .Select(m => $"{m.FateId}/{m.Id}:{(m.Dead ? "死" : m.Aggro ? "有仇恨" : m.Engaged ? "交战" : m.Targetable ? "可拉" : "不可选")}")));
+        if (now >= nextRecordedPosition)
+        {
+            nextRecordedPosition = now.AddSeconds(1);
+            var npc = selected as Dalamud.Game.ClientState.Objects.Types.IBattleNpc;
+            var detail = npc == null ? "" : $" 目标位置={npc.Position} 水平距离={NavigationRules.Distance(frame.Position, npc.Position):0.0} 目标HP={npc.CurrentHp}";
+            recording.Add(timestamp, $"位置 | {frame.Position}{detail}");
+        }
+        recording.CheckLimit(timestamp);
+    }
+
     private void OnChat(IChatMessage message)
     {
         var current = snapshot;
-        if (disposed || !current.Listening || message.LogKind is not (XivChatType.Say or XivChatType.Yell or XivChatType.Shout)) return;
+        var invite = autoInvite && message.LogKind == XivChatType.Shout;
+        if (disposed || !invite && !current.Listening || message.LogKind is not (XivChatType.Say or XivChatType.Yell or XivChatType.Shout)) return;
         try
         {
             // Original payloads are unaffected by display-name or translation plugins.
             var sender = SeString.Parse(message.OriginalSender.Data.Span).Payloads.OfType<PlayerPayload>().FirstOrDefault();
             if (sender == null) return; // Never guess a world from a visible name.
             var identity = new PlayerIdentity(sender.PlayerName, sender.World.RowId);
-            if (identity != current.Leader) return;
             var content = SeString.Parse(message.OriginalMessage.Data.Span);
+            if (invite && IsPartyRequest(content.TextValue))
+            {
+                var receivedWorld = previous;
+                commands.Enqueue(() => InviteFromShout(identity, receivedWorld));
+            }
+            if (!current.Listening) return;
+            if (identity != current.Leader) return;
             var text = content.TextValue;
             var channel = message.LogKind.ToString();
             var receivedAt = DateTimeOffset.UtcNow;
@@ -369,9 +430,11 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
         chat.ChatMessage -= OnChat; framework.Update -= Update;
         debug.Stop("插件卸载，测试已停止。", DateTimeOffset.UtcNow);
         trigger.Stop("插件卸载，触发已停止。");
+        commonJourney.Dispose();
         navigation.Dispose();
         follow.Dispose();
         combat.Disable();
+        recording.Finish(DateTimeOffset.Now, "插件卸载");
         rosterSource.Dispose();
         while (commands.TryDequeue(out _)) { }
     }

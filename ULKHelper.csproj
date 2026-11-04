@@ -8,7 +8,7 @@
     <AssemblyName>ULKHelper</AssemblyName>
     <RootNamespace>ULKHelper</RootNamespace>
     <Version>0.1.1</Version>
-    <InformationalVersion>0.1.1-local.trigger-waves.16</InformationalVersion>
+    <InformationalVersion>0.1.1-local.common-actions.26</InformationalVersion>
     <AssemblyVersion>0.1.1.0</AssemblyVersion>
     <Deterministic>true</Deterministic>
     <PathMap>$(MSBuildProjectDirectory)=/_/ULKHelper</PathMap>

@@ -37,6 +37,7 @@
     <Compile Include="../../Windows/AutomationPage.cs" Link="AutomationPage.cs" />
     <Compile Include="../../Windows/DebugTestsPage.cs" Link="DebugTestsPage.cs" />
     <Compile Include="../../Automation/SoloDebugHelper.cs" Link="SoloDebugHelper.cs" />
+    <Compile Include="../../Automation/DebugRecording.cs" Link="DebugRecording.cs" />
     <Compile Include="../../Automation/IslandCrystalRoutes.cs" Link="IslandCrystalRoutes.cs" />
     <Compile Include="../../Automation/ArrivalRules.cs" Link="ArrivalRules.cs" />
     <Compile Include="../../Automation/NavigationRules.cs" Link="NavigationRules.cs" />

@@ -486,6 +486,24 @@ Check(!debugTest.Active, "单人测试真实切岛取消，不沿用原岛目标
 for (var index = 0; index < 100; index++) debugTest.Record("历史"+index,now);
 Check(debugTest.History.Count == 40, "单人测试历史最多保留40条");
 AutoTriggerChecks.Run(Check);
+var recordingDirectory = Path.Combine(AppContext.BaseDirectory, "recording-test-" + Guid.NewGuid().ToString("N"));
+var recording = new DebugRecording(recordingDirectory);
+var recordTime = DateTimeOffset.UtcNow;
+recording.Start(recordTime, "offline");
+recording.Change(recordTime, "目标", "无仇恨");
+recording.Change(recordTime, "目标", "无仇恨");
+recording.Change(recordTime.AddSeconds(1), "目标", "已有仇恨");
+recording.Finish(recordTime.AddSeconds(2), "测试结束");
+Check(SpinWait.SpinUntil(() => !recording.Snapshot.Saving, TimeSpan.FromSeconds(5))
+    && recording.Snapshot.Path is { } savedPath && File.Exists(savedPath), "调试记录：结束后写入文件");
+var reopened = new DebugRecording(recordingDirectory);
+reopened.LoadLatest();
+Check(reopened.Snapshot.Text is { } savedText
+    && savedText.Split("目标 | 无仇恨").Length == 2
+    && savedText.Contains("目标 | 已有仇恨")
+    && savedText.Contains("结束记录"), "调试记录：重开后读取最近文件并保留有序状态变化");
+File.Delete(recording.Snapshot.Path!);
+Directory.Delete(recordingDirectory);
 Console.WriteLine($"{count} automation checks passed.");
 
 sealed class FollowFixture : IDisposable

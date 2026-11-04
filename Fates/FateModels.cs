@@ -15,8 +15,10 @@ internal sealed record FateObservation(ushort Id, DateTimeOffset? Started, DateT
     Vector2? MapPosition = null);
 internal sealed record FateRecord(ushort Id, DateTimeOffset Appeared, DateTimeOffset? Ends, byte Progress,
     FateActivity Activity, DateTimeOffset LastSeen, bool Active, bool Manual, bool Crowdsourced = false);
+internal sealed record ElementalMapPoint(uint Territory, uint MapId, Vector2 Position, DateTimeOffset LastSeen, bool Visible = false);
 internal sealed record FateMapSnapshot(uint CurrentTerritory, Vector2? PlayerMapPosition, IReadOnlyDictionary<ushort, FateRecord> Records, string Status,
-    uint RoomId = 0, string? CrowdsourceStatus = null, FateNotificationSettings? Notifications = null, string? NotificationStatus = null);
+    uint RoomId = 0, string? CrowdsourceStatus = null, FateNotificationSettings? Notifications = null, string? NotificationStatus = null,
+    IReadOnlyList<ElementalMapPoint>? Elementals = null);
 
 internal interface IFateMapProvider
 {

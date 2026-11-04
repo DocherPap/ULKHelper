@@ -19,6 +19,19 @@ internal sealed class DebugTestsPage(IAutomationHelpers helpers, SettingsStore? 
         ImGui.SameLine();
         if (ImGui.Button("复制测试报告")) ImGui.SetClipboardText(Report(test, state));
         ImGui.TextDisabled("测试会自动采集现场，也可手动读取；报告只复制到剪贴板，不自动发送。");
+        var recording = helpers.Recording;
+        ImGui.BeginDisabled(recording.Saving);
+        if (ImGui.Button(recording.Active ? "结束并保存记录" : "开始记录")) helpers.RecordDebug(!recording.Active);
+        ImGui.EndDisabled();
+        ImGui.SameLine();
+        ImGui.BeginDisabled(recording.Text == null);
+        if (ImGui.Button("复制最近记录")) ImGui.SetClipboardText(recording.Text!);
+        ImGui.EndDisabled();
+        ImGui.SameLine();
+        ImGui.BeginDisabled(recording.Path == null);
+        if (ImGui.Button("复制记录文件路径")) ImGui.SetClipboardText(recording.Path!);
+        ImGui.EndDisabled();
+        ImGui.TextWrapped(recording.Status);
         if (ImGui.Button("停止测试及本插件移动")) { helpers.StopDebug(); helpers.Stop(); }
         ImGui.Separator();
         ImGui.TextWrapped("测试结果：" + test.Status);

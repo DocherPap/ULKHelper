@@ -65,7 +65,7 @@ internal static class AutoTriggerChecks
             return f.Mesh.Current.Count > 0 ? state with { Position = f.Mesh.Last } : state;
         }
 
-        TriggerFrame Survey(Fixture f, TriggerFrame state, ref int tick)
+        TriggerFrame StartPull(Fixture f, TriggerFrame state, ref int tick)
         {
             for (var i = 0; i < 80 && f.Helper.Active && f.Combat.TargetId == 0; i++)
                 state = Step(f, state, ref tick);
@@ -101,17 +101,59 @@ internal static class AutoTriggerChecks
         using (var f = New())
         {
             var tick = 0;
+            var mob = new TriggerMob(321, 1332, new(5, 0, 0), false, false);
+            var away = frame with { Position = new(-30, 0, 0), Mobs = [mob], CanMountForTravel = true };
+            f.Helper.Start([plan], away, 1, 1, time);
+            Step(f, away, ref tick);
+            check(f.Mount.Mounts == 1 && f.Mesh.Moves == 0, "普通触发：脱战行程先召唤坐骑");
+            var mounted = away with { Mounted = true };
+            for (var i = 0; i < 4; i++) mounted = Step(f, mounted, ref tick);
+            check(f.Mesh.Moves == 1 && f.Mount.Dismounts == 1 && !f.Combat.Enabled,
+                "普通触发：骑乘到点后先下坐骑，再准备拉怪");
+            Step(f, mounted with { Mounted = false }, ref tick);
+            check(f.Combat.Enabled && f.Combat.TargetId == mob.Id, "普通触发：确认下坐骑后开始拉怪");
+        }
+        using (var f = New())
+        {
+            var tick = 0;
             var away = frame with { Position = new(-30, 0, 0) };
             f.Helper.Start([plan], away, 1, 1, time);
             for (var i = 0; i < 3; i++) Step(f, away, ref tick);
             check(f.Mesh.Current.Count > 0, "普通触发：已发出前往中心的路线");
             Step(f, frame with { Position = new(4, 12, 0) }, ref tick);
             check(f.Helper.Active && f.Mesh.Current.Count == 0, "普通触发：水平5米内忽略高度差并结束本段");
-            for (var i = 0; i < 2; i++) Step(f, away, ref tick);
-            check(f.Mesh.Current.Count > 0, "普通触发：已发出下一段巡查路线");
+            f.Helper.Tick(frame, time.AddSeconds(20));
+            check(f.Helper.Active && f.Mesh.Moves == 1 && f.Helper.Status.Contains("等待刷新"), "普通触发：无怪时原地等待，不重跑路线");
+        }
+        using (var f = New())
+        {
+            var tick = 0;
+            var mob = new TriggerMob(321, 1332, Vector3.Zero, false, false);
+            var away = frame with { Position = new(-30, 0, 0), Mobs = [mob] };
+            f.Helper.Start([plan], away, 1, 1, time);
+            for (var i = 0; i < 3; i++) Step(f, away, ref tick);
             f.Mesh.Current.Clear();
             Step(f, away, ref tick);
-            check(f.Helper.Active, "普通触发：已发出的路线提前结束后继续巡查");
+            check(f.Helper.Active && f.Combat.TargetId == mob.Id && f.Mesh.Moves == 1, "普通触发：路线提前结束后直接拉怪");
+        }
+        using (var f = New())
+        {
+            var tick = 0;
+            var first = new TriggerMob(501, 1332, new(5, 0, 0), false, false, Hp: 100);
+            var other = new TriggerMob(502, 1332, new(8, 0, 0), false, false, Hp: 100);
+            var loaded = frame with { Mobs = [first, other] };
+            f.Helper.Start([plan], loaded, 10, 1, time);
+            loaded = StartPull(f, loaded, ref tick);
+            var far = loaded with { Position = new(40, 0, 0), InCombat = true, Mobs = [first with { Aggro = true }, other] };
+            Step(f, far, ref tick);
+            Step(f, far, ref tick);
+            check(f.Combat.Fighting && f.Combat.TargetId == first.Id, "普通触发：本波没有附近目标时提前进入击杀");
+            var clear = far with { InCombat = false, Mobs = [first with { Dead = true }, other] };
+            for (var i = 0; i < 4; i++) Step(f, clear, ref tick);
+            check(f.Mesh.Current.Count > 0 && f.Mesh.Last == other.Position, "普通触发：脱战后直达较远的匹配怪");
+            Step(f, clear with { Position = new(35, 0, 0) }, ref tick);
+            check(f.Mesh.Current.Count == 0 && f.Combat.TargetId == other.Id && !f.Combat.Fighting,
+                "普通触发：接近途中发现可拉目标即停并开始下一波");
         }
         using (var f = New())
         {
@@ -134,13 +176,13 @@ internal static class AutoTriggerChecks
             f.Helper.Start([plan], loaded, 10, 1, time);
             loaded = Step(f, loaded, ref tick);
             loaded = Step(f, loaded, ref tick);
-            check(f.Mesh.Last == Vector3.Zero && f.Combat.TargetId == 0, "普通触发：先前往FATE中心，巡查途中不开循环");
-            loaded = Survey(f, loaded, ref tick);
-            check(f.Mesh.Moves == 9 && f.Combat.Enabled && f.Combat.Approach && !f.Combat.Fighting,
-                "普通触发：中心及八点巡查完成后开启BMR和Manual");
+            check(f.Mesh.Last == Vector3.Zero && f.Combat.TargetId == 0, "普通触发：先前往FATE中心，前往中心途中不开循环");
+            loaded = StartPull(f, loaded, ref tick);
+            check(f.Mesh.Moves == 1 && f.Combat.Enabled && f.Combat.Approach && !f.Combat.Fighting,
+                "普通触发：到达中心后直接开启BMR和Manual");
             foreach (var size in new[] { 8, 8, 9 }) loaded = RunWave(f, loaded, size, ref tick);
-            check(loaded.Mobs.All(m => m.Dead) && !f.Combat.Enabled && f.Mesh.Moves == 9,
-                "普通触发：同位置多个对象也分别入波，三波之间不重跑巡查");
+            check(loaded.Mobs.All(m => m.Dead) && !f.Combat.Enabled && f.Mesh.Moves == 1,
+                "普通触发：同位置多个对象也分别入波，三波之间不追加路线");
             Step(f, loaded with { ActiveFates = new HashSet<ushort> { 1332 } }, ref tick);
             check(!f.Helper.Active && f.Combat.Ends == 1 && f.Helper.Status.Contains("待机"),
                 "触发：发现目标FATE后结束且恢复插件设置");
@@ -151,7 +193,7 @@ internal static class AutoTriggerChecks
             var loaded = frame with { Mobs = Enumerable.Range(1, 50)
                 .Select(i => new TriggerMob((ulong)i, 1332, new(3,0,0), false, false, Hp: (uint)i)).ToArray() };
             f.Helper.Start([plan], loaded, 20, 1, time);
-            loaded = Survey(f, loaded, ref tick);
+            loaded = StartPull(f, loaded, ref tick);
             foreach (var size in new[] { 16, 17, 17 }) loaded = RunWave(f, loaded, size, ref tick);
             check(!f.Helper.Active && !f.Combat.Enabled && f.Combat.Ends == 1 && f.Helper.Status.Contains("达到放弃数量"),
                 "触发：累计50个仇恨目标活到死，达到放弃数量后停止");
@@ -162,13 +204,30 @@ internal static class AutoTriggerChecks
             var first = new TriggerMob(321, 1332, new(20,0,0), false, false);
             var later = new TriggerMob(322, 1332, new(25,0,0), false, false, Hp: 100);
             var ignored = new TriggerMob(323, 1332, new(26,0,0), false, false, Engaged: true);
-            var loaded = frame with { Mobs = [first] };
+            var loaded = frame;
             f.Helper.Start([plan], loaded, 10, 1, time);
             for (var i = 0; i < 7; i++) loaded = Step(f, loaded, ref tick);
-            loaded = Survey(f, loaded with { Mobs = [first, later, ignored] }, ref tick);
+            loaded = StartPull(f, loaded with { Mobs = [first, later, ignored] }, ref tick);
             loaded = RunWave(f, loaded, 2, ref tick);
             check(loaded.Mobs.Count(m => m.Dead) == 2 && !loaded.Mobs.Single(m => m.Id == ignored.Id).Dead,
-                "普通触发：巡查中新增怪进入缓存，其他人已交战的怪不入波");
+                "普通触发：等待中新出现的怪进入缓存，其他人已交战的怪不入波");
+        }
+        using (var f = New())
+        {
+            var tick = 0;
+            var first = new TriggerMob(401, 1332, new(5, 0, 0), false, false, Hp: 100);
+            var blocked = new TriggerMob(402, 1332, new(10, 0, 0), false, false, Hp: 100);
+            var next = new TriggerMob(403, 1332, new(15, 0, 0), false, false, Hp: 100);
+            var loaded = frame with { Mobs = [first, blocked, next] };
+            f.Helper.Start([plan], loaded, 10, 1, time);
+            loaded = StartPull(f, loaded, ref tick);
+            var pulling = loaded with { InCombat = true, Mobs = [first with { Aggro = true }, blocked, next] };
+            Step(f, pulling, ref tick);
+            check(f.Combat.TargetId == blocked.Id, "触发：建立仇恨后选中下一个近目标");
+            f.Helper.Tick(pulling, time.AddSeconds(8));
+            check(f.Helper.Active && f.Helper.Status.Contains("跳过拉怪无进展"), "触发：目标未接近且血量未下降时跳过");
+            f.Helper.Tick(pulling, time.AddSeconds(9));
+            check(f.Combat.TargetId == next.Id && !f.Combat.Fighting, "触发：跳过卡住目标后继续本波拉怪");
         }
         using (var f = New())
         {
@@ -176,7 +235,7 @@ internal static class AutoTriggerChecks
             var mob = new TriggerMob(321, 1332, new(20,0,0), false, false);
             var loaded = frame with { Mobs = [mob] };
             f.Helper.Start([plan], loaded, 1, 1, time);
-            loaded = Survey(f, loaded, ref tick);
+            loaded = StartPull(f, loaded, ref tick);
             loaded = Step(f, loaded with { Mobs = [] }, ref tick);
             check(f.Helper.Status.Contains("击杀 0/50"), "触发：对象卸载不计击杀");
             f.Helper.Stop();
@@ -257,7 +316,7 @@ internal static class AutoTriggerChecks
         public List<bool> Modes=[];
         public string? BeginTrigger(bool needsApproach){Begins++;return null;}
         public void EndTrigger(){Ends++;}
-        public bool PrepareTarget(ulong id,bool fighting){Modes.Add(fighting);Fighting=fighting;return Target(id);}
+        public bool PrepareTarget(ulong id,bool fighting,IReadOnlyList<ulong>? eligible=null){Modes.Add(fighting);Fighting=fighting;return Target(id);}
         public string? PrepareStart(){Prepares++;return null;}
         public bool Target(ulong id){TargetId=id;return true;}
         public bool EnableStationary(){Enables++;return Enabled=true;}

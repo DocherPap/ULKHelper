@@ -1,0 +1,15 @@
+D:\project\ULKHelper\tools\SettingsTests\bin\Debug\net10.0-windows\SettingsTests.exe
+D:\project\ULKHelper\tools\SettingsTests\bin\Debug\net10.0-windows\SettingsTests.deps.json
+D:\project\ULKHelper\tools\SettingsTests\bin\Debug\net10.0-windows\SettingsTests.runtimeconfig.json
+D:\project\ULKHelper\tools\SettingsTests\bin\Debug\net10.0-windows\SettingsTests.dll
+D:\project\ULKHelper\tools\SettingsTests\bin\Debug\net10.0-windows\SettingsTests.pdb
+D:\project\ULKHelper\tools\SettingsTests\obj\Debug\net10.0-windows\SettingsTests.GeneratedMSBuildEditorConfig.editorconfig
+D:\project\ULKHelper\tools\SettingsTests\obj\Debug\net10.0-windows\SettingsTests.AssemblyInfoInputs.cache
+D:\project\ULKHelper\tools\SettingsTests\obj\Debug\net10.0-windows\SettingsTests.AssemblyInfo.cs
+D:\project\ULKHelper\tools\SettingsTests\obj\Debug\net10.0-windows\SettingsTests.csproj.CoreCompileInputs.cache
+D:\project\ULKHelper\tools\SettingsTests\obj\Debug\net10.0-windows\SettingsTests.sourcelink.json
+D:\project\ULKHelper\tools\SettingsTests\obj\Debug\net10.0-windows\SettingsTests.dll
+D:\project\ULKHelper\tools\SettingsTests\obj\Debug\net10.0-windows\refint\SettingsTests.dll
+D:\project\ULKHelper\tools\SettingsTests\obj\Debug\net10.0-windows\SettingsTests.pdb
+D:\project\ULKHelper\tools\SettingsTests\obj\Debug\net10.0-windows\SettingsTests.genruntimeconfig.cache
+D:\project\ULKHelper\tools\SettingsTests\obj\Debug\net10.0-windows\ref\SettingsTests.dll

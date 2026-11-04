@@ -1,0 +1,30 @@
+{
+  "statistics.byJob": false,
+  "statistics.overall": false,
+  "statistics.jobs": [
+    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "statistics.categories": [
+    true,
+    true,
+    true,
+    true
+  ],
+  "weather.countIndex": 0,
+  "weather.utc": false,
+  "layout.tables": "[Table][0xCE17E4A5,3]\nColumn 0  Weight=21.5088\nColumn 1  Weight=50.4815\nColumn 2  Weight=28.0096\n\n"
+}

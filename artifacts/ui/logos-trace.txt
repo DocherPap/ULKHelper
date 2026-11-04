@@ -1,0 +1,17 @@
+frame 0 start
+frame 0 end
+frame 1 start
+frame 0 start
+newframe ok
+frame 0 end
+frame 1 start
+newframe ok
+frame 0 start
+newframe ok
+window ok
+tab next
+frame 0 end
+frame 1 start
+newframe ok
+window ok
+tab next

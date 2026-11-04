@@ -1,0 +1,140 @@
+# 外部调用指引
+
+通过 HTTP 请求订阅指定区域，再从返回的 JSON 地址读取各事件最近一次已观测发生时间。接口支持浏览器跨域访问，所有时间戳均为 UTC Unix 秒。
+
+> [!WARNING]
+> 请不要使用 WebSocket 直接对网站建立连接，会被我方认为是资源滥用。
+> 如有更多开发需求请通过 GitHub 联系。
+
+## 订阅区域
+
+向 `https://ce-crowdsource.atmoomen.top/v1/subscriptions` 发送 `POST` 请求，使用 `Content-Type: application/json`。每次请求支持同一大区的 1～32 个实例与区域组合。
+
+```json
+{
+  "dataCenterID": 101,
+  "instances": [
+    { "instanceID": 123456, "territoryID": 1252 }
+  ]
+}
+```
+
+成功订阅的返回格式如下：
+
+```json
+{
+  "dataCenterID": 101,
+  "serverTime": 1788825600,
+  "subscriptions": [
+    {
+      "instanceID": 123456,
+      "territoryID": 1252,
+      "snapshotURL": "https://ce-data.atmoomen.top/v1/events/101/123456/1252.json.js?revision=9efbf972-a6e2-4014-af55-cbe1dd318554",
+      "revision": "9efbf972-a6e2-4014-af55-cbe1dd318554",
+      "expiresAt": 1788827400,
+      "renewAfter": 1788826500
+    }
+  ]
+}
+```
+
+单次订阅有效期为 30 分钟，到达 `renewAfter` 后需用相同请求续订。同一区域的发布有效期由所有调用方共享：若提前重复调用，则沿用当前有效期。停止续订后，数据更新在有效期结束时暂停，再次发起订阅会准备最新数据。返回的地址可以持续复用。
+
+## 读取数据
+
+向响应提供的 `snapshotURL` 发送 `GET` 请求，两次读取间隔不要短于 30 秒。事件发生变化后，快照会立刻刷新内容，CDN 缓存有效期为 30 秒。
+
+```json
+{
+  "schemaVersion": 1,
+  "dataCenterID": 101,
+  "instanceID": 123456,
+  "territoryID": 1252,
+  "instanceEpoch": 1,
+  "tracks": [
+    {
+      "trackID": "SouthHorn-1",
+      "events": [
+        { "eventType": "CE", "eventID": 33, "lastSpawnedAt": 1788825500 },
+        { "eventType": "CE", "eventID": 34, "lastSpawnedAt": null }
+      ]
+    }
+  ],
+  "revision": "9efbf972-a6e2-4014-af55-cbe1dd318554",
+  "updatedAt": 1788825600
+}
+```
+
+主要字段如下：
+
+| 字段 | 说明 |
+| --- | --- |
+| `tracks` | 实例轨迹列表，每项包含 `trackID` 与 `events`。 |
+| `events` | 该区域目录中的全部事件，每项包含 `eventType`、`eventID` 与 `lastSpawnedAt`。 |
+| `instanceEpoch` | 服务端识别的实例代次。 |
+| `revision` | 用于判断内容变化的版本标识。 |
+| `updatedAt` | 快照内容的更新时间。 |
+
+`eventType` 为 `CE` 或 `FATE`。`lastSpawnedAt: null` 表示该轨迹尚待观测到对应事件。可结合事件类型与 ID 在目录中查询名称和图标。
+
+实例 ID 回收复用时，`tracks` 可能包含多个候选实例轨迹，其分组与页面一致，使用 `trackID` 分别展示或选择各组记录。
+
+> [!WARNING]
+> 不建议开发者对“实例 ID 回收复用”这一情况做特殊处理，因为它很可能源于错误的数据上报，永远仅取最新的 track 即可。
+
+空 `tracks` 表示当前区域的记录已清理，或该实例在此区域尚待上报。
+
+快照记录每个事件最近一次已观测发生时间：
+
+- 新的发生记录、实例轨迹变化和记录清理会更新内容，阶段变化及重复报告沿用已有快照。
+- 实例状态按 24 小时接收记录保留窗口清理，到期后的旧读取地址仍可能返回保留的 JSON。
+- 使用数据时应同时遵守订阅响应中的 `expiresAt`。
+
+## JavaScript 示例
+
+以下函数在需要续订时更新有效期，然后读取区域数据，可从应用的刷新任务中每 30 秒调用一次。示例使用本机时间判断续订，应用可结合响应中的 `serverTime` 校准时间。
+
+```javascript
+const target = {
+  dataCenterID: 101,
+  instances: [{ instanceID: 123456, territoryID: 1252 }]
+};
+let subscription;
+
+async function readEvents() {
+  if (!subscription || Date.now() / 1000 >= subscription.renewAfter) {
+    const response = await fetch("https://ce-crowdsource.atmoomen.top/v1/subscriptions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(target)
+    });
+    if (!response.ok) throw new Error(await response.text());
+    subscription = (await response.json()).subscriptions[0];
+  }
+
+  const response = await fetch(subscription.snapshotURL, { cache: "no-cache" });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+```
+
+浏览器请求使用 `cache: "no-cache"` 重新验证本地缓存；路径以 `.json.js` 结尾，响应内容类型为 `application/json`。
+
+## 请求限制与错误处理
+
+订阅接口按来源 IP 在边缘限制每分钟 10 次请求，每个 DC 最多同时启用 64 个区域。持续读取使用 `snapshotURL`，订阅请求可合并同一 DC 的多个区域。批量请求中的实例应为页面近期观测到的实例。
+
+| HTTP 状态 | 处理方式 |
+| --- | --- |
+| `400` | 检查 DC、实例与区域参数、重复组合和 JSON 格式。 |
+| `404` | 指定实例的近期记录尚待上报，请确认实例 ID 后稍后重试。 |
+| `413` | 请求体超过 4 KiB，请缩小批次。 |
+| `429` | 按响应的 `Retry-After` 等待后重试。 |
+| `503` | 快照准备或服务暂时失败，按 `Retry-After` 等待后重试。 |
+
+发生错误时使用退避重试，并在订阅到期后重新建立有效订阅再使用数据。浏览器调用采用公开接口，上传观察报告所使用的凭证由报告客户端独立管理。
+
+## 额外说明
+
+如果你是 Dalamud 开发者，此处的“Instance ID”不等于游戏的“Instance”概念，游戏的“Instance ID”主要用于“拥挤区域分线”。本服务所说的“Instance ID”在游戏中对应的概念为“Zone Server ID”，为“Zone Init”数据包内的“Server ID”（ushort，高位）和“Instance ID”（ushort，低位）拼接而成的一个 uint 数值。
+

@@ -1,0 +1,26 @@
+[
+  {
+    "Author": "DocherPap",
+    "Name": "优雷卡助手",
+    "InternalName": "ULKHelper",
+    "AssemblyVersion": "0.1.1.0",
+    "Changelog": "0.1.1：恢复自动化，新增第五页单人调试及现场报告；修复岛内以太之光识别，常风水晶交互、菜单选择与传送落地已实测通过。",
+    "Description": "优雷卡装备与材料统计、四岛天气及地图。进岛查询一次众包发生历史，显示 FATE 触发小怪、刷新和天气倒计时，支持可选频道出现通知；另有玩家列表、车头监听及手动 vnavmesh 导航 helper。",
+    "Punchline": "优雷卡装备与材料速览、便捷工具（开发中）",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "Tags": [
+      "eureka",
+      "优雷卡"
+    ],
+    "IsTestingExclusive": false,
+    "RepoUrl": "https://github.com/DocherPap/ULKHelper",
+    "DownloadLinkUpdate": "https://github.com/DocherPap/ULKHelper/releases/download/v0.1.1/ULKHelper-0.1.1.0.zip",
+    "DownloadLinkInstall": "https://github.com/DocherPap/ULKHelper/releases/download/v0.1.1/ULKHelper-0.1.1.0.zip",
+    "IsHide": false,
+    "LastUpdate": 1793704571
+  }
+]

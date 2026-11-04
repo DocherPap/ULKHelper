@@ -1,0 +1,46 @@
+[
+  {
+    "Author": "DocherPap",
+    "Name": "MakoMaster",
+    "InternalName": "MakoMaster",
+    "AssemblyVersion": "2.1.18.0",
+    "Description": "魔光键影自动输入与持续循环。启动时尝试切换中文输入法，运行中维护小游戏输入框焦点，停止后解除；护盾与读条优先，危险技能暂停，诊断日志默认关闭。",
+    "Punchline": "魔光键影自动输入与循环游玩",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "Changelog": "2.1.18：移除“输入法已安装词库”选项，统一使用整词输入及保留拼音翻页选字流程。",
+    "IsTestingExclusive": false,
+    "LastUpdate": 1793329617,
+    "RepoUrl": "https://github.com/DocherPap/MakoMaster",
+    "IsHide": false,
+    "DownloadLinkInstall": "https://raw.githubusercontent.com/DocherPap/MakoMaster/main/dist/MakoMaster-2.1.18.0.zip",
+    "DownloadLinkUpdate": "https://raw.githubusercontent.com/DocherPap/MakoMaster/main/dist/MakoMaster-2.1.18.0.zip"
+  },
+  {
+    "Author": "DocherPap",
+    "Name": "优雷卡助手",
+    "InternalName": "ULKHelper",
+    "AssemblyVersion": "0.1.1.0",
+    "Changelog": "0.1.1：恢复自动化，新增第五页单人调试及现场报告；修复岛内以太之光识别，常风水晶交互、菜单选择与传送落地已实测通过。",
+    "Description": "优雷卡装备与材料统计、四岛天气及地图。进岛查询一次众包发生历史，显示 FATE 触发小怪、刷新和天气倒计时，支持可选频道出现通知；另有玩家列表、车头监听及手动 vnavmesh 导航 helper。",
+    "Punchline": "优雷卡装备与材料速览、便捷工具（开发中）",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "Tags": [
+      "eureka",
+      "优雷卡"
+    ],
+    "IsTestingExclusive": false,
+    "RepoUrl": "https://github.com/DocherPap/ULKHelper",
+    "DownloadLinkUpdate": "https://github.com/DocherPap/ULKHelper/releases/download/v0.1.1/ULKHelper-0.1.1.0.zip",
+    "DownloadLinkInstall": "https://github.com/DocherPap/ULKHelper/releases/download/v0.1.1/ULKHelper-0.1.1.0.zip",
+    "IsHide": false,
+    "LastUpdate": 1793704571
+  }
+]

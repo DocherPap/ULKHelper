@@ -222,6 +222,14 @@ kills.Observe(732,[Npc(8,true)],new HashSet<ushort>(),now.AddSeconds(10));
 Check(kills.Snapshot.Single().Count == 2, "采样中断超过2秒不把旧存活快照推断成击杀");
 kills.Observe(763,[Npc(8,true)],new HashSet<ushort>(),now.AddSeconds(11));
 Check(kills.Snapshot.Count == 0, "切岛清空击杀与生命状态，旧尸体不计入新岛");
+Check(TriggerMobCatalog.ElementalLevel(8)==8,"现场回归：鸟妖使用Foray元素等级8，普通等级70不参与匹配");
+Check(TriggerMobCatalog.ElementalLevel(null)==null && TriggerMobCatalog.ElementalLevel(0)==null && TriggerMobCatalog.ElementalLevel(70)==null,"未知元素等级不回退为普通战斗等级70");
+var birdRule=mobRules.Single(r=>r.FateId==1333);
+Check(birdRule.Level==8 && birdRule.NameIds.Contains(6822),"现场NameId6822精确匹配8级常风哈佩亚鸟妖");
+var birdLedger=new TriggerKillLedger([birdRule]);
+birdLedger.Observe(732,[new TriggerNpcLife(99,6822,TriggerMobCatalog.ElementalLevel(8)!.Value,false)],new HashSet<ushort>(),now);
+birdLedger.Observe(732,[new TriggerNpcLife(99,6822,8,true)],new HashSet<ushort>(),now.AddMilliseconds(250));
+Check(birdLedger.Snapshot.Single().Count==1,"现场回归：鸟妖按元素等级记录击杀");
 Console.WriteLine($"{count} FATE/map checks passed.");
 
 sealed class SubscriptionHandler : HttpMessageHandler

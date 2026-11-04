@@ -21,6 +21,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly AutomationHelpers automation;
     private readonly FateMapTracker fateTracker;
     private readonly Logos.LogosService logos = new();
+    private readonly Logos.LogosInventoryReader logosInventory;
     private bool disposed;
     private readonly SettingsStore settings;
 
@@ -30,6 +31,8 @@ public sealed class Plugin : IDalamudPlugin
         IFateTable fates, ICondition conditions, IChatGui chat, ITextureProvider textures, ISigScanner scanner, IPartyList party,
         IGameInteropProvider interop, ITargetManager targets)
     {
+        log.Information("ULKHelper构建：{Build}；加载路径：{Path}", typeof(Plugin).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute),false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "未知",typeof(Plugin).Assembly.Location);
         this.pluginInterface = pluginInterface;
         this.commandManager = commandManager;
         settings = new(Path.Combine(pluginInterface.GetPluginConfigDirectory(), "settings.json"), ex => log.Warning(ex, "保存或读取设置失败"));
@@ -43,8 +46,9 @@ public sealed class Plugin : IDalamudPlugin
             weatherError = "读取天气数据失败，请检查本机游戏数据并重新加载插件。";
             log.Error(ex, "加载优雷卡天气表失败");
         }
+        logosInventory=new(framework,objects,playerState,gameGui,logos.Catalog);
         fateTracker = new(dataManager, framework, clientState, objects, fates, gameGui, log, scanner, playerState, chat, settings);
-        mainWindow = new(inventoryTracker, automation, weatherZones, fateTracker, new GameMapTextures(textures), weatherError, settings, new LogosPage(dataManager, objects, logos, settings));
+        mainWindow = new(inventoryTracker, automation, weatherZones, fateTracker, new GameMapTextures(textures), weatherError, settings, new LogosPage(id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText(), id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>()!.GetRow(id).Name.ExtractText(), () => objects.LocalPlayer is {} player ? new LogosWorld(player.CurrentWorld.RowId,player.CurrentWorld.Value.Name.ExtractText(),player.CurrentWorld.Value.DataCenter.Value.Name.ExtractText()) : null, logos, settings,()=>logosInventory.Snapshot));
         windows.AddWindow(mainWindow);
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -72,6 +76,7 @@ public sealed class Plugin : IDalamudPlugin
         pluginInterface.UiBuilder.OpenMainUi -= OpenMainUi;
         commandManager.RemoveHandler(CommandName);
         windows.RemoveAllWindows();
+        logosInventory.Dispose();
         logos.Dispose();
         automation.Dispose();
         fateTracker.Dispose();

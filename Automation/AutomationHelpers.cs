@@ -143,6 +143,10 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
         var crystalObjects = player == null ? [] : objects.Where(o => o.ObjectKind is Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Aetheryte
             or Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventObj && Vector3.Distance(o.Position, player.Position) <= 15)
             .Select(o => $"{o.Name.TextValue} Kind={o.ObjectKind} BaseId={o.BaseId} 位置={o.Position} 3D距离={Vector3.Distance(o.Position, player.Position):0.0}m 2D距离={NavigationRules.Distance(o.Position, player.Position):0.0}m 可选中={o.IsTargetable}").ToArray();
+        var nearbyMobs = player == null ? [] : objects.OfType<Dalamud.Game.ClientState.Objects.Types.IBattleNpc>()
+            .Where(n=>n.MaxHp>0 && NavigationRules.Distance(n.Position,player.Position)<=80)
+            .OrderBy(n=>NavigationRules.Distance(n.Position,player.Position)).Take(20)
+            .Select(n=>$"{n.Name.TextValue} NameId={n.NameId} 普通Lv={n.Level} 元素Lv={EurekaNpcLevel.Read(n)?.ToString()??"未知"} 距离={NavigationRules.Distance(n.Position,player.Position):0.0} 目标={n.TargetObjectId} 可选中={n.IsTargetable}").ToArray();
         var selectedObject = targets.Target;
         var targetText = selectedObject == null ? "无" : $"{selectedObject.Name.TextValue} Kind={selectedObject.ObjectKind} BaseId={selectedObject.BaseId} 位置={selectedObject.Position} 可选中={selectedObject.IsTargetable}";
         var build = typeof(Plugin).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
@@ -152,7 +156,7 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
             + $"vnavmesh {navigationInfo}\n"
             + combat.DescribeState() + "\n"
             + $"当前绑定NM={follow.FateId} 传送测试={debug.Transferring}\n自动触发：{trigger.Status}\n已观测怪物区域={triggerReader.Areas.Count}\n"
-            + $"当前目标：{targetText}\n"
+            + $"当前目标：{targetText}\n附近小怪（80米内最多20只）：\n{string.Join("\n",nearbyMobs)}\n"
             + $"水晶路线：{navigation.CrystalDecision ?? "未规划"}\n近处水晶/事件对象：\n" + string.Join("\n", crystalObjects);
     }
     public void SelectLeader(PlayerIdentity identity) => commands.Enqueue(() => SetLeader(identity));
@@ -237,7 +241,7 @@ internal sealed class AutomationHelpers : IAutomationHelpers, IDisposable
             {
                 listener.Reset(); navigation.Stop("角色或地图变化，导航已停止。");
                 follow.Stop("角色或地图变化，已停止跟随。"); arrivalGame.Reset(); usingFollow = false;
-                trigger.Stop("切区或角色变化，触发已停止。"); triggerReader.Reset();
+                combat.ForgetMagia(); trigger.Stop("切区或角色变化，触发已停止。"); triggerReader.Reset();
                 roster.Reset();
                 kills.Reset(); nextKills = default;
                 if (debug.Active) debug.Stop("切区/角色变化，测试停止。", now);

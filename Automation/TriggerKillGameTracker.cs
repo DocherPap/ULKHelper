@@ -16,7 +16,8 @@ internal sealed class TriggerKillGameTracker(IObjectTable objects, IFateTable fa
         ledger ??= new(TriggerMobCatalog.Resolve(data.GetExcelSheet<Lumina.Excel.Sheets.BNpcName>()!
             .Select(n => (n.RowId, n.Singular.ExtractText()))));
         var lives = objects.OfType<IBattleNpc>().Where(n => n.Address != 0 && n.MaxHp > 0)
-            .Select(n => new TriggerNpcLife(n.GameObjectId, n.NameId, n.Level, n.IsDead || n.CurrentHp == 0)).ToArray();
+            .Select(n => (Npc:n,Level:EurekaNpcLevel.Read(n))).Where(p=>p.Level!=null)
+            .Select(p => new TriggerNpcLife(p.Npc.GameObjectId, p.Npc.NameId, p.Level!.Value, p.Npc.IsDead || p.Npc.CurrentHp == 0)).ToArray();
         var active = fates.Where(f => f != null && f.TerritoryType.RowId == territory
             && f.State is FateState.Preparing or FateState.Running or FateState.Ending).Select(f => f.FateId).ToHashSet();
         return ledger.Observe(territory, lives, active, now);

@@ -2,14 +2,18 @@ using System.Reflection;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
+if(args.FirstOrDefault()=="--logos-native"){
+ foreach(var t in typeof(InventoryManager).Assembly.GetTypes().Where(t=>t.Name.Contains("Logos")||t.Name.Contains("Eureka")||t.Name.Contains("Magia")))
+ {Console.WriteLine("TYPE "+t.FullName);foreach(var f in t.GetFields().Where(f=>!f.Name.Contains("Virtual")))Console.WriteLine(f);foreach(var p in t.GetProperties())Console.WriteLine(p);}
+ return;}
 if(args.FirstOrDefault()=="--magia-api"){
  foreach(var t in new[]{typeof(FFXIVClientStructs.FFXIV.Client.Game.Event.EventFramework),typeof(FFXIVClientStructs.FFXIV.Client.Game.InstanceContent.PublicContentEureka),typeof(FFXIVClientStructs.FFXIV.Client.Game.UI.UIState)})foreach(var m in t.GetMethods().Where(m=>m.Name.Contains("Instance")||m.Name.Contains("PublicContent")||m.Name.Contains("Eureka")))Console.WriteLine(t.Name+" "+m);return;}
 if (args.FirstOrDefault() == "--rsr-settings")
 {
  var dir=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"XIVLauncherCN/installedPlugins/RotationSolver/7.5.7.15");
- System.Runtime.Loader.AssemblyLoadContext.Default.Resolving += (_,n)=>File.Exists(Path.Combine(dir,n.Name+".dll"))?Assembly.LoadFrom(Path.Combine(dir,n.Name+".dll")):null;
+ System.Runtime.Loader.AssemblyLoadContext.Default.Resolving += (_,n)=>AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a=>a.GetName().Name==n.Name) ?? (File.Exists(Path.Combine(dir,n.Name+".dll"))?Assembly.LoadFrom(Path.Combine(dir,n.Name+".dll")):null);
  foreach(var file in Directory.GetFiles(dir,"*.dll").Where(f=>Path.GetFileName(f)=="RotationSolver.dll"))
- {var a=Assembly.LoadFrom(file);Type[] ts;try{ts=a.GetTypes();}catch(ReflectionTypeLoadException e){ts=e.Types.OfType<Type>().ToArray();}
+ {var a=Assembly.LoadFrom(file); Console.WriteLine("DIRECTSERVICE "+a.GetType("RotationSolver.Basic.Service",false));Type[] ts;try{ts=a.GetTypes();}catch(ReflectionTypeLoadException e){ts=e.Types.OfType<Type>().ToArray();}
  Console.WriteLine("SERVICES "+string.Join(",",ts.Where(t=>t.Name.Contains("Service")||t.Name.Contains("Svc")).Select(t=>t.FullName)));
  foreach(var t0 in ts.Where(t=>!t.FullName!.Contains("SourceGenerator"))) foreach(var f0 in t0.GetFields(BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic).Where(f=>f.FieldType.Name=="Configs"))Console.WriteLine("ROOT "+t0.FullName+" "+f0);
  foreach(var t0 in ts) foreach(var pp in t0.GetProperties(BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic).Where(p=>p.Name.Contains("Config")))Console.WriteLine("ROOTPROP "+t0.FullName+" "+pp);

@@ -35,6 +35,7 @@ internal sealed class MainWindow : Window
         this.settings = settings;
         debugTests = new(helpers, settings);
         selectedTab = Math.Clamp(settings?.Get("window.tab", 0) ?? 0, 0, 5);
+        if(settings?.Get("window.tabSchema",0)!=1 && selectedTab>=3)selectedTab=Math.Min(5,selectedTab+1);
         if (settings != null) { itemStatistics.Load(settings); weather.Load(settings); fateMap.Load(settings, "map"); triggerMap.Load(settings, "triggerMap"); automation.Load(settings); }
         Size = settings?.Get("window.size", new Vector2(1280, 780)) ?? new Vector2(1280, 780);
         SizeCondition = ImGuiCond.Once;
@@ -108,7 +109,7 @@ internal sealed class MainWindow : Window
             if (settings != null)
             {
                 itemStatistics.Save(settings); weather.Save(settings); fateMap.Save(settings, "map"); triggerMap.Save(settings, "triggerMap"); automation.Save(settings);
-                settings.Put("window.size", ImGui.GetWindowSize()); settings.Put("window.position", ImGui.GetWindowPos()); settings.Put("window.tab", selectedTab);
+                settings.Put("window.tabSchema",1); settings.Put("window.size", ImGui.GetWindowSize()); settings.Put("window.position", ImGui.GetWindowPos()); settings.Put("window.tab", selectedTab);
                 if (DateTimeOffset.UtcNow >= nextLayout || ImGui.IsMouseReleased(ImGuiMouseButton.Left)) { LayoutSettings.Capture(settings); nextLayout = DateTimeOffset.UtcNow.AddSeconds(1); }
                 settings.Flush();
             }

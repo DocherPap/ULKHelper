@@ -14,6 +14,9 @@ internal sealed class AutomationPage(IAutomationHelpers helpers, FateMapPage? ma
     public void Draw()
     {
         var state = helpers.Snapshot;
+        var build=typeof(AutomationPage).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute),false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion;
+        ImGui.TextDisabled("构建："+build);
         LayoutSettings.RememberTable("##AutomationMapLayout");
         if (!ImGui.BeginTable("##AutomationMapLayout", 2, ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV)) return;
         try

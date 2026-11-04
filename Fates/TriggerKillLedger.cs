@@ -9,6 +9,7 @@ internal sealed record TriggerKillEvent(DateTimeOffset Time, string Text, string
 
 internal static class TriggerMobCatalog
 {
+    public static byte? ElementalLevel(byte? level) => level is >=1 and <=65 ? level : null;
     public static IReadOnlyList<TriggerMobRule> Resolve(IEnumerable<(uint Id, string Name)> names)
     {
         var byName = names.Where(n => n.Id != 0 && n.Name.Length > 0).GroupBy(n => n.Name.Trim(), StringComparer.Ordinal)

@@ -24,7 +24,10 @@ internal sealed class TriggerGameReader(IObjectTable objects, IDataManager data)
     {
         var result = new List<TriggerMob>(); var localId = objects.LocalPlayer?.GameObjectId;
         foreach (var npc in objects.OfType<IBattleNpc>().Where(n => n.Address != 0 && n.MaxHp > 0))
-        foreach (var rule in Rules.Where(r => r.Territory == territory && r.Level == npc.Level && r.NameIds.Contains(npc.NameId)))
+        {
+        var elementalLevel=EurekaNpcLevel.Read(npc);
+        if(elementalLevel==null)continue;
+        foreach (var rule in Rules.Where(r => r.Territory == territory && r.Level == elementalLevel && r.NameIds.Contains(npc.NameId)))
         {
             var dead = npc.IsDead || npc.CurrentHp == 0;
             var aggro = localId != null && npc.TargetObjectId == localId;
@@ -32,6 +35,7 @@ internal sealed class TriggerGameReader(IObjectTable objects, IDataManager data)
             // Don't turn mobs pulled after the player into false spawn distributions.
             if (!dead && !((Character*)npc.Address)->InCombat && areas.Count < 4096)
                 areas[(rule.FateId, (int)MathF.Floor(npc.Position.X / 20), (int)MathF.Floor(npc.Position.Z / 20))] = new(rule.FateId, npc.Position);
+        }
         }
         return result;
     }

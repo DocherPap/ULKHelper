@@ -44,3 +44,7 @@ FATE出现或达到放弃数量后不再拉新怪；若已战斗，先处理本�
 4. 保存路线、模式和参数后重载插件，确认偏好还在且任务没有自动恢复。
 
 实际地图网格、职业循环能否主动攻击、仇恨建立/脱战和怪物重生均需游戏内反馈，不以编译或模拟通过代替。
+
+## trigger-fix.4现场纠错
+
+2026-11-03用户报告证明IBattleNpc.Level是普通战斗等级70，不能匹配优雷卡8级小怪。现统一从本机Character.GetForayInfo()->Level读取元素等级，用于名称/等级筛选、击杀统计与魔素比较；0/空指针或异常等级保持未知。源码接口参考 https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/Game/Character/Character.cs ，使用本机配套程序集编译，不硬编码国际服偏移。现场常风鸟妖NameId6822与规则8级已核对。

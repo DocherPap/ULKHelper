@@ -113,7 +113,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
         if (mesh.Busy || mesh.Route.Count > 0) { Stop("vnavmesh 正被其他任务使用。"); return; }
         var grounded = mesh.Ground(target, unknownHeight);
         if (grounded == null || !NavigationRules.Finite(grounded.Value) || NavigationRules.Distance(target, grounded.Value) > 5)
-        { Stop("无法在目的地找到可行走地面。"); return; }
+        { Stop($"无法在目的地找到可行走地面：目标={target}，查询结果={grounded}，未知高度={unknownHeight}。"); return; }
         target = grounded.Value;
         cancellation = new();
         path = mesh.FindPath(player, target, cancellation.Token);

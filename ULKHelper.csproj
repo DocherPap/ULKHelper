@@ -8,6 +8,7 @@
     <AssemblyName>ULKHelper</AssemblyName>
     <RootNamespace>ULKHelper</RootNamespace>
     <Version>0.1.1</Version>
+    <InformationalVersion>0.1.1-local.logos-ui.5</InformationalVersion>
     <AssemblyVersion>0.1.1.0</AssemblyVersion>
     <Deterministic>true</Deterministic>
     <PathMap>$(MSBuildProjectDirectory)=/_/ULKHelper</PathMap>

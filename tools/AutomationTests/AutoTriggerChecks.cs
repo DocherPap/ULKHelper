@@ -5,6 +5,12 @@ internal static class AutoTriggerChecks
 {
     public static void Run(Action<bool,string> check)
     {
+        check(AutoTriggerRules.AttackMagia(20,19,false) && AutoTriggerRules.AttackMagia(20,19,true),"魔素：低级怪所有职业5攻");
+        check(AutoTriggerRules.AttackMagia(20,22,true) && !AutoTriggerRules.AttackMagia(20,20,false),"魔素：同级至高2级坦克攻、其他防");
+        check(!AutoTriggerRules.AttackMagia(20,23,true) && !AutoTriggerRules.AttackMagia(20,23,false),"魔素：高3级全部5防");
+        var roughMesh=new Mesh{GroundTest=p=>p.X>1?p:null};
+        check(AutoTriggerRules.Ground(roughMesh,Vector3.Zero,false)!=null,"触发地面：原落点不可走时寻找5米内替代点");
+        check(AutoTriggerRules.Ground(new Mesh{GroundTest=p=>null},Vector3.Zero,false)==null,"触发地面：区域完全无网格时拒绝移动");
         check(AutoTriggerRules.Capacity(20,[19,18,1]) == 3, "触发：低等级允许3个");
         check(AutoTriggerRules.Capacity(20,[20]) == 2 && AutoTriggerRules.Capacity(20,[22]) == 2, "触发：同级至高2级允许2个");
         check(AutoTriggerRules.Capacity(20,[19,23]) == 1, "触发：混选取最严格限制");
@@ -50,6 +56,19 @@ internal static class AutoTriggerChecks
         }
         using(var f=New())
         {
+            var mob=new TriggerMob(321,1332,new(20,0,0),false,false);
+            var loaded=frame with{Mobs=[mob]};
+            f.Helper.Start([plan],frame,1,1,time);
+            f.Helper.Tick(loaded,time.AddMilliseconds(250));
+            check(f.Combat.TargetId==321,"普通触发：发现目标立即直接选中");
+            f.Helper.Tick(loaded,time.AddMilliseconds(500));
+            f.Helper.Tick(loaded,time.AddMilliseconds(750));
+            check(f.Combat.Enabled && f.Mesh.Current.Count>0,"普通触发：寻路尚未结束已启用Manual拉怪循环");
+            f.Helper.Tick(loaded with{Position=new(18,0,0)},time.AddMilliseconds(1000));
+            check(f.Combat.Enabled && f.Mesh.Current.Count==0,"普通触发：接近小怪后停止移动保持攻击");
+        }
+        using(var f=New())
+        {
             var mob=new TriggerMob(123,1332,new(3,0,0),false,false);
             var loaded=frame with{Mobs=[mob]};
             f.Helper.Start([plan],frame,1,1,time);
@@ -62,11 +81,15 @@ internal static class AutoTriggerChecks
             f.Helper.Tick(aggro,time.AddSeconds(1));
             f.Helper.Tick(aggro,time.AddMilliseconds(1250));
             check(f.Combat.Enabled && f.Mesh.Current.Count==0,"触发：达到批次上限停止移动原地击杀");
+            f.Helper.Tick(aggro with{Mobs=[mob with{Aggro=false}]},time.AddMilliseconds(1300));
+            check(f.Combat.Enabled,"普通触发：怪物短暂切换目标仍击杀已拉到的小怪");
             f.Helper.Tick(frame with{Mobs=[mob with{Dead=true,Aggro=true}]},time.AddMilliseconds(1500));
             f.Helper.Tick(frame,time.AddMilliseconds(1750));
             check(f.Helper.Status.Contains("击杀 1/50"),"触发：仅计已拉怪活到死转换");
             f.Helper.Stop();
             check(!f.Combat.Enabled && !f.Helper.Active,"触发：手动停止清理自有控制");
+            check(f.Combat.Begins==1 && f.Combat.Ends>=1,"触发：开始快照与结束还原接口配对");
+            check(f.Combat.Modes.Contains(false) && f.Combat.Modes.Contains(true),"触发：向配置适配器传递拉怪与击杀两个阶段");
         }
         using(var f=New())
         {
@@ -143,7 +166,8 @@ internal static class AutoTriggerChecks
     {
         public bool Ready=>true; public bool Busy=>false; public List<Vector3> Current=[];
         public IReadOnlyList<Vector3> Route=>Current; public int Moves; public Vector3 Last;
-        public Vector3? Ground(Vector3 position,bool unknownHeight)=>position;
+        public Func<Vector3,Vector3?> GroundTest=p=>p;
+        public Vector3? Ground(Vector3 position,bool unknownHeight)=>GroundTest(position);
         public Task<List<Vector3>> FindPath(Vector3 from,Vector3 to,CancellationToken cancellation) {Last=to;return Task.FromResult(new List<Vector3>{to});}
         public void Move(List<Vector3> route){Moves++;Current=route;}
         public void Stop()=>Current.Clear();
@@ -156,7 +180,11 @@ internal static class AutoTriggerChecks
     }
     private sealed class Combat : ITriggerCombat
     {
-        public int Prepares,Enables; public ulong TargetId; public bool Enabled;
+        public int Prepares,Enables,Begins,Ends; public ulong TargetId; public bool Enabled;
+        public List<bool> Modes=[];
+        public string? BeginTrigger(){Begins++;return null;}
+        public void EndTrigger(){Ends++;}
+        public bool PrepareTarget(ulong id,bool fighting){Modes.Add(fighting);return Target(id);}
         public string? PrepareStart(){Prepares++;return null;}
         public bool Target(ulong id){TargetId=id;return true;}
         public bool EnableStationary(){Enables++;return Enabled=true;}

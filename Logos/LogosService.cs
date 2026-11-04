@@ -1,8 +1,5 @@
 using System.Net.Http;
 using System.Text.Json;
-using System.Reflection;
-using Lumina.Excel.Sheets;
-using Dalamud.Plugin.Services;
 
 namespace ULKHelper.Logos;
 internal sealed record LogosShard(uint Item, uint[] Mnemes);
@@ -22,7 +19,7 @@ internal sealed class LogosService : IDisposable
     private readonly HttpClient http = new() { Timeout=TimeSpan.FromSeconds(20) };
     private readonly CancellationTokenSource cancel = new();
     private Task<Dictionary<uint,LogosPrice>>? request;
-    private uint requestWorld, currentWorld;
+    private uint requestWorld;
     private DateTimeOffset nextRequest;
     public IReadOnlyDictionary<uint,LogosPrice> Prices { get; private set; } = new Dictionary<uint,LogosPrice>();
     public string Status { get; private set; } = "点击查询价格获取Universalis报价。";
@@ -30,7 +27,6 @@ internal sealed class LogosService : IDisposable
     public bool Busy => request != null;
     public void Poll(uint world)
     {
-        currentWorld = world;
         if (request != null && request.IsCompleted)
         {
             try { var result=request.GetAwaiter().GetResult(); if(requestWorld==world){Prices=result;Updated=DateTimeOffset.Now;Status="Universalis最低在售价；众包数据可能过期。";} }
@@ -42,7 +38,7 @@ internal sealed class LogosService : IDisposable
     public void Refresh(uint world)
     {
         if(world==0 || request!=null || DateTimeOffset.UtcNow<nextRequest)return;
-        requestWorld=currentWorld=world;nextRequest=DateTimeOffset.UtcNow.AddSeconds(30);Status="查询中…";
+        requestWorld=world;nextRequest=DateTimeOffset.UtcNow.AddSeconds(30);Status="查询中…";
         request=Fetch(world);
     }
     private async Task<Dictionary<uint,LogosPrice>> Fetch(uint world)
@@ -65,12 +61,19 @@ internal sealed class LogosService : IDisposable
         }
         return result;
     }
-    public double? Cost(uint[] recipe,int scope)
+    public uint[] MissingPrices(uint[] recipe,int scope) => recipe.Distinct().SelectMany(m=>
+    {
+        var sources=Catalog.Shards.Where(s=>s.Mnemes.Contains(m)).ToArray();
+        bool HasPrice(LogosShard s) {var p=Prices.GetValueOrDefault(s.Item);return (scope==0?p?.World:scope==1?p?.Dc:p?.Region)!=null;}
+        return sources.Any(HasPrice)?Array.Empty<uint>():sources.Select(s=>s.Item).ToArray();
+    }).Distinct().ToArray();
+    public double? Cost(uint[] recipe,int scope) => Cost(Catalog,Prices,recipe,scope);
+    internal static double? Cost(LogosCatalog catalog,IReadOnlyDictionary<uint,LogosPrice> prices,uint[] recipe,int scope)
     {
         double total=0;
         foreach(var mneme in recipe)
         {
-            var values=Catalog.Shards.Where(s=>s.Mnemes.Contains(mneme)).Select(s=>Prices.GetValueOrDefault(s.Item))
+            var values=catalog.Shards.Where(s=>s.Mnemes.Contains(mneme)).Select(s=>prices.GetValueOrDefault(s.Item))
                 .Where(p=>p!=null).Select(p=>scope==0?p!.World:scope==1?p!.Dc:p!.Region).Where(p=>p.HasValue).Select(p=>(double)p!.Value).ToArray();
             if(values.Length==0)return null;
             total+=values.Min();

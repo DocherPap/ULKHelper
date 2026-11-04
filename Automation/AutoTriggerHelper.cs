@@ -14,6 +14,7 @@ internal sealed record TriggerFrame(WorldContext World, Vector3 Position, bool S
     int? Level, IReadOnlyList<TriggerMob> Mobs, IReadOnlySet<ushort> ActiveFates);
 internal interface ITriggerCombat
 {
+    string? Error => null;
     string? BeginTrigger() => null;
     void EndTrigger() { }
     bool PrepareTarget(ulong id, bool fighting) => Target(id);
@@ -25,6 +26,20 @@ internal interface ITriggerCombat
 }
 internal static class AutoTriggerRules
 {
+    public static bool AttackMagia(int player,int mob,bool tank) => mob<player || mob<=player+2 && tank;
+    public static Vector3? Ground(INavigationMesh mesh,Vector3 point,bool unknownHeight)
+    {
+        for(var i=0;i<17;i++)
+        {
+            var radius=i==0?0:i<=8?2:4;
+            var angle=(i-1)%8*MathF.PI/4;
+            var sample=point+new Vector3(MathF.Cos(angle)*radius,0,MathF.Sin(angle)*radius);
+            var result=mesh.Ground(sample,unknownHeight);
+            if(result is {} p && NavigationRules.Finite(p) && NavigationRules.Distance(point,p)<=5
+                && (unknownHeight || Math.Abs(p.Y-point.Y)<=8))return p;
+        }
+        return null;
+    }
     public static int Capacity(int player, IEnumerable<int> levels) => levels.Select(level => level < player ? 3 : level <= player + 2 ? 2 : 1).DefaultIfEmpty(3).Min();
     public static TriggerMode DefaultMode(ushort id) => id is 1365 or 1402 or 1403 or 1404 or 1423 ? TriggerMode.Recorded : TriggerMode.Normal;
     // Fast open-path heuristic, not an exact travelling-salesman solution or navmesh travel-time estimate.
@@ -58,6 +73,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
     private readonly Queue<Vector3> waypoints = new();
     private readonly Queue<ulong> huntOrder = new();
     private bool scannedRing;
+    private int missedGround;
     private readonly HashSet<ushort> searchedKnown = [];
     private readonly HashSet<ushort> appeared = [];
     private WorldContext world;
@@ -82,7 +98,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         if (!mesh.Ready || mesh.Busy || mesh.Route.Count > 0) { Status = "导航网格未就绪或正在使用。"; return false; }
         var error = combat.BeginTrigger() ?? combat.PrepareStart();
         if (error != null) { combat.EndTrigger(); Status = error; return false; }
-        huntOrder.Clear(); appeared.Clear(); searchedKnown.Clear(); scannedRing = false; plans.Clear(); plans.AddRange(requested); kills.Clear(); seen.Clear(); pulled.Clear(); waypoints.Clear();
+        missedGround=0; huntOrder.Clear(); appeared.Clear(); searchedKnown.Clear(); scannedRing = false; plans.Clear(); plans.AddRange(requested); kills.Clear(); seen.Clear(); pulled.Clear(); waypoints.Clear();
         world = frame.World; started = phaseAt = now; actionAt = default; lastScan = default; attempts = 0; index = 0;
         pullLimit = batch == 21 ? int.MaxValue : Math.Clamp(batch, 1, 20);
         killLimit = maxKills == 7 ? int.MaxValue : Math.Clamp(maxKills, 1, 6) * 50;
@@ -102,15 +118,28 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
     }
     private bool Go(Vector3 point, TriggerFrame frame, DateTimeOffset now, bool unknownHeight = false)
     {
-        move.Start(new(world.Territory, world.Map, point, "触发路线"), world, frame.Position, [], now, false, unknownHeight: unknownHeight);
+        var grounded=AutoTriggerRules.Ground(mesh,point,unknownHeight);
+        if(grounded==null || !NavigationRules.Finite(grounded.Value) || NavigationRules.Distance(point,grounded.Value)>5)
+        {
+            if(unknownHeight && phase==Phase.Search)
+            {
+                if(++missedGround>=8)Stop($"巡查点连续8次无可行走地面，停止。最后位置={point}；玩家={frame.Position}");
+                else Status=$"跳过无路面巡查点 {point}（{missedGround}/8）";
+                return false;
+            }
+            Stop($"触发目标附近无可行走地面：目标={point}；玩家={frame.Position}；已知高度={!unknownHeight}");return false;
+        }
+        missedGround=0;
+        point=grounded.Value;
+        move.Start(new(world.Territory, world.Map, point, "触发路线"), world, frame.Position, [], now, false, arrivalRadius: 1, unknownHeight: false);
         walking = move.Active;
         if (!walking) Stop(move.Status);
         return walking;
     }
     private bool StartRotation(ulong id, bool fighting = false)
     {
-        if (!combat.PrepareTarget(id, fighting)) return false;
-        if (!rotation) { rotation = combat.EnableStationary(); if (!rotation) Stop("无法开启原地自动循环。"); }
+        if (!combat.PrepareTarget(id, fighting)) { Stop("准备攻击目标失败：" + (combat.Error ?? "目标不可用或战斗设置已变化。")); return false; }
+        if (!rotation) { rotation = combat.EnableStationary(); if (!rotation) Stop("无法开启自动循环：" + (combat.Error ?? "RSR未确认启用。")); }
         return rotation;
     }
     private bool EndRotation()
@@ -156,7 +185,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             if (phase == Phase.Fight)
             {
                 if (!Riding(false, frame, now)) return;
-                var enemy = living.Where(m => pulled.Contains(m.Id) && m.Aggro).MinBy(m => Vector3.DistanceSquared(frame.Position, m.Position));
+                var enemy = living.Where(m => pulled.Contains(m.Id) && (m.Aggro || frame.InCombat)).MinBy(m => Vector3.DistanceSquared(frame.Position, m.Position));
                 if (enemy != null) { StartRotation(enemy.Id, true); return; }
                 if (frame.InCombat) return; // Unknown/unloaded enemies are not counted as dead.
                 if (!EndRotation()) return;
@@ -200,7 +229,10 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
                 var mob = living.FirstOrDefault(m => m.Id == target);
                 if (mob == null || mob.Aggro || mob.Dead)
                 { if (!EndRotation()) return; move.Stop(); walking = false; target = 0; SetPhase(Phase.Search, now); return; }
-                if (!walking) StartRotation(mob.Id);
+                if (NavigationRules.Distance(frame.Position,mob.Position)<=3 && Math.Abs(frame.Position.Y-mob.Position.Y)<=3)
+                { move.Stop(); walking=false; }
+                // Select and enable Manual at action range, without waiting for path completion.
+                if (!walking || NavigationRules.Distance(frame.Position,mob.Position)<=25) StartRotation(mob.Id);
                 if (now - phaseAt > TimeSpan.FromSeconds(25)) { Stop("目标未确认仇恨，停止拉怪。"); }
                 return;
             }
@@ -214,7 +246,8 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
                         huntOrder.Enqueue(candidates.First(m => m.Position == position).Id);
                 var next = candidates.First(m => m.Id == huntOrder.Dequeue());
                 move.Stop(); walking = false; target = next.Id; SetPhase(Phase.Pull, now);
-                Go(ArrivalRules.Position(frame.Position, next.Position, 3), frame, now); return;
+                if(!combat.Target(next.Id)){Stop("无法选中触发小怪，停止拉怪。");return;}
+                Go(ArrivalRules.Position(frame.Position, next.Position, 1), frame, now); return;
             }
             if (pulled.Count > 0 || frame.InCombat) { Fight(now); return; }
             if (walking) return;

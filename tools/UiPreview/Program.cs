@@ -32,6 +32,13 @@ unsafe class Program
             using var glyphGame = new Lumina.GameData("D:/Program Files (x86)/FFXIV/game/sqpack", new Lumina.LuminaOptions { DefaultExcelLanguage = Lumina.Data.Language.ChineseSimplified });
             mapCharacters = string.Concat(glyphGame.Excel.GetSheet<Lumina.Excel.Sheets.Fate>()!.Where(f => f.EurekaFate == 1).Select(f => f.Name.ExtractText()));
         }
+        if(args.Contains("--logos"))
+        {
+            using var glyphGame=new Lumina.GameData("D:/Program Files (x86)/FFXIV/game/sqpack",new Lumina.LuminaOptions{DefaultExcelLanguage=Lumina.Data.Language.ChineseSimplified});
+            var c=ULKHelper.Logos.LogosCatalog.Load();
+            mapCharacters+=string.Concat(c.Actions.Select(a=>glyphGame.Excel.GetSheet<Lumina.Excel.Sheets.Action>()!.GetRow(a.Action).Name.ExtractText()));
+            mapCharacters+=string.Concat(c.Shards.SelectMany(s=>s.Mnemes.Append(s.Item)).Select(id=>glyphGame.Excel.GetSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText()));
+        }
         var characters = Directory.GetFiles("Windows", "*.cs").Concat(Directory.GetFiles("Data", "*.cs")).Concat(Directory.GetFiles("Inventory", "*.cs")).Concat(Directory.GetFiles("Automation", "*.cs")).Concat(Directory.GetFiles("Weather", "*.cs")).Concat(Directory.GetFiles("Fates", "*.cs"))
             .Append("tools/WeatherTests/Program.cs").Append("tools/UiPreview/Program.cs").SelectMany(File.ReadAllText).Concat(mapCharacters).Where(c => c > 255).Distinct().Order().ToArray();
         var ranges = new List<ushort> { 0x20, 0xFF };
@@ -53,6 +60,10 @@ unsafe class Program
             textures.Add(new(bytes, textureWidth, textureHeight));
             io.Fonts.SetTexID(index, new ImTextureID((ulong)index + 1));
         }
+        using var logosGame = new Lumina.GameData("D:/Program Files (x86)/FFXIV/game/sqpack",new Lumina.LuminaOptions{DefaultExcelLanguage=Lumina.Data.Language.ChineseSimplified});
+        using var logosService=new ULKHelper.Logos.LogosService();
+        var logosPage=new LogosPage(id=>logosGame.Excel.GetSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText(),id=>logosGame.Excel.GetSheet<Lumina.Excel.Sheets.Action>()!.GetRow(id).Name.ExtractText(),()=>new LogosWorld(1167,"沃仙曦染","陆行鸟"),logosService,null);
+        if(args.Contains("--logos-recipes"))SetField(logosPage,"section",1);
         var page = new ItemStatisticsPage(args.Contains("--live") ? new LiveFixtureProvider() : null);
         var automationFixture = new AutomationFixture();
         var debugPage = new DebugTestsPage(automationFixture, new ULKHelper.SettingsStore(Path.GetFullPath("artifacts/ui/debug-settings.json")));
@@ -117,6 +128,11 @@ unsafe class Program
         ValidateCatalog();
         for (var frame = 0; frame < 8; frame++)
         {
+            if(args.Contains("--logos-recipes"))
+            {
+                io.AddMousePosEvent(-100,-100);
+                if(frame==3)io.AddMouseButtonEvent(0,true);if(frame==4)io.AddMouseButtonEvent(0,false);
+            }
             if (args.Contains("--start-trigger"))
             {
                 io.AddMousePosEvent(40, 483);
@@ -194,11 +210,11 @@ unsafe class Program
             ImGui.SetNextWindowPos(Vector2.Zero);
             ImGui.SetNextWindowSize(io.DisplaySize);
             ImGui.Begin("优雷卡助手", ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoScrollbar);
-            var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 4) / 5;
+            var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 5) / 6;
             if (ImGui.BeginTabBar("##MainPages"))
             {
                 ImGui.SetNextItemWidth(tabWidth);
-                if (ImGui.BeginTabItem("物品统计", args.Contains("--automation") || args.Contains("--weather") || args.Contains("--map") || args.Contains("--debug") ? 0 : ImGuiTabItemFlags.SetSelected))
+                if (ImGui.BeginTabItem("物品统计", args.Contains("--automation") || args.Contains("--weather") || args.Contains("--map") || args.Contains("--debug") || args.Contains("--logos") ? 0 : ImGuiTabItemFlags.SetSelected))
                 {
                     page.Draw();
                     ImGui.EndTabItem();
@@ -216,6 +232,12 @@ unsafe class Program
                     if (ImGui.BeginChild("##MapPageContent", Vector2.Zero)) fateMapPage?.Draw();
                     ImGui.EndChild();
                     ImGui.EndTabItem();
+                }
+                ImGui.SetNextItemWidth(tabWidth);
+                if (ImGui.BeginTabItem("文理技能",args.Contains("--logos")?ImGuiTabItemFlags.SetSelected:0))
+                {
+                    if(ImGui.BeginChild("##LogosPreview",Vector2.Zero))logosPage.Draw();
+                    ImGui.EndChild();ImGui.EndTabItem();
                 }
                 ImGui.SetNextItemWidth(tabWidth);
                 if (ImGui.BeginTabItem("自动化", args.Contains("--automation") ? ImGuiTabItemFlags.SetSelected : 0))

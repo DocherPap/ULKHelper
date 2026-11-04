@@ -118,7 +118,7 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
                     approach.Stop();
                 else
                 {
-                    approach.Tick(frame.World, frame.Player, frame.Safe && !frame.InCombat, [], now);
+                    approach.Tick(frame.World, frame.Player, frame.Safe, [], now);
                     if (approach.Active) return;
                     if (approach.TakeArrival() == null) { Stop(approach.Status); return; }
                 }
@@ -126,16 +126,11 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
             }
             if (phase == Phase.Travel)
             {
-                if (frame.InCombat && observation.Fate is { } nearby && NavigationRules.Distance(frame.Player, nearby.Centre) <= 60)
-                { travel.Stop(); phase = Phase.Prepare; phaseAt = nextAction = now; attempts = 0; }
-                else
-                {
-                travel.Tick(frame.World, frame.Player, frame.Safe && !frame.InCombat, transferScreen, frame.Mounted, frame.Casting, fates, now);
+                travel.Tick(frame.World, frame.Player, frame.Safe, transferScreen, frame.Mounted, frame.Casting, fates, now, frame.InCombat);
                 Status = travel.Status;
                 if (travel.Active) return;
                 if (travel.TakeArrival() == null) { Stop(travel.Status); return; }
                 phase = Phase.Prepare; phaseAt = nextAction = now; attempts = 0;
-                }
             }
             if (phase == Phase.Remount)
             {
@@ -250,11 +245,10 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
     {
         if (phase == Phase.Standby) { Status = "已在最近水晶附近待机，等待新NM或车头坐标。"; return; }
         if (now - phaseAt >= TimeSpan.FromMinutes(5)) { Stop("前往水晶待机超时。"); return; }
-        if (frame.InCombat) { approach.Stop(); parkStarted = false; Status = "等待脱战后靠近最近水晶。"; return; }
-        if (frame.Casting) return;
-        if (!frame.Mounted) { approach.Stop(); parkStarted = false; Act(mounts.Mount, "召唤所选坐骑", now); return; }
         if (!parkStarted)
         {
+            if (frame.InCombat || frame.Casting) return;
+            if (!frame.Mounted) { Act(mounts.Mount, "召唤所选坐骑", now); return; }
             if (mesh.Busy || mesh.Route.Count > 0) { Stop("其他导航占用中，停止水晶待机。"); return; }
             var centre = mesh.Ground(standbyCrystal!.Position, true);
             if (centre == null || !NavigationRules.Finite(centre.Value)) { Stop("水晶附近没有可行走地面。"); return; }

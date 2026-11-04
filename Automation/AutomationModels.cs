@@ -11,8 +11,14 @@ internal interface IAutomationHelpers
 {
     AutomationSnapshot Snapshot { get; }
     AutoTriggerSnapshot TriggerSnapshot => AutoTriggerSnapshot.Empty;
-    void StartTrigger(IReadOnlyList<TriggerPlan> plans, int batch, int maxKills) { }
-    void RecordTriggerPoint(ushort fateId, bool reset = false) { }
+    bool BunnyAutomationActive => false;
+    string BunnyAutomationStatus => "尚未开始自动挖宝。";
+    int BunnyFoundCount => 0;
+    void SetBunnyAutomation(uint territory, IReadOnlyCollection<ushort> selected, bool enabled, int limit = 0) { }
+    void StartTrigger(IReadOnlyList<TriggerPlan> plans, int batch, int maxKills, bool useRotation = true, bool useBmr = true) { }
+    void RecordTriggerPoint(ushort fateId, bool newRoute = false) { }
+    void SelectTriggerRoute(ushort fateId, int index) { }
+    void RenameTriggerRoute(ushort fateId, int index, string name) { }
     void ClearTriggerRoute(ushort fateId) { }
     void SelectLeader(PlayerIdentity identity);
     void SelectCurrentTargetAsLeader() { }

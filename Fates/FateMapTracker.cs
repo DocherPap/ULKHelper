@@ -28,7 +28,7 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
     private readonly HttpClient http;
     private readonly EntryCrowdsourceLookup lookup;
     private DateTimeOffset enteredAt, candidateSince;
-    private uint roomCandidate, roomId;
+    private uint roomCandidate, roomId, roomDataCenter;
     private (uint Territory, uint Map, uint Instance, ulong Player) session;
     private DateTimeOffset nextUpdate, nextError;
     private volatile FateMapSnapshot snapshot = new(0, null, new Dictionary<ushort, FateRecord>(), "尚未进入优雷卡。");
@@ -108,7 +108,7 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
                 SaveElementals();
                 ledger.Reset(); session = world; nextUpdate = default;
                 notifications.Reset();
-                lookup.Reset(); enteredAt = now; roomId = roomCandidate = 0; candidateSince = now;
+                lookup.Reset(); enteredAt = now; roomId = roomCandidate = roomDataCenter = 0; candidateSince = now;
                 while (commands.TryDequeue(out _)) { }
             }
             var changed = false;
@@ -117,7 +117,6 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
             if (now < nextUpdate && !changed) return;
             nextUpdate = now.AddMilliseconds(500);
             var island = Islands.FirstOrDefault(i => i.Territory == client.TerritoryType);
-            var elementals = ObserveElementals(island, now);
             var observations = new List<FateObservation>();
             if (island != null && client.IsLoggedIn)
             {
@@ -140,22 +139,53 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
                     if (candidate != roomCandidate) { roomCandidate = candidate; candidateSince = now; }
                     var dc = objects.LocalPlayer?.CurrentWorld.Value.DataCenter.RowId ?? 0;
                     if (candidate != 0 && dc != 0 && now - candidateSince >= TimeSpan.FromSeconds(1))
-                    { roomId = candidate; lookup.Start(new(dc, roomId, island.Territory), now); }
+                    {
+                        roomId = candidate;
+                        roomDataCenter = dc;
+                        ConfirmElementalInstance(island.Territory);
+                        lookup.Start(new(dc, roomId, island.Territory), now);
+                    }
                 }
                 if (lookup.TakeCompleted() is { } remote && remote.Scope.InstanceId == roomId && remote.Scope.TerritoryId == island.Territory)
                     ledger.Import(remote.Appearances, island.Territory, now);
             }
+            var elementals = ObserveElementals(island, now);
             snapshot = new(client.TerritoryType, island != null && objects.LocalPlayer is { } player ? MapProjection.WorldToMap(player.Position, island) : null,
                 ledger.Snapshot, error ?? (island == null ? "浏览模式：进入对应岛屿后读取一次众包记录。" : "本次实例本地观察 · 每 0.5 秒刷新 · 离岛后清空"),
-                roomId, island == null ? null : lookup.Attempted ? lookup.Status : roomReader.Status, notifications.Settings, notifications.Status, elementals);
+                roomId, island == null ? null : lookup.Attempted ? lookup.Status : roomReader.Status, notifications.Settings, notifications.Status,
+                elementals, island == null ? null : enteredAt);
         }
         catch (Exception ex)
         {
             snapshot = snapshot with { Status = "FATE 状态读取失败，保留上次记录；活动数据将标为过期。",
-                Elementals = elementalSightings.ToArray() };
+                Elementals = [] };
             nextUpdate = now.AddSeconds(1);
             if (now >= nextError) { nextError = now.AddSeconds(10); log.Warning(ex, "优雷卡地图状态更新失败"); }
         }
+    }
+
+    private bool IsCurrentElemental(ElementalMapPoint point) =>
+        roomId != 0 ? point.InstanceId == roomId && point.DataCenterId == roomDataCenter
+            : point.InstanceId == 0 && point.LastSeen >= enteredAt;
+
+    private void ConfirmElementalInstance(uint territory)
+    {
+        // Keep observations made after this entry even if the room id was not ready yet.
+        for (var i = elementalSightings.Count - 1; i >= 0; i--)
+        {
+            var point = elementalSightings[i];
+            if (point.Territory != territory || IsCurrentElemental(point)) continue;
+            if (point.InstanceId == 0 && point.LastSeen >= enteredAt)
+            {
+                if (elementalSightings.Any(other => other.Territory == territory && IsCurrentElemental(other)
+                    && Vector2.DistanceSquared(other.Position, point.Position) <= .01f))
+                    elementalSightings.RemoveAt(i);
+                else elementalSightings[i] = point with { InstanceId = roomId, DataCenterId = roomDataCenter };
+            }
+            else elementalSightings.RemoveAt(i);
+            elementalDirty = true;
+        }
+        SaveElementals();
     }
 
     private static bool ValidMapPosition(Vector2 position, IslandMap island)
@@ -175,9 +205,10 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
                 if (npc.NameId != nameId || npc.IsDead) continue;
                 var position = MapProjection.WorldToMap(npc.Position, island);
                 if (!ValidMapPosition(position, island)) continue;
-                var index = elementalSightings.FindIndex(p => p.MapId == island.MapId
+                var index = elementalSightings.FindIndex(p => p.MapId == island.MapId && IsCurrentElemental(p)
                     && Vector2.DistanceSquared(p.Position, position) <= .01f);
-                var point = new ElementalMapPoint(island.Territory, island.MapId, position, now);
+                var point = new ElementalMapPoint(island.Territory, island.MapId, position, now,
+                    InstanceId: roomId, DataCenterId: roomDataCenter);
                 if (index < 0)
                 {
                     var sameIsland = elementalSightings.Where(p => p.Territory == island.Territory).ToArray();
@@ -195,7 +226,8 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
             SaveElementals();
             nextElementalSave = now.AddMinutes(1);
         }
-        return elementalSightings.Select(p => visible.Contains(p) ? p with { Visible = true } : p).ToArray();
+        return island == null ? [] : elementalSightings.Where(p => p.Territory == island.Territory && IsCurrentElemental(p))
+            .Select(p => visible.Contains(p) ? p with { Visible = true } : p).ToArray();
     }
 
     private void SaveElementals()

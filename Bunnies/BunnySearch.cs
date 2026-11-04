@@ -8,7 +8,7 @@ internal enum BunnyDirection { North, NorthEast, East, SouthEast, South, SouthWe
 internal enum BunnyDistance { FarAway, Far, Near, VeryNear, Here }
 internal sealed record BunnyClue(Vector3 Position,BunnyDistance Distance,string Text,DateTimeOffset Time,BunnyDirection? Direction=null);
 internal sealed record BunnySnapshot(uint Territory,bool Active,Vector3? Player,IReadOnlyList<BunnyPoint> Points,IReadOnlySet<string> Candidates,
-    IReadOnlyList<BunnyClue> Clues,string Status,bool Conflict=false,string? Flagged=null,long ResetVersion=0);
+    IReadOnlyList<BunnyClue> Clues,string Status,bool Conflict=false,string? Flagged=null,long ResetVersion=0,DateTimeOffset? LastTreasureAt=null);
 internal interface IBunnyTracker
 {
     BunnySnapshot Snapshot{get;}

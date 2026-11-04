@@ -16,10 +16,11 @@ internal sealed class BunnyTracker : IBunnyTracker, IDisposable
     private readonly BunnySearch search;
     private readonly ConcurrentQueue<(Frame Frame,BunnyClue Clue)> incoming=new();
     private readonly ConcurrentQueue<Action> commands=new();
-    private sealed record Frame(uint Territory,uint Map,ulong Character,Vector3 Position,DateTimeOffset Time,bool Buff,long Generation);
+    private sealed record Frame(uint Territory,uint Map,ulong Character,Vector3 Position,DateTimeOffset Time,bool Buff,bool RecentBuff,long Generation);
     private long generation,resetVersion;private int flagAttempts;private DateTimeOffset nextFlag;private bool currentBuff;
     private volatile Frame? lastFrame;
     private DateTimeOffset buffSeen;private bool wasBuff;private (uint Territory,uint Map,uint Instance,ulong Player,uint Room) context;
+    private DateTimeOffset? lastTreasureAt;
     private volatile BunnySnapshot snapshot=new(0,false,null,[],new HashSet<string>(),[],"等待幸福兔状态。");
     public BunnySnapshot Snapshot=>snapshot;
     public BunnyTracker(IFramework framework,IClientState client,IObjectTable objects,IPlayerState player,IChatGui chat,IFateMapProvider maps,IPluginLog log)
@@ -32,9 +33,10 @@ internal sealed class BunnyTracker : IBunnyTracker, IDisposable
     {
         // Local LogMessage rows 9002–9006 have LogKind 57. Never accept player speech/echo spoofing.
         var frame=lastFrame;var now=DateTimeOffset.UtcNow;
-        if(frame==null||!BunnyRules.CanRecordHint(frame.Buff,(int)message.LogKind,now-frame.Time))return;
+        if(frame==null||!BunnyRules.CanRecordHint(frame.Buff||frame.RecentBuff,(int)message.LogKind,now-frame.Time))return;
         var text=SeString.Parse(message.OriginalMessage.Data.Span).TextValue;
         var distance=BunnyRules.Parse(text);if(distance==null)return;
+        if (!frame.Buff && (distance != BunnyDistance.Here || !text.Contains("发现了财宝", StringComparison.Ordinal))) return;
         incoming.Enqueue((frame,new(frame.Position,distance.Value,text,now,BunnyRules.ParseDirection(text))));
     }
     private unsafe void Tick(IFramework update)
@@ -44,22 +46,26 @@ internal sealed class BunnyTracker : IBunnyTracker, IDisposable
             var now=DateTimeOffset.UtcNow;var local=objects.LocalPlayer;
             var world=(client.TerritoryType,client.MapId,client.Instance,client.IsLoggedIn?player.ContentId:0,maps.Snapshot.RoomId);
             if(world!=context)
-            {generation++;context=world;search.Clear();wasBuff=false;lastFrame=null;while(incoming.TryDequeue(out _)){}while(commands.TryDequeue(out _)){};}
+            {generation++;context=world;search.Clear();wasBuff=false;buffSeen=default;lastFrame=null;lastTreasureAt=null;while(incoming.TryDequeue(out _)){}while(commands.TryDequeue(out _)){};}
             var map=maps.Islands.FirstOrDefault(m=>m.Territory==client.TerritoryType);
             var buff=client.IsLoggedIn&&player.ContentId!=0&&local is {IsDead:false}&&map!=null&&map.Territory is 763 or 795 or 827&&local.StatusList.Any(s=>s.StatusId==1531);
             currentBuff=buff;
             // End before consuming queued clues/setting flags: delayed hints belong to the finished hunt.
-            if(!buff&&wasBuff){generation++;resetVersion++;flagAttempts=0;nextFlag=default;search.End();}
             if(buff&&!wasBuff)Begin(map!);
             if(buff)buffSeen=now;
             while(commands.TryDequeue(out var action))action();
-            lastFrame=local==null?null:new(client.TerritoryType,client.MapId,player.ContentId,local.Position,now,buff,generation);
             while(incoming.TryDequeue(out var hint))
                 if(hint.Frame.Generation==generation&&hint.Frame.Territory==client.TerritoryType&&hint.Frame.Character==player.ContentId&&(buff||now-buffSeen<TimeSpan.FromSeconds(1))&&now-hint.Clue.Time<TimeSpan.FromSeconds(2)){
+                    if (hint.Clue.Distance == BunnyDistance.Here && hint.Clue.Text.Contains("发现了财宝", StringComparison.Ordinal))
+                        lastTreasureAt = hint.Clue.Time;
+                    if (!buff) continue;
                     if(hint.Clue.Distance!=BunnyDistance.Here&&hint.Clue.Direction==null)search.Unrecognized(hint.Clue.Text);
                     else search.Add(hint.Clue);
                 }
-            if(flagAttempts<3&&now>=nextFlag&&search.Unique() is {} unique&&map!=null&&local is {IsDead:false}&&(buff||now-buffSeen<TimeSpan.FromSeconds(1)))
+            if(!buff&&wasBuff){generation++;resetVersion++;flagAttempts=0;nextFlag=default;search.End();}
+            lastFrame=local==null?null:new(client.TerritoryType,client.MapId,player.ContentId,local.Position,now,buff,
+                now-buffSeen<TimeSpan.FromSeconds(1),generation);
+            if(flagAttempts<3&&now>=nextFlag&&search.Unique() is {} unique&&map!=null&&local is {IsDead:false}&&buff)
             {
                 flagAttempts++;nextFlag=now.AddSeconds(1);
                 var agent=AgentMap.Instance();
@@ -67,7 +73,7 @@ internal sealed class BunnyTracker : IBunnyTracker, IDisposable
                 if(flagAttempts>=3&&search.Flagged!=unique.Id)search.FlagFailed();
             }
             wasBuff=buff;
-            snapshot=new(client.TerritoryType,search.Active,local?.Position,points.Where(p=>p.Territory==client.TerritoryType).ToArray(),search.Candidates,search.Clues,search.Status,search.Conflict,search.Flagged,resetVersion);
+            snapshot=new(client.TerritoryType,search.Active,local?.Position,points.Where(p=>p.Territory==client.TerritoryType).ToArray(),search.Candidates,search.Clues,search.Status,search.Conflict,search.Flagged,resetVersion,lastTreasureAt);
         }
         catch(Exception ex){search.Clear("读取兔子状态失败，已清空本轮推断。");lastFrame=null;log.Warning(ex,"兔子挖宝状态更新失败");}
     }

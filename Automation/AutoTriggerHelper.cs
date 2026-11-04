@@ -6,16 +6,25 @@ internal enum TriggerMode { Normal, Recorded }
 internal sealed record TriggerPlan(ushort FateId, byte Level, MapDestination Centre, TriggerMode Mode, Vector3[] Route);
 internal sealed record TriggerMob(ulong Id, ushort FateId, Vector3 Position, bool Dead, bool Aggro, bool Targetable = true, bool Engaged = false, uint Hp = 0);
 internal sealed record MobArea(ushort FateId, Vector3 Position);
-internal sealed record AutoTriggerSnapshot(bool Active, string Status, int? Level, IReadOnlyList<MobArea> Areas, IReadOnlyDictionary<ushort, Vector3[]> Routes)
+internal sealed record TriggerRouteSet(int Selected, Vector3[][] Paths, string[]? Names = null)
 {
-    public static readonly AutoTriggerSnapshot Empty = new(false, "尚未开始自动触发。", null, [], new Dictionary<ushort, Vector3[]>());
+    public const int MaxRoutes = 32;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Vector3[] Current => Selected >= 0 && Selected < Paths.Length ? Paths[Selected] : [];
+    public string NameAt(int index) => Names != null && index < Names.Length && !string.IsNullOrWhiteSpace(Names[index])
+        ? Names[index] : $"路线{index + 1}";
+}
+internal sealed record AutoTriggerSnapshot(bool Active, string Status, int? Level, IReadOnlyList<MobArea> Areas, IReadOnlyDictionary<ushort, TriggerRouteSet> Routes)
+{
+    public static readonly AutoTriggerSnapshot Empty = new(false, "尚未开始自动触发。", null, [], new Dictionary<ushort, TriggerRouteSet>());
+    public Vector3[] SelectedRoute(ushort fateId) => Routes.GetValueOrDefault(fateId)?.Current ?? [];
 }
 internal sealed record TriggerFrame(WorldContext World, Vector3 Position, bool Safe, bool Mounted, bool Casting, bool InCombat,
-    int? Level, IReadOnlyList<TriggerMob> Mobs, IReadOnlySet<ushort> ActiveFates, bool CanMountForTravel = false);
+    int? Level, IReadOnlyList<TriggerMob> Mobs, IReadOnlySet<ushort> ActiveFates, bool CanMountForTravel = false, bool Loading = false);
 internal interface ITriggerCombat
 {
     string? Error => null;
-    string? BeginTrigger(bool needsApproach) => null;
+    string? BeginTrigger(bool needsApproach, bool useRotation, bool useBmr) => null;
     void EndTrigger() { }
     bool PrepareTarget(ulong id, bool fighting, IReadOnlyList<ulong>? eligible = null) => Target(id);
     string? PrepareStart();
@@ -42,7 +51,9 @@ internal static class AutoTriggerRules
         return null;
     }
     public static int Capacity(int player, IEnumerable<int> levels) => levels.Select(level => level < player ? 3 : level <= player + 2 ? 2 : 1).DefaultIfEmpty(3).Min();
-    public static TriggerMode DefaultMode(ushort id) => id is 1365 or 1402 or 1403 or 1404 or 1423 ? TriggerMode.Recorded : TriggerMode.Normal;
+    public static TriggerMode DefaultMode(ushort id) =>
+        id is 1329 or 1338 or 1364 or 1365 or 1402 or 1403 or 1404 or 1418 or 1423
+            ? TriggerMode.Recorded : TriggerMode.Normal;
     public static IEnumerable<int> WaveSizes(int count, int limit)
     {
         if (count <= 0 || limit <= 0) yield break;
@@ -73,20 +84,22 @@ internal static class AutoTriggerRules
 }
 
 // Framework-driven, bounded session. All inputs are copied managed observations.
-internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mounts, ITriggerCombat combat)
+internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mounts, ITriggerCombat combat, IIslandCrystalActions? crystals = null)
 {
     private readonly DestinationNavigationHelper move = new(mesh);
+    private readonly IslandTravelHelper? islandTravel = crystals == null ? null : new(mesh, crystals, mounts);
     private readonly List<TriggerPlan> plans = [];
     private readonly Dictionary<ushort, int> kills = new();
     private readonly Dictionary<ulong, (TriggerMob Mob, DateTimeOffset Seen)> seen = new();
     private readonly HashSet<ulong> pulled = [];
-    private readonly Queue<Vector3> waypoints = new();
+    private readonly HashSet<ulong> waitingMobs = [];
+    private Vector3[] recordedMovement = [];
     private readonly Dictionary<ulong, TriggerMob> cache = new();
     private readonly Dictionary<ulong, DateTimeOffset> retryAfter = new();
     private readonly Queue<ulong[]> waves = new();
     private ulong[] wave = [];
     private const float CacheRadius = 100;
-    private const float PullRadius = 30;
+    private const float PullRadius = 45;
     private readonly HashSet<ushort> appeared = [];
     private WorldContext world;
     private DateTimeOffset started, phaseAt, actionAt, nextCache, targetAt;
@@ -96,11 +109,14 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
     private int pullLimit, killLimit, attempts;
     private ulong target;
     private bool rotation, walking, returnHome, finishPending;
-    private enum Phase { Search, Centre, Approach, Pull, FinishRoute, Fight, Return, Wait }
+    private enum Phase { Search, Centre, Approach, Pull, Fight, Return, Wait }
     private Phase phase;
     public bool Active { get; private set; }
+    public bool Transferring => islandTravel?.Transferring == true;
+    public bool Interacting => islandTravel?.Interacting == true;
     public string Status { get; private set; } = "尚未开始自动触发。";
-    public bool Start(IReadOnlyList<TriggerPlan> requested, TriggerFrame frame, int batch, int maxKills, DateTimeOffset now)
+    public bool Start(IReadOnlyList<TriggerPlan> requested, TriggerFrame frame, int batch, int maxKills, DateTimeOffset now,
+        bool useRotation = true, bool useBmr = true)
     {
         if (Active) return false;
         if (frame.World.Territory is not (732 or 763 or 795 or 827) || !frame.Safe || frame.InCombat || frame.Level == null || requested.Count == 0 || requested.Count > 3
@@ -111,7 +127,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         if (requested.Any(p => p.Mode == TriggerMode.Recorded && (p.Route.Length < 2 || p.Route.Length > 128 || p.Route.Any(v => !NavigationRules.Finite(v)))))
         { Status = "特殊触发需先记录本岛起点和终点（最多128点）。"; return false; }
         if (!mesh.Ready || mesh.Busy || mesh.Route.Count > 0) { Status = "导航网格未就绪或正在使用。"; return false; }
-        var error = combat.BeginTrigger(requested.Any(p => p.Mode == TriggerMode.Normal)) ?? combat.PrepareStart();
+        var error = combat.BeginTrigger(requested.Any(p => p.Mode == TriggerMode.Normal), useRotation, useBmr) ?? combat.PrepareStart();
         if (error != null) { combat.EndTrigger(); Status = error; return false; }
         appeared.Clear(); plans.Clear(); plans.AddRange(requested); kills.Clear(); seen.Clear();
         world = frame.World; started = now;
@@ -124,17 +140,17 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
     public void Stop(string reason = "已停止自动触发。")
     {
         var wasActive = Active;
-        Active = false; move.Stop();
+        Active = false; StopTravel();
         if (wasActive) { if (rotation) combat.Disable(); combat.EndTrigger(); }
         rotation = walking = false;
-        waypoints.Clear(); pulled.Clear(); seen.Clear(); cache.Clear(); waves.Clear(); wave = [];
+        StopRecordedMovement(); waitingMobs.Clear(); pulled.Clear(); seen.Clear(); cache.Clear(); waves.Clear(); wave = [];
         Status = reason;
     }
     private void SelectNearest(Vector3 position, DateTimeOffset now)
     {
         var nearest = plans.MinBy(p => NavigationRules.Distance(position, p.Centre.Position))!;
         plans.Remove(nearest); plans.Insert(0, nearest);
-        cache.Clear(); retryAfter.Clear(); waves.Clear(); wave = []; pulled.Clear(); waypoints.Clear(); seen.Clear();
+        cache.Clear(); retryAfter.Clear(); waves.Clear(); wave = []; pulled.Clear(); waitingMobs.Clear(); seen.Clear();
         target = 0; finishPending = false; nextCache = default;
         SetPhase(nearest.Mode == TriggerMode.Recorded ? Phase.Search : Phase.Centre, now);
     }
@@ -161,7 +177,15 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             Stop($"触发目标附近无可行走地面：目标={point}；玩家={frame.Position}；已知高度={!unknownHeight}");return false;
         }
         point=grounded.Value;
-        move.Start(new(world.Territory, world.Map, point, "触发路线"), world, frame.Position, [], now, false,
+        var destination = new MapDestination(world.Territory, world.Map, point, "触发路线");
+        if (islandTravel != null && !frame.InCombat && IslandCrystalRoutes.Choose(world.Territory, frame.Position, point) != null)
+        {
+            islandTravel.Start(destination, world, frame.Position, [], now, waitWithoutFate: false);
+            walking = islandTravel.Active;
+            if (!walking) Stop(islandTravel.Status);
+            return walking;
+        }
+        move.Start(destination, world, frame.Position, [], now, false,
             arrivalRadius: 1, unknownHeight: false, relaxedArrival: plans[0].Mode == TriggerMode.Normal);
         walking = move.Active;
         if (!walking) Stop(move.Status);
@@ -178,15 +202,30 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         if (rotation && !combat.Disable()) { Stop("等待自动循环关闭，请稍后重新开始。"); return false; }
         rotation = false; return true;
     }
-    private void Fight(DateTimeOffset now) { move.Stop(); walking = false; target = 0; SetPhase(Phase.Fight, now); }
+    private void StopRecordedMovement()
+    {
+        var issued = recordedMovement;
+        recordedMovement = [];
+        try { if (issued.Length != 0 && NavigationRules.OwnsRoute(mesh.Route, issued)) mesh.Stop(); }
+        catch { /* The navigation provider can unload mid-route. */ }
+    }
+
+    private void StopTravel()
+    {
+        move.Stop();
+        if (islandTravel?.Active == true) islandTravel.Stop();
+    }
+
+    private void Fight(DateTimeOffset now) { StopTravel(); StopRecordedMovement(); walking = false; target = 0; SetPhase(Phase.Fight, now); }
     public void Tick(TriggerFrame frame, DateTimeOffset now)
     {
         if (!Active) return;
         try
         {
-            if (!frame.Safe || frame.World != world || frame.Level == null) { Stop("角色、地图或可操作状态变化，触发已停止。"); return; }
             if (now - started > TimeSpan.FromHours(2)) { Stop("自动触发达到2小时上限。"); return; }
             if (now - phaseAt > TimeSpan.FromMinutes(5)) { Stop("当前触发阶段超过5分钟，已停止。"); return; }
+            if (Transferring && frame.Loading) return;
+            if (!frame.Safe || frame.World != world || frame.Level == null) { Stop("角色、地图或可操作状态变化，触发已停止。"); return; }
             if (!mesh.Ready || rotation && (phase != Phase.Fight || frame.InCombat) && !combat.StationaryHealthy)
             { Stop("导航或循环控制失效，已停止。"); return; }
             if (rotation && (mesh.Busy || mesh.Route.Count > 0))
@@ -205,31 +244,40 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             finishPending |= appeared.Contains(plan.FateId) || kills.GetValueOrDefault(plan.FateId) >= killLimit;
             var living = observed.Where(m => !m.Dead).ToArray();
             foreach (var mob in living.Where(m => m.Aggro)) pulled.Add(mob.Id);
-            var phaseText = phase switch { Phase.Centre => "前往FATE中心", Phase.Approach => "前往下一只触发怪", Phase.Search => "前往记录路线", Phase.Pull => "拉怪", Phase.FinishRoute => "前往终点", Phase.Fight => "击杀", Phase.Return => "返回起点", _ => "等待刷新" };
+            var phaseText = phase switch { Phase.Centre => "前往FATE中心", Phase.Approach => "前往下一只触发怪", Phase.Search => "前往记录路线", Phase.Pull => "拉怪", Phase.Fight => "击杀", Phase.Return => "返回起点", _ => "等待刷新" };
             var quota = wave.Length > 0 ? wave.Length.ToString() : pullLimit == int.MaxValue ? "∞" : pullLimit.ToString();
             Status = $"{plan.Centre.Label} · {phaseText} · 缓存 {cache.Count} · 待拉波次 {waves.Count} · 已拉 {pulled.Count}/{quota} · 本次观测击杀 {kills.GetValueOrDefault(plan.FateId)}/{(killLimit == int.MaxValue ? "∞" : killLimit)}";
-            if (finishPending && phase != Phase.Fight)
+            if (finishPending && phase != Phase.Fight && !(plan.Mode == TriggerMode.Recorded && phase == Phase.Pull))
             { if (frame.InCombat) Fight(now); else { Advance(frame.Position, now); return; } }
             if (phase == Phase.Approach && !frame.InCombat && living.Any(m => CanPull(m, plan, frame.Position, now)))
             {
-                move.Stop();
+                StopTravel();
                 walking = false;
                 nextCache = default;
                 SetPhase(Phase.Pull, now);
             }
             if (walking)
             {
-                move.Tick(world, frame.Position, frame.Safe, [], now);
-                if (!move.Active)
+                if (islandTravel?.Active == true)
                 {
+                    islandTravel.Tick(world, frame.Position, frame.Safe, frame.Loading, frame.Mounted, frame.Casting, [], now, frame.InCombat);
+                    if (islandTravel.Active) return;
                     walking = false;
-                    if (move.TakeArrival() == null) { Stop(move.Status); return; }
+                    if (islandTravel.TakeArrival() == null) { Stop(islandTravel.Status); return; }
                     if (phase is Phase.Centre or Phase.Approach) SetPhase(Phase.Pull, now);
+                }
+                else
+                {
+                    move.Tick(world, frame.Position, frame.Safe, [], now);
+                    if (!move.Active)
+                    {
+                        walking = false;
+                        if (move.TakeArrival() == null) { Stop(move.Status); return; }
+                        if (phase is Phase.Centre or Phase.Approach) SetPhase(Phase.Pull, now);
+                    }
                 }
             }
             if (plan.Mode == TriggerMode.Normal && phase != Phase.Centre) RefreshCache(plan, observed, now);
-            if (phase == Phase.FinishRoute)
-            { if (!walking) Fight(now); return; }
             if (phase == Phase.Fight)
             {
                 if (!Riding(false, frame, now)) return;
@@ -244,7 +292,6 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
                 if (!EndRotation()) return;
                 pulled.Clear(); target = 0;
                 if (finishPending) { Advance(frame.Position, now); return; }
-                waypoints.Clear();
                 if (plan.Mode == TriggerMode.Recorded) { returnHome = true; SetPhase(Phase.Return, now); }
                 else
                 {
@@ -257,13 +304,20 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             {
                 if (!Riding(true, frame, now)) return;
                 if (returnHome) { returnHome = false; Go(plan.Route[0], frame, now); return; }
-                if (!walking) SetPhase(Phase.Wait, now);
+                if (!walking)
+                {
+                    waitingMobs.Clear();
+                    waitingMobs.UnionWith(living.Select(m => m.Id));
+                    SetPhase(Phase.Wait, now);
+                }
                 return;
             }
             if (phase == Phase.Wait && plan.Mode == TriggerMode.Recorded)
             {
-                if (frame.InCombat) { Fight(now); return; }
-                if (living.Any(m => plan.Route.Any(p => Vector3.Distance(p, m.Position) <= 60))) SetPhase(Phase.Search, now);
+                waitingMobs.ExceptWith(observed.Where(m => m.Dead).Select(m => m.Id));
+                if (!frame.InCombat && living.Any(m => m.Targetable && !m.Engaged && !waitingMobs.Contains(m.Id)
+                    && Vector3.Distance(frame.Position, m.Position) <= 60))
+                    SetPhase(Phase.Search, now);
                 return;
             }
             if (plan.Mode == TriggerMode.Recorded)
@@ -271,13 +325,24 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
                 if (phase == Phase.Search)
                 {
                     if (!Riding(true, frame, now)) return;
-                    waypoints.Clear(); foreach (var p in plan.Route) waypoints.Enqueue(p);
+                    if (Vector3.Distance(frame.Position, plan.Route[0]) > 2)
+                    {
+                        if (!walking) Go(plan.Route[0], frame, now);
+                        return;
+                    }
+                    if (walking) return;
+                    if (mesh.Busy || mesh.Route.Count > 0) { Stop("已有其他移动任务，无法开始记录路线。"); return; }
+                    recordedMovement = plan.Route[1..];
+                    mesh.Move(recordedMovement.ToList());
                     SetPhase(Phase.Pull, now);
+                    return;
                 }
                 if (!frame.Mounted) { Stop("特殊拉怪途中已下坐骑，停止路线。"); return; }
-                if (pulled.Count >= pullLimit) { waypoints.Clear(); move.Stop(); walking = false; Go(plan.Route[^1], frame, now); SetPhase(Phase.FinishRoute, now); return; }
-                if (!walking)
-                { if (waypoints.TryDequeue(out var next)) Go(next, frame, now); else Fight(now); }
+                var remaining = mesh.Route;
+                if (mesh.Busy || remaining.Count > 0 && !NavigationRules.OwnsRoute(remaining, recordedMovement))
+                { Stop("记录路线已被其他移动替换。"); return; }
+                if (remaining.Count <= 1 && Vector3.Distance(frame.Position, plan.Route[^1]) <= 2) Fight(now);
+                else if (remaining.Count == 0) Stop("记录路线提前结束，未到达终点。");
                 return;
             }
             TickNormal(plan, frame, living, now);
@@ -329,17 +394,16 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
     {
         if (phase == Phase.Centre)
         {
-            if (frame.InCombat) { Fight(now); return; }
             if (walking) return;
-            if (frame.CanMountForTravel && NavigationRules.Distance(frame.Position, plan.Centre.Position) > 5
+            if (!frame.InCombat && frame.CanMountForTravel && NavigationRules.Distance(frame.Position, plan.Centre.Position) > 5
                 && !Riding(true, frame, now, optional: true)) return;
             Go(plan.Centre.Position, frame, now, true);
             return;
         }
         if (phase == Phase.Approach)
         {
-            if (frame.InCombat) { Fight(now); return; }
             if (walking) return;
+            if (frame.InCombat) { Fight(now); return; }
             var next = living.Where(m => IsPullTarget(m, plan, now))
                 .MinBy(m => NavigationRules.Distance(frame.Position, m.Position));
             if (next == null) SetPhase(Phase.Wait, now);
@@ -357,11 +421,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             }
             return;
         }
-        if (walking)
-        {
-            if (frame.InCombat) Fight(now);
-            return;
-        }
+        if (walking) return;
         if (wave.Length > 0 && pulled.Count >= wave.Length) { Fight(now); return; }
         if (target != 0)
         {
@@ -434,7 +494,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
 
     private void Advance(Vector3 position, DateTimeOffset now)
     {
-        move.Stop(); walking = false;
+        StopTravel(); walking = false;
         plans.RemoveAt(0);
         if (plans.Count == 0) { Stop("计划已结束：FATE已出现或达到放弃数量，原地待机。"); return; }
         if (!EndRotation()) return;

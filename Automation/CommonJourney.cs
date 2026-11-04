@@ -12,22 +12,32 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using ULKHelper.Fates;
+using ULKHelper.Weather;
 
 namespace ULKHelper.Automation;
 
 internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavigationMesh mesh,
     IClientState client, IObjectTable objects, IGameGui gui, IDataManager data, ICondition conditions,
-    IArrivalActions mounts) : IDisposable
+    IArrivalActions mounts, WeatherZone? pagosWeather, Action<string> notify) : IDisposable
 {
+    internal const uint Pagos = 763;
+    private const uint Blitzring = 36121, Fog = 4;
     private const uint Kugane = 628, Rodney = 1024517, Potion = 22306;
     private const int Quantity = 99, UnitPrice = 300;
     private const string VendorName = "调查队的补给负责人";
+    private static readonly InventoryType[] CarriedRingContainers =
+    [
+        InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4,
+        InventoryType.EquippedItems, InventoryType.ArmoryRings,
+    ];
     private static readonly Vector3 RodneyPosition = new(-133.147f, -5.02026f, 149.283f);
     private static readonly Dictionary<uint, Vector2> Vendors = new()
     {
         [732] = new(19f, 32.1f), [763] = new(4.1f, 24.3f), [795] = new(16.7f, 23.8f), [827] = new(19.8f, 13.9f),
     };
     private readonly DestinationNavigationHelper walk = new(mesh);
+    private readonly IslandTravelHelper islandWalk = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), mounts);
+    public bool Transferring => islandWalk.Transferring;
     private enum Stage { City, Pier, Walk, Interact, Menu, Enter, Purchase }
     private Stage stage;
     private WorldContext origin;
@@ -41,6 +51,7 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
     private uint gilBefore;
     private uint purchaseShopId;
     public bool Active { get; private set; }
+    public bool CheckPagosRing { get; set; }
     public string Status { get; private set; } = "请选择常用功能。";
 
     public void Start(CommonAction action, WorldContext world, DateTimeOffset now)
@@ -52,13 +63,14 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
         (destinationIsland, islandName) = action switch
         {
             CommonAction.Anemos => (732u, "常风之地"),
-            CommonAction.Pagos => (763u, "恒冰之地"),
+            CommonAction.Pagos => (Pagos, "恒冰之地"),
             CommonAction.Pyros => (795u, "涌火之地"),
             CommonAction.Hydatos => (827u, "丰水之地"),
             _ => (0u, ""),
         };
         if (purchase && !Vendors.ContainsKey(world.Territory)) { Status = "请在优雷卡岛内购买。"; return; }
         if (!purchase && Vendors.ContainsKey(world.Territory)) { Status = "请先离开当前优雷卡岛。"; return; }
+        if (!CheckPagosEntry(now)) return;
         origin = world; began = now; actor = 0;
         requestedPier = ownsLifestream = confirmed = commenced = openedIslandMenu = false;
         nextDismount = now;
@@ -84,12 +96,13 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
             { Stop("角色变化，已停止。"); return; }
             if (loading || objects.LocalPlayer == null)
             {
-                if (stage is not (Stage.City or Stage.Pier or Stage.Enter)) Stop("地图变化，已停止。");
+                if (!Transferring && stage is not (Stage.City or Stage.Pier or Stage.Enter)) Stop("地图变化，已停止。");
                 return;
             }
             var player = objects.LocalPlayer;
-            if (!client.IsLoggedIn || player.IsDead || conditions[ConditionFlag.InCombat] || conditions[ConditionFlag.WatchingCutscene])
+            if (!client.IsLoggedIn || player.IsDead || conditions[ConditionFlag.WatchingCutscene])
             { Stop("角色状态不允许继续。"); return; }
+            if (conditions[ConditionFlag.InCombat] && stage != Stage.Walk) return;
             if (stage == Stage.Enter && world.Territory == destinationIsland)
             { Stop($"已进入{islandName}。"); return; }
             if (purchase && world != origin)
@@ -132,9 +145,19 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
                     else if (now - stageAt >= TimeSpan.FromSeconds(45)) Stop("第一防波堤传送未确认。");
                     break;
                 case Stage.Walk:
-                    walk.Tick(world, player.Position, !HasDialog(), [], now);
-                    if (walk.Active) break;
-                    if (walk.TakeArrival() == null) { Stop(walk.Status); return; }
+                    if (purchase)
+                    {
+                        islandWalk.Tick(world, player.Position, !HasDialog() || islandWalk.Interacting || islandWalk.Transferring,
+                            false, conditions[ConditionFlag.Mounted], player.IsCasting, [], now, conditions[ConditionFlag.InCombat]);
+                        if (islandWalk.Active) { Status = islandWalk.Status; break; }
+                        if (islandWalk.TakeArrival() == null) { Stop(islandWalk.Status); return; }
+                    }
+                    else
+                    {
+                        walk.Tick(world, player.Position, !HasDialog(), [], now);
+                        if (walk.Active) break;
+                        if (walk.TakeArrival() == null) { Stop(walk.Status); return; }
+                    }
                     ChangeStage(Stage.Interact, now, "已到达，正在确认目标NPC。");
                     break;
                 case Stage.Interact:
@@ -174,20 +197,20 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
                             break;
                         }
                     }
-                    else if (TrySelectOption(IsIslandOption))
+                    else if (TrySelectOption(IsIslandOption, () => CheckPagosEntry(now)))
                     {
                         confirmed = false;
                         nextDialogueAction = now.AddMilliseconds(600);
                         ChangeStage(Stage.Enter, now, $"已选择{islandName}，等待进岛。");
                     }
-                    else if (!openedIslandMenu && TrySelectOption(text => text.Trim() is "进入禁地优雷卡" or "前往禁地优雷卡"))
+                    else if (Active && !openedIslandMenu && TrySelectOption(text => text.Trim() is "进入禁地优雷卡" or "前往禁地优雷卡"))
                     {
                         openedIslandMenu = true;
                         stageAt = now;
                         nextDialogueAction = now.AddMilliseconds(900);
                         break;
                     }
-                    if (stage == Stage.Menu && AdvanceTalk(purchase ? VendorName : "罗德尼"))
+                    if (Active && stage == Stage.Menu && AdvanceTalk(purchase ? VendorName : "罗德尼"))
                         nextDialogueAction = now.AddMilliseconds(400);
                     break;
                 case Stage.Enter:
@@ -224,9 +247,18 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
         if (npc != null && Vector3.Distance(player.Position, npc.Position) <= 3)
         { ChangeStage(Stage.Interact, now, "确认目标NPC。"); return; }
         var point = NavigationRules.StandOff(player.Position, position, 1.5f);
-        walk.Start(new(world.Territory, world.Map, point, purchase ? "调查队的补给负责人" : "罗德尼"),
-            world, player.Position, [], now, false, arrivalRadius: 1.5f, unknownHeight: purchase && npc == null);
-        if (!walk.Active) { Stop(walk.Status); return; }
+        var destination = new MapDestination(world.Territory, world.Map, point, purchase ? VendorName : "罗德尼");
+        if (purchase)
+        {
+            islandWalk.Start(destination, world, player.Position, [], now,
+                waitWithoutFate: false, arrivalRadius: 1.5f, unknownHeight: npc == null);
+            if (!islandWalk.Active) { Stop(islandWalk.Status); return; }
+        }
+        else
+        {
+            walk.Start(destination, world, player.Position, [], now, false, arrivalRadius: 1.5f, unknownHeight: false);
+            if (!walk.Active) { Stop(walk.Status); return; }
+        }
         ChangeStage(Stage.Walk, now, purchase ? "前往补给负责人。" : "前往罗德尼。");
     }
 
@@ -240,6 +272,48 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
 
     private bool LifestreamBusy() => plugin.GetIpcSubscriber<bool>("Lifestream.IsBusy").InvokeFunc();
 
+    private bool CheckPagosEntry(DateTimeOffset now)
+    {
+        if (!CheckPagosRing || destinationIsland != Pagos) return true;
+        if (pagosWeather == null)
+        {
+            Stop("无法读取恒冰天气，已停止自动参加。");
+            return false;
+        }
+
+        var until = now.AddHours(3);
+        var periods = (int)((until - WeatherForecastHelper.PeriodStart(now)).TotalSeconds
+            / WeatherForecastHelper.PeriodSeconds) + 1;
+        var fog = WeatherForecastHelper.GetForecast(pagosWeather, now, periods)
+            .FirstOrDefault(period => period.WeatherId == Fog);
+        if (fog == null) return true;
+
+        var inventory = InventoryManager.Instance();
+        var unread = false;
+        foreach (var type in CarriedRingContainers)
+        {
+            var container = inventory == null ? null : inventory->GetInventoryContainer(type);
+            if (container == null || !container->IsLoaded || container->Items == null || container->Size is < 1 or > 1000)
+            {
+                unread = true;
+                continue;
+            }
+            for (var slot = 0; slot < container->Size; slot++)
+            {
+                var item = container->GetInventorySlot(slot);
+                if (item == null || item->GetBaseItemId() != Blitzring || item->GetQuantity() == 0) continue;
+                var timing = fog.Start <= now ? "当前为薄雾" : $"预计 {fog.Start.ToLocalTime():HH:mm} 出现薄雾";
+                var message = $"恒冰之地{timing}，检测到你携带或装备了闪袭指环，已取消自动参加。";
+                Stop(message);
+                notify(message);
+                return false;
+            }
+        }
+        if (!unread) return true;
+        Stop("恒冰之地三小时内有薄雾，但无法确认随身库存，已停止自动参加。");
+        return false;
+    }
+
     private bool IsIslandOption(string text)
     {
         text = text.Trim().TrimEnd('。', '！', '？');
@@ -249,6 +323,9 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
             text = text[prefix.Length..].TrimStart();
             break;
         }
+        // Rodney wraps the full duty name in quotation marks after “进入”.
+        if (text.Length >= 2 && (text[0], text[^1]) is ('“', '”') or ('"', '"') or ('「', '」'))
+            text = text[1..^1].Trim();
         const string title = "禁地优雷卡";
         if (text.StartsWith(title, StringComparison.Ordinal))
             text = text[title.Length..].TrimStart(' ', '　', ':', '：', '·');
@@ -273,7 +350,7 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
     private bool HasDialog() => Addon("SelectString") != null || Addon("SelectIconString") != null || Addon("SelectYesno") != null
         || Addon("Talk") != null || Addon("Shop") != null || Addon("ContentsFinderConfirm") != null;
 
-    private bool TrySelectOption(Func<string, bool> matches)
+    private bool TrySelectOption(Func<string, bool> matches, Func<bool>? canSubmit = null)
     {
         if (Addon("SelectYesno") != null || Addon("ContentsFinderConfirm") != null) return false;
         var menu = Addon("SelectString");
@@ -289,7 +366,7 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
             if (selected >= 0) return false;
             selected = i;
         }
-        return selected >= 0 && !popup->List->GetItemDisabledState(selected)
+        return selected >= 0 && !popup->List->GetItemDisabledState(selected) && (canSubmit == null || canSubmit())
             && Callback(menu != null ? menu : iconMenu, [selected]);
     }
 
@@ -432,6 +509,7 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
     {
         Active = false;
         walk.Stop();
+        if (islandWalk.Active) islandWalk.Stop();
         if (ownsLifestream)
         {
             try { if (LifestreamBusy()) plugin.GetIpcSubscriber<object>("Lifestream.Abort").InvokeAction(); }
@@ -441,5 +519,5 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
         Status = status;
     }
 
-    public void Dispose() { Stop("插件卸载。"); walk.Dispose(); }
+    public void Dispose() { Stop("插件卸载。"); walk.Dispose(); islandWalk.Dispose(); }
 }

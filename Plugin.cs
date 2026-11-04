@@ -38,7 +38,6 @@ public sealed class Plugin : IDalamudPlugin
         this.commandManager = commandManager;
         settings = new(Path.Combine(pluginInterface.GetPluginConfigDirectory(), "settings.json"), ex => log.Warning(ex, "保存或读取设置失败"));
         inventoryTracker = new(pluginInterface, framework, clientState, playerState, dataManager, gameInventory, addonLifecycle, log, gameGui);
-        automation = new(pluginInterface, framework, clientState, objects, fates, conditions, chat, gameGui, log, party, dataManager, interop, playerState, commandManager, targets, settings);
         IReadOnlyList<WeatherZone> weatherZones = [];
         string? weatherError = null;
         try { weatherZones = WeatherCatalogLoader.Load(dataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>()!); }
@@ -47,9 +46,12 @@ public sealed class Plugin : IDalamudPlugin
             weatherError = "读取天气数据失败，请检查本机游戏数据并重新加载插件。";
             log.Error(ex, "加载优雷卡天气表失败");
         }
+        automation = new(pluginInterface, framework, clientState, objects, fates, conditions, chat, gameGui, log, party, dataManager, interop, playerState, commandManager, targets, weatherZones.SingleOrDefault(zone => zone.TerritoryId == CommonJourney.Pagos), settings);
         logosInventory=new(framework,objects,playerState,gameGui,logos.Catalog);
         fateTracker = new(dataManager, framework, clientState, objects, fates, gameGui, log, scanner, playerState, chat, settings);
+        automation.ElementalMaps = fateTracker;
         bunnies=new(framework,clientState,objects,playerState,chat,fateTracker,log);
+        automation.AttachBunnyTracker(bunnies);
         mainWindow = new(inventoryTracker, automation, weatherZones, fateTracker, new GameMapTextures(textures), weatherError, settings, new LogosPage(id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText(), id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>()!.GetRow(id).Name.ExtractText(), () => objects.LocalPlayer is {} player ? new LogosWorld(player.CurrentWorld.RowId,player.CurrentWorld.Value.Name.ExtractText(),player.CurrentWorld.Value.DataCenter.Value.Name.ExtractText()) : null, logos, settings,()=>logosInventory.Snapshot), new BunnyPage(bunnies,id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText(),settings));
         windows.AddWindow(mainWindow);
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)

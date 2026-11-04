@@ -2,6 +2,7 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using ULKHelper.Bunnies;
 using ULKHelper.Fates;
+using ULKHelper.Automation;
 
 namespace ULKHelper.Windows;
 internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName,SettingsStore? settings=null)
@@ -10,6 +11,8 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
     private int manualHint,manualDirection;
     private long lastResetVersion=tracker.Snapshot.ResetVersion;
     private readonly BunnyPoint[] all=BunnyCatalog.Load();
+    private readonly HashSet<ushort> selectedBunnyFates = [];
+    private int digLimit = Math.Max(0, settings?.Get("bunny.digLimit", 0) ?? 0);
     public bool ConsumeReset()
     {
         if(lastResetVersion==tracker.Snapshot.ResetVersion)return false;
@@ -17,30 +20,73 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
     }
     public void DrawVisibilityToggle()
     {
-        ImGui.Checkbox("显示挖宝点位",ref showPoints);
+        ImGui.Checkbox("挖宝点位",ref showPoints);
         settings?.Put("bunny.showPoints",showPoints);
     }
-    public void DrawSummary(IslandMap map)
+    public void DrawSummary(IslandMap map, IAutomationHelpers? automation = null)
     {
         var state=tracker.Snapshot;var points=all.Count(p=>p.Territory==map.Territory);
-        ImGui.TextUnformatted("兔子挖宝");
-        if(points==0){ImGui.TextWrapped("本岛没有幸福兔挖宝点位。");return;}
         var current=state.Territory==map.Territory;
+        var bunnyFates = map.Fates.Where(f => f.Seed.Bunny).ToArray();
+        var running = automation?.BunnyAutomationActive == true;
+        if (automation != null && (bunnyFates.Length > 0 || running))
+        {
+            var selected = bunnyFates.Select(f => f.Seed.Id).Where(selectedBunnyFates.Contains).ToArray();
+            var limitWidth = ImGui.GetFontSize() * 4;
+            var limitLabelWidth = ImGui.CalcTextSize("挖个").X + ImGui.GetStyle().ItemSpacing.X * 3;
+            ImGui.BeginDisabled(!running && (!current || selected.Length == 0));
+            if (ImGui.Button(running ? "停止自动挖宝" : "自动挖宝",
+                new Vector2(Math.Max(70, ImGui.GetContentRegionAvail().X - limitWidth - limitLabelWidth), 0)))
+                automation.SetBunnyAutomation(map.Territory, selected, !running, digLimit);
+            ImGui.EndDisabled();
+            ImGui.SameLine(); ImGui.AlignTextToFramePadding(); ImGui.TextUnformatted("挖");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(limitWidth);
+            ImGui.BeginDisabled(running);
+            if (ImGui.InputInt("##BunnyLimit", ref digLimit, 0, 0))
+            {
+                digLimit = Math.Max(0, digLimit);
+                settings?.Put("bunny.digLimit", digLimit);
+            }
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("0 表示不限数量。仅统计系统确认挖出的宝箱。");
+            ImGui.SameLine(); ImGui.TextUnformatted("个");
+            ImGui.BeginDisabled(running);
+            for (var i = 0; i < bunnyFates.Length; i++)
+            {
+                var fate = bunnyFates[i];
+                if (i > 0) ImGui.SameLine();
+                var enabled = selectedBunnyFates.Contains(fate.Seed.Id);
+                if (ImGui.Checkbox($"{fate.Level}级兔子##{fate.Seed.Id}", ref enabled))
+                {
+                    if (enabled) selectedBunnyFates.Add(fate.Seed.Id);
+                    else selectedBunnyFates.Remove(fate.Seed.Id);
+                }
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip(fate.Name);
+            }
+            ImGui.EndDisabled();
+            ImGui.TextUnformatted($"已挖 {automation.BunnyFoundCount}/{(digLimit == 0 ? "∞" : digLimit.ToString())} · {automation.BunnyAutomationStatus}");
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip(automation.BunnyAutomationStatus);
+        }
+        else ImGui.TextUnformatted("自动挖宝（幸福兔）");
+        if(points==0){ImGui.TextWrapped("本岛没有幸福兔挖宝点位。");return;}
         ImGui.TextUnformatted($"固定点位 {points} · 候选 {(current&&state.Clues.Count>0?state.Candidates.Count:points)}");
         if(state.Conflict)ImGui.PushStyleColor(ImGuiCol.Text,new Vector4(1,.4f,.35f,1));
-        ImGui.TextWrapped(current?state.Status:"进入对应岛屿并获得指引财宝后自动监听。");
+        var status = current ? state.Status : "获得指引财宝后自动监听。";
+        ImGui.TextUnformatted(status);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(status);
         if(state.Conflict)ImGui.PopStyleColor();
-        ImGui.Checkbox("显示已排除点",ref showExcluded);
+        ImGui.Checkbox("显示已排除点",ref showExcluded);ImGui.SameLine();
         ImGui.BeginDisabled(!current||!state.Active);
         if(ImGui.SmallButton("撤销上条"))tracker.Undo();ImGui.SameLine();if(ImGui.SmallButton("重置推断"))tracker.Reset();
         ImGui.EndDisabled();ImGui.SameLine();
         if(ImGui.SmallButton("线索 / 掉落"))ImGui.OpenPopup("##BunnyDetails");
-        if(current&&state.Clues.LastOrDefault() is {} clue)ImGui.TextWrapped(clue.Text);
+        if(current&&state.Clues.LastOrDefault() is {} clue&&ImGui.IsItemHovered())ImGui.SetTooltip(clue.Text);
         ImGui.SetNextWindowSize(new Vector2(410,440),ImGuiCond.Appearing);
         if(ImGui.BeginPopup("##BunnyDetails"))
         {
             ImGui.PushTextWrapPos(0);
-            ImGui.TextWrapped("自行使用胡萝卜，按方向＋距离筛选。地图正北为基准，边界含6米容差；剩1点自动插旗。状态结束自动重置。");
+            ImGui.TextWrapped("胡萝卜提示按方向＋距离筛选。地图正北为基准，边界含6米容差；剩1点自动插旗。状态结束自动重置。");
             ImGui.BeginDisabled(!current||!state.Active);
             if(ImGui.CollapsingHeader("手动补记提示"))
             {

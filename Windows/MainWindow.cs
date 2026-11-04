@@ -14,11 +14,10 @@ internal sealed class MainWindow : Window
     private readonly AutomationPage automation;
     private readonly WeatherPage weather;
     private readonly FateMapPage fateMap;
-    private readonly FateMapPage triggerMap;
     private readonly SettingsStore? settings;
     private readonly LogosPage logos;
     private readonly CommonPage common;
-    private const int TabCount = 6;
+    private const int TabCount = 5;
     private bool firstDraw = true;
     private int selectedTab;
     private DateTimeOffset nextLayout;
@@ -30,10 +29,9 @@ internal sealed class MainWindow : Window
         logos = logosPage!;
         common = new(helpers, fateProvider);
         itemStatistics = new(statistics);
-        triggerMap = new(fateProvider, mapTextures, weatherZones, helpers);
-        automation = new(helpers, triggerMap);
         weather = new(weatherZones, weatherError);
         fateMap = new(fateProvider, mapTextures, weatherZones, helpers, bunnyPage);
+        automation = new(helpers, fateMap);
         this.settings = settings;
         selectedTab = settings?.Get("window.tab",0)??0;
         var schema=settings?.Get("window.tabSchema",0)??0;
@@ -41,8 +39,9 @@ internal sealed class MainWindow : Window
         if(schema<2&&selectedTab>=3)selectedTab++;
         if(schema<3)selectedTab=selectedTab==3?2:selectedTab>3?selectedTab-1:selectedTab;
         if(schema<4 && (settings?.Get("window.tab",-1)??-1)>=0)selectedTab++;
+        if(schema<5)selectedTab=selectedTab==5?3:selectedTab==6?5:selectedTab;
         selectedTab=Math.Clamp(selectedTab,0,TabCount - 1);
-        if (settings != null) { itemStatistics.Load(settings); weather.Load(settings); fateMap.Load(settings, "map"); triggerMap.Load(settings, "triggerMap"); automation.Load(settings); }
+        if (settings != null) { itemStatistics.Load(settings); weather.Load(settings); fateMap.Load(settings, "map"); automation.Load(settings); }
         Size = settings?.Get("window.size", new Vector2(1280, 780)) ?? new Vector2(1280, 780);
         SizeCondition = ImGuiCond.Once;
         if (settings != null) { Position = settings.Get("window.position", new Vector2(80, 80)); PositionCondition = ImGuiCond.Once; }
@@ -88,10 +87,10 @@ internal sealed class MainWindow : Window
             }
 
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("地图 / FATE", firstDraw && restoreTab == 3 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("地图 / 自动化", firstDraw && restoreTab == 3 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
                 selectedTab = 3;
-                try { DrawPage(fateMap.Draw); }
+                try { DrawPage(automation.Draw); }
                 finally { ImGui.EndTabItem(); }
             }
 
@@ -101,13 +100,6 @@ internal sealed class MainWindow : Window
                 selectedTab = 4;
                 try { DrawPage(logos.Draw); } finally { ImGui.EndTabItem(); }
             }
-            ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("自动化", firstDraw && restoreTab == 5 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
-            {
-                selectedTab = 5;
-                try { DrawPage(DrawAutomationPage); }
-                finally { ImGui.EndTabItem(); }
-            }
         }
         finally
         {
@@ -115,8 +107,8 @@ internal sealed class MainWindow : Window
             firstDraw = false;
             if (settings != null)
             {
-                itemStatistics.Save(settings); weather.Save(settings); fateMap.Save(settings, "map"); triggerMap.Save(settings, "triggerMap"); automation.Save(settings);
-                settings.Put("window.tabSchema",4); settings.Put("window.size", ImGui.GetWindowSize()); settings.Put("window.position", ImGui.GetWindowPos()); settings.Put("window.tab", selectedTab);
+                itemStatistics.Save(settings); weather.Save(settings); fateMap.Save(settings, "map"); automation.Save(settings);
+                settings.Put("window.tabSchema",5); settings.Put("window.size", ImGui.GetWindowSize()); settings.Put("window.position", ImGui.GetWindowPos()); settings.Put("window.tab", selectedTab);
                 if (DateTimeOffset.UtcNow >= nextLayout || ImGui.IsMouseReleased(ImGuiMouseButton.Left)) { LayoutSettings.Capture(settings); nextLayout = DateTimeOffset.UtcNow.AddSeconds(1); }
                 settings.Flush();
             }
@@ -137,8 +129,6 @@ internal sealed class MainWindow : Window
         }
         finally { ImGui.EndChild(); }
     }
-
-    private void DrawAutomationPage() => automation.Draw();
 
     private void DrawItemStatisticsPage() => itemStatistics.Draw();
 }

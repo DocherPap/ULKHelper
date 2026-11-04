@@ -1,8 +1,10 @@
 using System.Numerics;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.System.String;
+using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
@@ -21,6 +23,11 @@ internal sealed partial class AutomationHelpers
     private readonly CommonJourney commonJourney;
     private readonly IPartyList commonParty;
     private volatile bool autoInvite, autoAccept;
+    private volatile bool walkNearPagosDragon;
+    private bool wasNearPagosDragon;
+    private DateTimeOffset nextDragonCheck;
+    // Local CN BNpcName sheet: 虚无冰雪龙.
+    private const uint PagosDragonNameId = 7473;
     private string commonStatus = "请选择常用功能。";
     private bool commonUsesNavigation, commonUsesFollow;
     private DateTimeOffset nextInvite, nextAccept, nextShout;
@@ -29,7 +36,9 @@ internal sealed partial class AutomationHelpers
 
     public bool AutoInvite => autoInvite;
     public bool AutoAccept => autoAccept;
-    public string CommonStatus => commonJourney.Active ? commonJourney.Status
+    public bool CheckPagosRing => commonJourney.CheckPagosRing;
+    public bool WalkNearPagosDragon => walkNearPagosDragon;
+    public string CommonStatus => SurveyActive ? surveyStatus : commonJourney.Active ? commonJourney.Status
         : commonUsesFollow ? follow.Status : commonUsesNavigation ? navigation.Status : commonStatus;
 
     public void SetCommonParty(bool invite, bool enabled) => commands.Enqueue(() =>
@@ -39,8 +48,44 @@ internal sealed partial class AutomationHelpers
         settings?.Put(invite ? "common.autoInvite" : "common.autoAccept", enabled);
     });
 
+    public void SetCheckPagosRing(bool enabled) => commands.Enqueue(() =>
+    {
+        commonJourney.CheckPagosRing = enabled;
+        settings?.Put("common.checkPagosRing", enabled);
+    });
+
+    public void SetWalkNearPagosDragon(bool enabled) => commands.Enqueue(() =>
+    {
+        walkNearPagosDragon = enabled;
+        wasNearPagosDragon = false;
+        nextDragonCheck = default;
+        settings?.Put("common.walkNearPagosDragon", enabled);
+    });
+
+    private unsafe void TickPagosDragon(WorldContext world, bool loading, DateTimeOffset now)
+    {
+        if (!walkNearPagosDragon || world.Territory != CommonJourney.Pagos)
+        {
+            wasNearPagosDragon = false;
+            return;
+        }
+        if (loading || !SafeState() || now < nextDragonCheck || objects.LocalPlayer is not { } player) return;
+        nextDragonCheck = now.AddMilliseconds(100);
+        var nearby = objects.OfType<IBattleNpc>().Any(npc => npc.NameId == PagosDragonNameId && !npc.IsDead
+            && Vector3.DistanceSquared(player.Position, npc.Position) <= 15 * 15);
+        if (nearby && !wasNearPagosDragon)
+        {
+            var control = Control.Instance();
+            if (control == null) return;
+            if (!control->IsWalking) control->IsWalking = true;
+        }
+        wasNearPagosDragon = nearby;
+    }
+
     private void StopTasks()
     {
+        StopBunnyAutomation("已停止自动挖宝。");
+        if (SurveyActive) StopSurvey("已停止元灵巡查。");
         commonJourney.Stop("已停止常用功能。");
         trigger.Stop();
         follow.Stop();
@@ -97,13 +142,14 @@ internal sealed partial class AutomationHelpers
             }
             return;
         }
-        if (!CanMove() || objects.LocalPlayer is not { } player)
-        { commonStatus = "请脱战并结束交互后重试。"; return; }
-        if (commonJourney.Active || trigger.Active || follow.Active || navigation.Active || combat.CleanupPending)
+        if (!SafeState() || objects.LocalPlayer is not { } player)
+        { commonStatus = "请结束交互后重试。"; return; }
+        if (BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active || follow.Active || navigation.Active || combat.CleanupPending)
         { commonStatus = "请先停止当前任务。"; return; }
 
         if (action is CommonAction.Entrance or CommonAction.Potion or CommonAction.Anemos or CommonAction.Pagos or CommonAction.Pyros or CommonAction.Hydatos)
         {
+            if (conditions[ConditionFlag.InCombat]) { commonStatus = "请脱战后再开始 NPC 行程。"; return; }
             commonJourney.Start(action, world, now);
             commonStatus = commonJourney.Status;
             return;
@@ -120,7 +166,7 @@ internal sealed partial class AutomationHelpers
                 commonUsesNavigation = true;
                 StartPointNavigation(new(world.Territory, world.Map, ArrivalRules.Position(player.Position, crystal.Position, 7),
                     action == CommonAction.Camp ? "入口营地" : "最近的水晶"), false,
-                    useCrystals: action == CommonAction.Camp, waitWithoutFate: action != CommonAction.Camp);
+                    waitWithoutFate: action != CommonAction.Camp);
                 break;
             case CommonAction.Coordinate:
             case CommonAction.Fate:
@@ -129,7 +175,7 @@ internal sealed partial class AutomationHelpers
                 if (action == CommonAction.Fate && NavigationRules.FindFate(goal.Position, ReadFates()) == null)
                 { commonStatus = "旗标50米内没有进行中的FATE。"; return; }
                 commonUsesNavigation = true;
-                StartPointNavigation(goal, action == CommonAction.Fate, useCrystals: false);
+                StartPointNavigation(goal, action == CommonAction.Fate);
                 break;
             case CommonAction.WaitForPull:
                 var fate = ReadFates().Where(f => NavigationRules.Distance(player.Position, f.Position) <= 100)

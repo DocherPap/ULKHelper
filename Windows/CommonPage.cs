@@ -28,8 +28,22 @@ internal sealed class CommonPage(AutomationHelpers helpers, IFateMapProvider map
             Button("前往最近的水晶挂机", CommonAction.NearestCrystal);
             ImGui.EndTable();
         }
+        var checkRing = helpers.CheckPagosRing;
+        if (ImGui.Checkbox("进入恒冰之地前检查闪袭指环", ref checkRing)) helpers.SetCheckPagosRing(checkRing);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("未来 3 个现实小时内有薄雾时，携带或装备闪袭指环会取消自动参加。");
+        var walkNearDragon = helpers.WalkNearPagosDragon;
+        if (ImGui.Checkbox("恒冰靠近冰雪龙时自动走路", ref walkNearDragon)) helpers.SetWalkNearPagosDragon(walkNearDragon);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("进入虚无冰雪龙 15 米范围时检查一次，已走路时保持原状，离开后保留走路模式。");
+        var survey = helpers.QuickElementalSurvey;
+        if (ImGui.Checkbox("快速检查元灵", ref survey)) helpers.SetQuickElementalSurvey(survey);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("进岛后巡查本岛可用水晶，记录各水晶周围 100 米内可见的元灵，检查完返回营地。");
         ImGui.Separator();
 
+        DrawNavigationSettings();
+        ImGui.Separator();
         ImGui.TextUnformatted("地图与战斗");
         ImGui.TextWrapped("坐标导航使用当前岛地图上的旗标。");
         if (ImGui.BeginTable("##CommonNavigation", 2, ImGuiTableFlags.SizingStretchSame))
@@ -62,6 +76,34 @@ internal sealed class CommonPage(AutomationHelpers helpers, IFateMapProvider map
             Button("发送求救", CommonAction.Rescue);
             ImGui.EndTable();
         }
+    }
+
+    private void DrawNavigationSettings()
+    {
+        var state = helpers.Snapshot;
+        ImGui.TextUnformatted("导航");
+        var owned = state.Mounts ?? [];
+        ImGui.BeginDisabled(state.Navigating);
+        ImGui.TextUnformatted("坐骑"); ImGui.SameLine(); ImGui.SetNextItemWidth(-1);
+        if (ImGui.BeginCombo("##FollowMount", owned.FirstOrDefault(m => m.Id == state.SelectedMount)?.Name ?? "选择已拥有的坐骑"))
+        {
+            foreach (var mount in owned)
+            {
+                ImGui.BeginDisabled(mount.Immobile);
+                if (ImGui.Selectable(mount.Name + (mount.Immobile ? "（不可移动）" : "") + $"##Mount{mount.Id}", mount.Id == state.SelectedMount)) helpers.SelectMount(mount.Id);
+                ImGui.EndDisabled();
+            }
+            ImGui.EndCombo();
+        }
+        ImGui.EndDisabled();
+        ImGui.TextWrapped(state.Destination?.Label ?? "尚无车头坐标。");
+        ImGui.BeginDisabled(state.Destination == null || state.Navigating);
+        if (ImGui.Button("开始导航到目的地")) helpers.Navigate();
+        ImGui.EndDisabled(); ImGui.SameLine();
+        ImGui.BeginDisabled(!state.Navigating);
+        if (ImGui.Button("停止")) helpers.Stop();
+        ImGui.EndDisabled();
+        ImGui.TextWrapped(state.NavigationStatus);
     }
 
     private void Button(string label, CommonAction action)

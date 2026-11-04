@@ -11,6 +11,7 @@ using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using ULKHelper.Weather;
 
 namespace ULKHelper.Automation;
 
@@ -42,7 +43,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     private readonly TriggerKillGameTracker kills;
     private readonly AutoTriggerHelper trigger;
     private readonly TriggerGameReader triggerReader;
-    private readonly Dictionary<ushort, Vector3[]> triggerRoutes = new();
+    private readonly Dictionary<ushort, TriggerRouteSet> triggerRoutes = new();
     private volatile AutoTriggerSnapshot triggerSnapshot = AutoTriggerSnapshot.Empty;
     private DateTimeOffset nextTrigger;
     private readonly INavigationMesh mesh;
@@ -59,7 +60,8 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
 
     public AutomationHelpers(IDalamudPluginInterface plugin, IFramework framework, IClientState client,
         IObjectTable objects, IFateTable fates, ICondition conditions, IChatGui chat, IGameGui gui, IPluginLog log, IPartyList party,
-        IDataManager data, IGameInteropProvider interop, IPlayerState playerState, ICommandManager commandManager, ITargetManager targets, SettingsStore? settings = null)
+        IDataManager data, IGameInteropProvider interop, IPlayerState playerState, ICommandManager commandManager, ITargetManager targets,
+        WeatherZone? pagosWeather, SettingsStore? settings = null)
     {
         this.framework = framework; this.client = client; this.objects = objects; this.fates = fates;
         this.conditions = conditions; this.chat = chat; this.gui = gui; this.log = log;
@@ -70,15 +72,37 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         mounts = new(objects, data);
         arrivalGame = new(objects, party, fates, mounts);
         navigation = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame);
+        surveyTravel = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame);
+        bunnyTravel = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame);
+        quickElementalSurvey = settings?.Get("common.quickElementalSurvey", false) ?? false;
         combat = new(plugin, commandManager, objects, targets);
         follow = new(navigation, mesh, mounts, combat);
         kills = new(objects, fates, data);
-        trigger = new(mesh, mounts, combat); triggerReader = new(objects, data);
-        commonJourney = new(plugin, mesh, client, objects, gui, data, conditions, arrivalGame);
+        trigger = new(mesh, mounts, combat, new IslandCrystalGameAdapter(objects, gui, data)); triggerReader = new(objects, data);
+        commonJourney = new(plugin, mesh, client, objects, gui, data, conditions, arrivalGame, pagosWeather, message => chat.Print(message));
+        commonJourney.CheckPagosRing = settings?.Get("common.checkPagosRing", false) ?? false;
         autoInvite = settings?.Get("common.autoInvite", false) ?? false;
         autoAccept = settings?.Get("common.autoAccept", false) ?? false;
-        foreach (var pair in settings?.Get("trigger.routes", new Dictionary<ushort, Vector3[]>()) ?? new())
-            if (pair.Value != null && pair.Value.Length <= 128 && pair.Value.All(NavigationRules.Finite)) triggerRoutes[pair.Key] = pair.Value;
+        walkNearPagosDragon = settings?.Get("common.walkNearPagosDragon", false) ?? false;
+        var savedRoutes = settings?.Get<Dictionary<ushort, TriggerRouteSet>?>("trigger.routeSets", null);
+        if (savedRoutes == null)
+        {
+            foreach (var (id, points) in settings?.Get("trigger.routes", new Dictionary<ushort, Vector3[]>()) ?? new())
+                if (ValidTriggerRoute(points)) triggerRoutes[id] = new(0, [points]);
+        }
+        else
+        {
+            foreach (var (id, set) in savedRoutes)
+            {
+                if (set?.Paths is not { Length: > 0 } paths) continue;
+                var valid = paths.Select((path, index) => (path, index)).Where(p => ValidTriggerRoute(p.path))
+                    .Take(TriggerRouteSet.MaxRoutes).ToArray();
+                if (valid.Length == 0) continue;
+                var selected = Array.FindIndex(valid, p => p.index == set.Selected);
+                triggerRoutes[id] = new(Math.Max(0, selected), valid.Select(p => p.path).ToArray(),
+                    valid.Select(p => set.Names?.ElementAtOrDefault(p.index) ?? "").ToArray());
+            }
+        }
         rosterSource = new(interop, data, objects);
         roster = new(rosterSource);
         framework.Update += Update;
@@ -86,36 +110,83 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     }
 
     public AutoTriggerSnapshot TriggerSnapshot => triggerSnapshot;
-    public void RecordTriggerPoint(ushort fateId, bool reset = false) => commands.Enqueue(() =>
+    private static bool ValidTriggerRoute(Vector3[]? points) =>
+        points is { Length: > 0 and <= 128 } && points.All(NavigationRules.Finite);
+
+    public void RecordTriggerPoint(ushort fateId, bool newRoute = false) => commands.Enqueue(() =>
     {
         if (trigger.Active || !SafeState() || objects.LocalPlayer is not { } player
             || !triggerReader.Rules.Any(r => r.FateId == fateId && r.Territory == client.TerritoryType)) return;
-        var points = reset ? [] : triggerRoutes.GetValueOrDefault(fateId, []);
-        if (points.Length >= 128) return;
-        triggerRoutes[fateId] = [.. points, player.Position];
-        settings?.Put("trigger.routes", triggerRoutes); settings?.Flush();
+        if (!NavigationRules.Finite(player.Position)) return;
+        var set = triggerRoutes.GetValueOrDefault(fateId);
+        if (newRoute)
+        {
+            var paths = set?.Paths ?? [];
+            if (paths.Length >= TriggerRouteSet.MaxRoutes) return;
+            triggerRoutes[fateId] = new(paths.Length, [.. paths, new[] { player.Position }], set?.Names);
+        }
+        else
+        {
+            if (set == null || set.Current.Length is 0 or >= 128) return;
+            var paths = set.Paths.ToArray();
+            paths[set.Selected] = [.. set.Current, player.Position];
+            triggerRoutes[fateId] = set with { Paths = paths };
+        }
+        SaveTriggerRoutes();
+    });
+    public void SelectTriggerRoute(ushort fateId, int index) => commands.Enqueue(() =>
+    {
+        if (trigger.Active || !triggerRoutes.TryGetValue(fateId, out var set)
+            || index < 0 || index >= set.Paths.Length || index == set.Selected) return;
+        triggerRoutes[fateId] = set with { Selected = index };
+        SaveTriggerRoutes();
     });
     public void ClearTriggerRoute(ushort fateId) => commands.Enqueue(() =>
-    { if (!trigger.Active) { triggerRoutes.Remove(fateId); settings?.Put("trigger.routes", triggerRoutes); settings?.Flush(); } });
-    public void StartTrigger(IReadOnlyList<TriggerPlan> plans, int batch, int maxKills)
+    {
+        if (trigger.Active || !triggerRoutes.TryGetValue(fateId, out var set)) return;
+        var paths = set.Paths.Where((_, index) => index != set.Selected).ToArray();
+        if (paths.Length == 0) triggerRoutes.Remove(fateId);
+        else triggerRoutes[fateId] = new(Math.Min(set.Selected, paths.Length - 1), paths,
+            Enumerable.Range(0, set.Paths.Length).Where(index => index != set.Selected)
+                .Select(index => set.Names?.ElementAtOrDefault(index) ?? "").ToArray());
+        SaveTriggerRoutes();
+    });
+    public void RenameTriggerRoute(ushort fateId, int index, string name) => commands.Enqueue(() =>
+    {
+        if (trigger.Active || !triggerRoutes.TryGetValue(fateId, out var set) || index < 0 || index >= set.Paths.Length) return;
+        name = name.Trim();
+        if (name.Length > 64) return;
+        var names = Enumerable.Range(0, set.Paths.Length).Select(i => set.Names?.ElementAtOrDefault(i) ?? "").ToArray();
+        names[index] = name;
+        triggerRoutes[fateId] = set with { Names = names };
+        SaveTriggerRoutes();
+    });
+    private void SaveTriggerRoutes()
+    {
+        settings?.Put("trigger.routeSets", triggerRoutes);
+        settings?.Flush();
+        triggerSnapshot = triggerSnapshot with { Routes = new Dictionary<ushort, TriggerRouteSet>(triggerRoutes) };
+    }
+    public void StartTrigger(IReadOnlyList<TriggerPlan> plans, int batch, int maxKills, bool useRotation = true, bool useBmr = true)
     {
         var copy = plans.Select(p => p with { Route = p.Route.ToArray() }).ToArray();
         commands.Enqueue(() =>
         {
             if (trigger.Active) return;
-            if (commonJourney.Active || follow.Active || navigation.Active || combat.CleanupPending) { trigger.Stop("请先停止当前任务，等待控制恢复。"); return; }
+            if (BunnyAutomationActive || SurveyActive || commonJourney.Active || follow.Active || navigation.Active || combat.CleanupPending) { trigger.Stop("请先停止当前任务，等待控制恢复。"); return; }
             if (copy.Any(p => !triggerReader.Rules.Any(r => r.FateId == p.FateId && r.Territory == client.TerritoryType))) { trigger.Stop("所选FATE没有已核实的本岛击杀规则。"); return; }
             if (copy.Any(p => p.Mode == TriggerMode.Recorded) && mounts.Selected == 0) { trigger.Stop("特殊触发请先选择坐骑。"); return; }
             var verified = copy.Select(p => p with { Level = data.GetExcelSheet<Lumina.Excel.Sheets.Fate>()!.GetRow(p.FateId).ClassJobLevel,
-                Route = triggerRoutes.GetValueOrDefault(p.FateId, []).ToArray() }).ToArray();
-            trigger.Start(verified, ReadTriggerFrame(Context()), batch, maxKills, DateTimeOffset.UtcNow);
+                Route = triggerRoutes.GetValueOrDefault(p.FateId)?.Current.ToArray() ?? [] }).ToArray();
+            trigger.Start(verified, ReadTriggerFrame(Context()), batch, maxKills, DateTimeOffset.UtcNow, useRotation, useBmr);
         });
     }
     private TriggerFrame ReadTriggerFrame(WorldContext world) => new(world, objects.LocalPlayer?.Position ?? Vector3.Zero,
-        SafeState(), conditions[ConditionFlag.Mounted], objects.LocalPlayer?.IsCasting ?? false, conditions[ConditionFlag.InCombat],
+        SafeState(trigger.Interacting || trigger.Transferring), conditions[ConditionFlag.Mounted], objects.LocalPlayer?.IsCasting ?? false, conditions[ConditionFlag.InCombat],
         TriggerGameReader.Level(), triggerReader.Read(world.Territory), fates.Where(f => f != null && f.TerritoryType.RowId == world.Territory
             && f.State is FateState.Preparing or FateState.Running or FateState.Ending).Select(f => f.FateId).ToHashSet(),
-        CanMountForTravel: mounts.Selected != 0);
+        CanMountForTravel: mounts.Selected != 0,
+        Loading: conditions[ConditionFlag.BetweenAreas] || conditions[ConditionFlag.BetweenAreas51] || objects.LocalPlayer == null);
     public AutomationSnapshot Snapshot => snapshot;
     public void SelectLeader(PlayerIdentity identity) => commands.Enqueue(() => SetLeader(identity));
     private void SetLeader(PlayerIdentity identity)
@@ -142,16 +213,16 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     });
     private void StartPointNavigation(MapDestination destination, bool useNm = true, bool useCrystals = true, bool waitWithoutFate = true)
     {
-        if (commonJourney.Active || trigger.Active) return;
+        if (BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active) return;
         follow.Stop(); navigation.Stop(); arrivalGame.Reset(); usingFollow = false;
-        if (!CanMove()) { navigation.Stop("当前角色状态不允许移动，请脱战并结束交互后重试。"); return; }
+        if (!SafeState()) { navigation.Stop("当前角色状态不允许移动，请结束交互后重试。"); return; }
         pointNm = useNm;
         navigation.Start(destination, Context(), objects.LocalPlayer!.Position, useNm ? ReadFates() : [], DateTimeOffset.UtcNow, mounts.Selected != 0, useCrystals, waitWithoutFate);
     }
     public void Follow(bool enabled) => commands.Enqueue(() =>
     {
         if (!enabled) { if (trigger.Active) return; follow.Stop(); listener.SetListening(false); return; }
-        if (commonJourney.Active || trigger.Active) return;
+        if (BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active) return;
         usingFollow = true;
         if (listener.Leader == null) { follow.Stop("请先选择车头。"); return; }
         if (mounts.Selected == 0) { follow.Stop("请先选择已解锁且可移动的坐骑。"); return; }
@@ -161,7 +232,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     public void Stop() => commands.Enqueue(StopTasks);
     public void Navigate() => commands.Enqueue(() =>
     {
-        if (commonJourney.Active || trigger.Active) return;
+        if (BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active) return;
         usingFollow = true; follow.Stop(); arrivalGame.Reset();
         if (listener.Destination is { } goal && objects.LocalPlayer is { } player && CanMove())
         {
@@ -191,15 +262,18 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         {
             var now = DateTimeOffset.UtcNow;
             settings?.Flush();
-            combat.TickMagiaRestore();
             var world = Context();
             var transferScreen = conditions[ConditionFlag.BetweenAreas] || conditions[ConditionFlag.BetweenAreas51] || objects.LocalPlayer == null;
-            world = NavigationRules.TransferContext(world, previous, client.IsLoggedIn, navigation.Transferring, transferScreen);
+            world = NavigationRules.TransferContext(world, previous, client.IsLoggedIn,
+                navigation.Transferring || surveyTravel.Transferring || trigger.Transferring || commonJourney.Transferring
+                || bunnyTravel.Transferring, transferScreen);
             if (world != previous)
             {
+                wasNearPagosDragon = false;
+                nextDragonCheck = default;
                 listener.Reset(); navigation.Stop("角色或地图变化，导航已停止。");
                 follow.Stop("角色或地图变化，已停止跟随。"); arrivalGame.Reset(); usingFollow = false;
-                combat.ForgetMagia(); trigger.Stop("切区或角色变化，触发已停止。"); triggerReader.Reset();
+                trigger.Stop("切区或角色变化，触发已停止。"); triggerReader.Reset();
                 roster.Reset(); invited.Clear(); lastAccepted = default;
                 kills.Reset(); nextKills = default;
                 mounts.Reset(); nextMounts = default;
@@ -212,8 +286,11 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             var journeyWasActive = commonJourney.Active;
             commonJourney.Tick(Context(), now);
             if (journeyWasActive && !commonJourney.Active) commonStatus = commonJourney.Status;
+            TickSurvey(world, transferScreen, now);
+            TickBunnyAutomation(world, transferScreen, now);
+            TickPagosDragon(world, transferScreen, now);
             TickCommonParty(now);
-            if (!trigger.Active && !follow.Active && combat.CleanupPending && now >= nextCleanup)
+            if (!trigger.Active && !follow.Active && !bunnyCombatOwned && combat.CleanupPending && now >= nextCleanup)
             { nextCleanup = now.AddSeconds(1); combat.Disable(); }
             if (SafeState() && playerState.ContentId != 0 && now >= nextMounts)
             { var restoreMount = mounts.Selected == 0; mounts.Refresh(); if (restoreMount) mounts.Select(settings?.Get("mount", 0u) ?? 0); if (mounts.Selected != 0) settings?.Put("mount", mounts.Selected); nextMounts = now.AddSeconds(30); }
@@ -226,7 +303,8 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             }
             if (now >= nextPlayers)
             {
-                players = roster.Merge(PlayerListHelper.GetPlayers(objects));
+                if (!transferScreen) rosterSource.ReadChangedList(client.TerritoryType);
+                players = roster.Merge(PlayerListHelper.GetPlayers(objects), rosterSource.SocialMembers);
                 nextPlayers = now.AddSeconds(1);
             }
             if (now >= nextTrigger)
@@ -235,7 +313,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                 var frame = ReadTriggerFrame(world);
                 trigger.Tick(frame, now);
                 triggerSnapshot = new(trigger.Active, trigger.Status, frame.Level, triggerReader.Areas,
-                    triggerRoutes.ToDictionary(p => p.Key, p => p.Value.ToArray()));
+                    new Dictionary<ushort, TriggerRouteSet>(triggerRoutes));
             }
             if (follow.Active && now >= nextFollow)
             {
@@ -250,11 +328,12 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                         && !conditions[ConditionFlag.WatchingCutscene], ReadFates(), observation, now);
             }
             else if (!follow.Active && navigation.Active)
-                navigation.Tick(world, objects.LocalPlayer?.Position ?? Vector3.Zero, !conditions[ConditionFlag.InCombat]
-                    && (CanMove() || (navigation.Interacting || navigation.Transferring) && SafeState(true)),
-                    transferScreen, conditions[ConditionFlag.Mounted], objects.LocalPlayer?.IsCasting ?? false, pointNm ? ReadFates() : [], now);
+                navigation.Tick(world, objects.LocalPlayer?.Position ?? Vector3.Zero, SafeState(navigation.Interacting || navigation.Transferring),
+                    transferScreen, conditions[ConditionFlag.Mounted], objects.LocalPlayer?.IsCasting ?? false,
+                    pointNm ? ReadFates() : [], now, conditions[ConditionFlag.InCombat]);
             snapshot = new(players, listener.Leader, listener.Listening, listener.Status, listener.Destination,
-                listener.History, commonJourney.Active || trigger.Active || follow.Active || navigation.Active, commonJourney.Active ? commonJourney.Status : trigger.Active ? trigger.Status : usingFollow ? follow.Status : navigation.Status, roster.Snapshot,
+                listener.History, BunnyAutomationActive || commonJourney.Active || trigger.Active || follow.Active || navigation.Active,
+                BunnyAutomationActive ? BunnyAutomationStatus : commonJourney.Active ? commonJourney.Status : trigger.Active ? trigger.Status : usingFollow ? follow.Status : navigation.Status, roster.Snapshot,
                 mounts.Owned, mounts.Selected, follow.Following, combat.CleanupPending && !follow.Active && !trigger.Active ? "等待恢复战斗插件状态。" : follow.Status, kills.Snapshot);
             if (navigation.CrystalDecision != reportedCrystalDecision)
             {
@@ -266,6 +345,8 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         {
             trigger.Stop("游戏状态读取失败，触发已停止。");
             commonJourney.Stop("游戏状态读取失败，常用功能已停止。");
+            if (SurveyActive) StopSurvey("游戏状态读取失败，元灵巡查已停止。");
+            StopBunnyAutomation("游戏状态读取失败，已停止自动挖宝。");
             triggerSnapshot = triggerSnapshot with { Active = false, Status = trigger.Status };
             navigation.Stop("游戏状态读取失败，导航已停止。");
             follow.Stop("游戏状态读取失败，已关闭战斗控制。"); arrivalGame.Reset();
@@ -329,6 +410,9 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         chat.ChatMessage -= OnChat; framework.Update -= Update;
         trigger.Stop("插件卸载，触发已停止。");
         commonJourney.Dispose();
+        surveyTravel.Dispose();
+        StopBunnyAutomation("插件已卸载。");
+        bunnyTravel.Dispose();
         navigation.Dispose();
         follow.Dispose();
         combat.Disable();

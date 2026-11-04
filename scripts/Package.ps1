@@ -1,7 +1,6 @@
 param(
     [string]$DalamudLibPath = $env:DALAMUD_HOME,
     [string]$Repository = 'DocherPap/ULKHelper',
-    [string]$ExistingRepo = '',
     [switch]$SkipBuild
 )
 $ErrorActionPreference = 'Stop'
@@ -50,9 +49,4 @@ $utf8 = [Text.UTF8Encoding]::new($false)
 $standalone = (ConvertTo-Json -InputObject @($entry) -Depth 20) + "`n"
 [IO.File]::WriteAllText((Join-Path $root 'repo.json'), $standalone, $utf8)
 [IO.File]::WriteAllText((Join-Path $dist 'repo.json'), $standalone, $utf8)
-if (-not $ExistingRepo) { $ExistingRepo = Join-Path $root 'release/MakoMaster.repo.snapshot.json' }
-$existing = @(Get-Content -LiteralPath $ExistingRepo -Raw | ConvertFrom-Json)
-$merged = @($existing | Where-Object { $_.InternalName -ne 'ULKHelper' }) + @($entry)
-if (@($merged | Group-Object InternalName | Where-Object Count -gt 1).Count) { throw '库链存在重复 InternalName。' }
-[IO.File]::WriteAllText((Join-Path $dist 'MakoMaster.repo.merged.json'), (ConvertTo-Json -InputObject $merged -Depth 20) + "`n", $utf8)
-Write-Output "已生成 $zip、SHA256、独立 repo.json 和 MakoMaster.repo.merged.json。尚未上传或发布。"
+Write-Output "已生成 $zip、SHA256 和 ULKHelper 独立 repo.json。尚未上传或发布。"

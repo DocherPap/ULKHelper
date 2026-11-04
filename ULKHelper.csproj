@@ -7,14 +7,16 @@
     <PlatformTarget>x64</PlatformTarget>
     <AssemblyName>ULKHelper</AssemblyName>
     <RootNamespace>ULKHelper</RootNamespace>
-    <Version>0.1.1</Version>
-    <InformationalVersion>0.1.1-local.common-actions.26</InformationalVersion>
-    <AssemblyVersion>0.1.1.0</AssemblyVersion>
+    <Version>0.2.0</Version>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
     <Deterministic>true</Deterministic>
     <PathMap>$(MSBuildProjectDirectory)=/_/ULKHelper</PathMap>
     <DalamudLibPath Condition="'$(DalamudLibPath)' == ''">$(DALAMUD_HOME)</DalamudLibPath>
     <DalamudLibPath Condition="'$(DalamudLibPath)' == '' And Exists('$(APPDATA)/XIVLauncherCN/addon/Hooks/dev/Dalamud.dll')">$(APPDATA)/XIVLauncherCN/addon/Hooks/dev</DalamudLibPath>
   </PropertyGroup>
+  <ItemGroup Condition="'$(Configuration)' != 'Debug'">
+    <Compile Remove="Windows/DebugTestsPage.cs;Automation/SoloDebugHelper.cs;Automation/DebugRecording.cs" />
+  </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Logos/catalog.json" />
     <EmbeddedResource Include="Bunnies/points.json" />

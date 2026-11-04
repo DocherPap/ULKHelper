@@ -16,9 +16,16 @@ internal sealed class MainWindow : Window
     private readonly FateMapPage fateMap;
     private readonly FateMapPage triggerMap;
     private readonly SettingsStore? settings;
+#if DEBUG
     private readonly DebugTestsPage debugTests;
+#endif
     private readonly LogosPage logos;
     private readonly CommonPage common;
+#if DEBUG
+    private const int TabCount = 7;
+#else
+    private const int TabCount = 6;
+#endif
     private bool firstDraw = true;
     private int selectedTab;
     private DateTimeOffset nextLayout;
@@ -35,14 +42,16 @@ internal sealed class MainWindow : Window
         weather = new(weatherZones, weatherError);
         fateMap = new(fateProvider, mapTextures, weatherZones, helpers, bunnyPage);
         this.settings = settings;
+#if DEBUG
         debugTests = new(helpers, settings);
+#endif
         selectedTab = settings?.Get("window.tab",0)??0;
         var schema=settings?.Get("window.tabSchema",0)??0;
         if(schema==0&&selectedTab>=3)selectedTab++;
         if(schema<2&&selectedTab>=3)selectedTab++;
         if(schema<3)selectedTab=selectedTab==3?2:selectedTab>3?selectedTab-1:selectedTab;
         if(schema<4 && (settings?.Get("window.tab",-1)??-1)>=0)selectedTab++;
-        selectedTab=Math.Clamp(selectedTab,0,6);
+        selectedTab=Math.Clamp(selectedTab,0,TabCount - 1);
         if (settings != null) { itemStatistics.Load(settings); weather.Load(settings); fateMap.Load(settings, "map"); triggerMap.Load(settings, "triggerMap"); automation.Load(settings); }
         Size = settings?.Get("window.size", new Vector2(1280, 780)) ?? new Vector2(1280, 780);
         SizeCondition = ImGuiCond.Once;
@@ -60,7 +69,7 @@ internal sealed class MainWindow : Window
     {
         if (firstDraw && settings != null) LayoutSettings.Restore(settings);
         var restoreTab = selectedTab;
-        var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 6) / 7;
+        var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * (TabCount - 1)) / TabCount;
         if (!ImGui.BeginTabBar("##MainPages", ImGuiTabBarFlags.FittingPolicyResizeDown)) return;
         try
         {
@@ -109,6 +118,7 @@ internal sealed class MainWindow : Window
                 try { DrawPage(DrawAutomationPage); }
                 finally { ImGui.EndTabItem(); }
             }
+#if DEBUG
             ImGui.SetNextItemWidth(tabWidth);
             if (ImGui.BeginTabItem("调试测试", firstDraw && restoreTab == 6 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
@@ -116,6 +126,7 @@ internal sealed class MainWindow : Window
                 try { DrawPage(debugTests.Draw); }
                 finally { ImGui.EndTabItem(); }
             }
+#endif
         }
         finally
         {

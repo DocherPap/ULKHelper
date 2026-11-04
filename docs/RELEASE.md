@@ -1,51 +1,9 @@
-# 0.1.1 上传与发布
+# 0.2.0 发布
 
-当前main包含恢复的自动化、第五页单人测试和岛内以太之光识别修复。显示版本0.1.1，DLL/清单0.1.1.0，标签v0.1.1。安装包dist/v0.1.1/ULKHelper-0.1.1.0.zip，同目录有SHA256、独立repo.json及可选MakoMaster合并库链；发布说明release/NOTES-v0.1.1.md。
+正式版使用标签 `v0.2.0`，程序集和清单版本为 `0.2.0.0`，适用国服卫月 API 15。Release 构建排除单人调试页、测试动作和调试会话记录。离线测试留在源码中，单人调试仅在 Debug 构建可用。
 
-用户将自行提交及上传：版本调整保留main工作区，未自动提交/推送。上传Release标签v0.1.1及对应ZIP后，再发布根目录repo.json；下载目标为DocherPap/ULKHelper/releases/download/v0.1.1/ULKHelper-0.1.1.0.zip。旧dist/v0.1.0不覆盖。原禁止合入main的分支隔离指令已由用户明确撤销。
+在 main 运行 `./scripts/Package.ps1`。如需指定本机依赖目录，可传 `-DalamudLibPath`。输出在 `dist/v0.2.0/`，包含安装 ZIP、SHA256 和独立 `repo.json`。脚本同步更新仓库根目录的 `repo.json`。
 
-## 0.1.0历史安装包
-
-当前安装包为 `dist/v0.1.0/ULKHelper-0.1.0.0.zip`，同目录有SHA256、独立repo.json与可选MakoMaster合并库链。DLL和清单版本0.1.0.0，Release标签v0.1.0，下载目标DocherPap/ULKHelper。发布说明见release/NOTES-v0.1.0.md。已完成Debug/Release构建及ZIP内容检查，尚未上传。
-
-此前按用户要求先打包再继续调试：此包自动化第四页暂不可用，没有第五测试页，对应快照c8996e9。后续独立调试改动现已合入main并另行准备0.1.1，不覆盖此历史ZIP。
-
-## 旧版0.0.1发布记录
-
-本次仅准备本地文件，不会上传 GitHub。显示版本为 **0.0.1**，Dalamud/DLL 四段版本为 **0.0.1.0**，API 15，Windows x64。
-
-## 已生成的文件
-
-`dist/v0.0.1/` 包含：
-
-- `ULKHelper-0.0.1.0.zip`：安装包，根目录有 DLL、插件清单、README，以及 ThirdPartyNotices 目录。
-- `ULKHelper-0.0.1.0.zip.sha256`：安装包校验值。
-- `repo.json`：仅包含 ULKHelper 的独立库链。
-- `MakoMaster.repo.merged.json`：保留现有 MakoMaster 条目，并追加 ULKHelper 的共用库链。
-
-默认目标仓库为 `DocherPap/ULKHelper`，标签 `v0.0.1`。作者沿用 MakoMaster 的 DocherPap。若仓库名称不同，修改 `ULKHelper.json` 的 RepoUrl，并运行 `./scripts/Package.ps1 -Repository 'owner/repo'` 重新生成库链。
-
-## 上传步骤
-
-1. 建立 GitHub 仓库 `DocherPap/ULKHelper`，上传本项目源码。`.gitignore` 排除了 bin、obj、artifacts 和 dist，发布包需要下一步单独上传。根目录 `repo.json` 和 `scripts/Package.ps1` 应一并提交。
-2. 创建标签 **v0.0.1** 的 GitHub Release，附件上传 `ULKHelper-0.0.1.0.zip` 及 `.sha256`。发布说明可使用 `release/NOTES-v0.0.1.md`。
-3. 确认以下地址可以下载后再更新 MakoMaster 的库链：
-   `https://github.com/DocherPap/ULKHelper/releases/download/v0.0.1/ULKHelper-0.0.1.0.zip`
-4. 将 `MakoMaster.repo.merged.json` 的内容放入 **MakoMaster 仓库 main 分支根目录的 repo.json**。如果 MakoMaster 在此期间有更新，应先下载最新 repo.json，再运行 `./scripts/Package.ps1 -SkipBuild -ExistingRepo '最新repo.json的本地路径'`，使用新生成的合并文件，避免覆盖其新版本。
-5. 原有用户继续使用 `https://raw.githubusercontent.com/DocherPap/MakoMaster/main/repo.json`，刷新后即可看到两款插件。新项目也可单独使用 `https://raw.githubusercontent.com/DocherPap/ULKHelper/main/repo.json`。两条库链择一即可。
-
-仅上传 ZIP 或仅上传源码不会更新原库链；必须完成第 4 步。仓库 JSON 是插件条目的数组，不能把另一个 repo.json 的 URL 当作条目嵌套。
-
-MakoMaster 现有打包脚本会重新写入只有自身条目的 repo.json。以后发布 MakoMaster 时，也要保留/重新合并 ULKHelper 条目；本次仅准备合并文件，没有修改另一个项目的打包脚本。
-
-本次合并基线读取自线上 MakoMaster `repo.json`（版本 2.1.18.0，blob SHA `04776e775ee9c510dcdf2614cb0b53f271246fbb`），副本在 `release/MakoMaster.repo.snapshot.json`。未修改本机 MakoMaster 项目。
-
-## 本地重新打包
-
-```powershell
-./scripts/Package.ps1
-# 可指定依赖与最新共用库链
-./scripts/Package.ps1 -DalamudLibPath 'C:/path/to/Dalamud' -ExistingRepo 'C:/path/to/latest-repo.json'
-```
-
-脚本核对清单和程序集身份/版本，只打包允许的插件文件，不包含卫月依赖、游戏地图文件、库存缓存、PDB 或离线测试工具。当前已完成离线验证和构建；游戏内加载、真实库存、地图链接/旗标及通知仍需实测。
+1. 在 DocherPap/ULKHelper 创建 `v0.2.0` Release，上传 `ULKHelper-0.2.0.0.zip` 和同名 `.sha256`。
+2. 确认 Release 资产可下载，再将更新后的根目录 `repo.json` 发布到 main。
+3. 用户在卫月订阅 ULKHelper 的独立库链并刷新插件列表。 [在线安装库链](https://raw.githubusercontent.com/DocherPap/ULKHelper/main/repo.json)

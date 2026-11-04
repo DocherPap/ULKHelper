@@ -24,9 +24,11 @@ internal interface IAutomationHelpers
     void Follow(bool enabled) { }
     void NavigateTo(MapDestination destination) { }
     void GoToEntrance() { }
+#if DEBUG
     SoloDebugSnapshot DebugSnapshot => SoloDebugSnapshot.Empty;
     void RunDebug(SoloDebugAction action, uint crystalId = 0) { }
     void StopDebug() { }
     DebugRecordingSnapshot Recording => DebugRecordingSnapshot.Empty;
     void RecordDebug(bool enabled) { }
+#endif
 }

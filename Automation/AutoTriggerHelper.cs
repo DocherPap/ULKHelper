@@ -68,15 +68,7 @@ internal static class AutoTriggerRules
     public static bool AttackMagia(int player,int mob,bool tank) => mob<player || mob<=player+2 && tank;
     public static Vector3? Ground(INavigationMesh mesh,Vector3 point,bool unknownHeight)
     {
-        for(var i=0;i<17;i++)
-        {
-            var radius=i==0?0:i<=8?2:4;
-            var angle=(i-1)%8*MathF.PI/4;
-            var sample=point+new Vector3(MathF.Cos(angle)*radius,0,MathF.Sin(angle)*radius);
-            var result=mesh.Ground(sample,unknownHeight);
-            if(result is {} p && NavigationRules.Finite(p) && NavigationRules.Distance(point,p)<=5
-                && (unknownHeight || Math.Abs(p.Y-point.Y)<=8))return p;
-        }
+        foreach (var candidate in NavigationGround.Candidates(mesh, point, unknownHeight)) return candidate;
         return null;
     }
     public static int Capacity(int player, IEnumerable<int> levels) => levels.Select(level => level < player ? 3 : level <= player + 2 ? 2 : 1).DefaultIfEmpty(3).Min();
@@ -215,12 +207,6 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
     }
     private bool Go(Vector3 point, TriggerFrame frame, DateTimeOffset now, bool unknownHeight = false, bool pulling = false, bool preferCrystals = false)
     {
-        var grounded=AutoTriggerRules.Ground(mesh,point,unknownHeight);
-        if(grounded==null || !NavigationRules.Finite(grounded.Value) || NavigationRules.Distance(point,grounded.Value)>5)
-        {
-            Stop($"触发目标附近无可行走地面：目标={point}；玩家={frame.Position}；已知高度={!unknownHeight}");return false;
-        }
-        point=grounded.Value;
         var destination = new MapDestination(world.Territory, world.Map, point, "触发路线");
         if (!pulling && islandTravel != null && !frame.InCombat && (preferCrystals || IslandCrystalRoutes.Choose(world.Territory, frame.Position, point) != null))
         {
@@ -230,7 +216,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             return walking;
         }
         move.Start(destination, world, frame.Position, [], now, false,
-            arrivalRadius: pulling ? 2 : 1, unknownHeight: false, relaxedArrival: !pulling && plans[0].Mode == TriggerMode.Normal);
+            arrivalRadius: pulling ? 2 : 1, unknownHeight: unknownHeight, relaxedArrival: !pulling && plans[0].Mode == TriggerMode.Normal);
         walking = move.Active;
         if (!walking) Stop(move.Status);
         return walking;

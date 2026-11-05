@@ -69,7 +69,8 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         this.targets = targets; commonParty = party;
         this.settings = settings;
         settings?.RemoveKeysWithPrefix("leader.");
-        mesh = new VnavmeshAdapter(plugin); this.data = data;
+        mesh = new VnavmeshAdapter(plugin);
+        this.data = data;
         mounts = new(objects, data);
         arrivalGame = new(objects, party, fates, mounts);
         combat = new(plugin, commandManager, objects, targets);
@@ -215,6 +216,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     });
     public void Listen(bool enabled) => commands.Enqueue(() => { if (!enabled && !trigger.Active && !RemoteActive) follow.Stop("监听已停止。"); listener.SetListening(enabled, follow.Following); });
     public void RefreshPlayers() => commands.Enqueue(roster.Refresh);
+    private bool EnsureTravelMount() => SafeState() && mounts.EnsureTravelMount(settings?.Get("mount", 0u) ?? 0);
     public void SelectMount(uint id) => commands.Enqueue(() => { if (!trigger.Active && !follow.Active) { mounts.Select(id); settings?.Put("mount", mounts.Selected); settings?.Flush(); } });
     public void NavigateTo(MapDestination destination) => commands.Enqueue(() => StartPointNavigation(destination));
     public void GoToEntrance() => commands.Enqueue(() =>
@@ -232,7 +234,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         var liveFate = useNm ? NavigationRules.FindFate(destination.Position, ReadFates()) : null;
         if (liveFate != null) destination = destination with { Position = liveFate.Position };
         pointNm = useNm;
-        navigation.Start(destination, Context(), objects.LocalPlayer!.Position, useNm ? ReadFates() : [], DateTimeOffset.UtcNow, mounts.Selected != 0, useCrystals, waitWithoutFate, unknownHeight: liveFate == null, preferCrystals: useNm);
+        navigation.Start(destination, Context(), objects.LocalPlayer!.Position, useNm ? ReadFates() : [], DateTimeOffset.UtcNow, EnsureTravelMount(), useCrystals, waitWithoutFate, unknownHeight: liveFate == null, preferCrystals: useNm);
     }
     public void Follow(bool enabled) => commands.Enqueue(() =>
     {
@@ -240,7 +242,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         if (RemoteActive || BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active) return;
         usingFollow = true;
         if (listener.Leader == null) { follow.Stop("请先选择车头。"); return; }
-        if (mounts.Selected == 0) { follow.Stop("请先选择已解锁且可移动的坐骑。"); return; }
+        if (!EnsureTravelMount()) { follow.Stop("请先选择已解锁且可移动的坐骑。"); return; }
         arrivalGame.Reset();
         if (follow.Start(Context(), DateTimeOffset.UtcNow))
         {
@@ -255,7 +257,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         usingFollow = true; follow.Stop(); arrivalGame.Reset();
         if (listener.Destination is { } goal && objects.LocalPlayer is { } player && CanMove())
         {
-            if (mounts.Selected == 0) { follow.Stop("请先选择已解锁的坐骑。"); return; }
+            if (!EnsureTravelMount()) { follow.Stop("请先选择已解锁的坐骑。"); return; }
             if (follow.Start(Context(), DateTimeOffset.UtcNow, false)) follow.Receive(goal);
         }
         else follow.Stop("没有当前地图的目的地，或玩家状态不允许移动。");
@@ -309,7 +311,6 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             commonJourney.Tick(Context(), now);
             if (journeyWasActive && !commonJourney.Active) commonStatus = commonJourney.Status;
             TickRemote(world, transferScreen, now);
-
             TickSurvey(world, transferScreen, now);
             TickBunnyAutomation(world, transferScreen, now);
             TickPagosDragon(world, transferScreen, now);
@@ -317,7 +318,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             if (!trigger.Active && !follow.Active && !bunnyCombatOwned && combat.CleanupPending && now >= nextCleanup)
             { nextCleanup = now.AddSeconds(1); combat.Disable(); }
             if (SafeState() && playerState.ContentId != 0 && now >= nextMounts)
-            { var restoreMount = mounts.Selected == 0; mounts.Refresh(); if (restoreMount) mounts.Select(settings?.Get("mount", 0u) ?? 0); if (mounts.Selected != 0) settings?.Put("mount", mounts.Selected); nextMounts = now.AddSeconds(30); }
+            { mounts.EnsureTravelMount(settings?.Get("mount", 0u) ?? 0, refresh: true); if (mounts.Selected != 0) settings?.Put("mount", mounts.Selected); nextMounts = now.AddSeconds(30); }
             roster.Tick(client.TerritoryType, SafeState(), now);
             if (client.IsLoggedIn && objects.LocalPlayer != null && !transferScreen && now >= nextKills)
             {
@@ -349,12 +350,17 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                 follow.Tick(new(world, local?.Position ?? Vector3.Zero, SafeState(follow.Interacting || follow.Transferring),
                     conditions[ConditionFlag.Mounted], local?.IsCasting ?? false, conditions[ConditionFlag.InCombat], observation.Fate),
                     transferScreen && client.IsLoggedIn && local?.IsDead != true && !conditions[ConditionFlag.InCombat]
-                        && !conditions[ConditionFlag.WatchingCutscene], ReadFates(includePreparing: RemoteActive), observation, now);
+                        && !conditions[ConditionFlag.WatchingCutscene], ReadFates(includePreparing: RemoteActive), observation, now,
+                    userMoving: ReadFollowMovement(), temporaryBusy: !SafeState(follow.Interacting || follow.Transferring)
+                        && client.IsLoggedIn && !client.IsPvP && local is { IsDead: false }
+                        && !transferScreen && !conditions[ConditionFlag.WatchingCutscene] && !conditions[ConditionFlag.OccupiedInCutSceneEvent]);
             }
             else if (!follow.Active && navigation.Active)
+            {
                 navigation.Tick(world, objects.LocalPlayer?.Position ?? Vector3.Zero, SafeState(navigation.Interacting || navigation.Transferring),
                     transferScreen, conditions[ConditionFlag.Mounted], objects.LocalPlayer?.IsCasting ?? false,
                     pointNm ? ReadFates() : [], now, conditions[ConditionFlag.InCombat]);
+            }
             snapshot = new(players, listener.Leader, listener.Listening, listener.Status, listener.Destination,
                 listener.History, BunnyAutomationActive || commonJourney.Active || trigger.Active || follow.Active || navigation.Active,
                 BunnyAutomationActive ? BunnyAutomationStatus : commonJourney.Active ? commonJourney.Status : trigger.Active ? trigger.Status : usingFollow ? follow.Status : navigation.Status, roster.Snapshot,
@@ -394,7 +400,6 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             try { RecordDiscordReward(message); }
             catch (Exception ex) { log.Warning(ex, "解析 Discord 任务奖励消息失败"); }
         }
-
         var invite = (autoInvite || RemotePartyActive) && message.LogKind == XivChatType.Shout;
         if (disposed || !invite && !current.Listening || message.LogKind is not (XivChatType.Say or XivChatType.Yell or XivChatType.Shout)) return;
         try
@@ -413,6 +418,16 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             if (identity != current.Leader) return;
             var text = content.TextValue;
             var channel = message.LogKind.ToString();
+            if (current.Following && (text.Contains("原地", StringComparison.Ordinal) || text.Contains("等待", StringComparison.Ordinal)))
+            {
+                commands.Enqueue(() =>
+                {
+                    if (listener.Leader != identity || !follow.Following) return;
+                    follow.WaitForLeader(); listener.ClearDestination(clearHistory: false);
+                    listener.RecordActivity(DateTimeOffset.UtcNow, channel, text, "战后上坐骑，原地等待新坐标10秒。");
+                });
+                return;
+            }
             if (current.Following && message.LogKind != XivChatType.Shout) return;
             var receivedAt = DateTimeOffset.UtcNow;
             var link = content.Payloads.OfType<MapLinkPayload>().FirstOrDefault();
@@ -440,13 +455,39 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         catch (Exception ex) { log.Warning(ex, "解析车头消息失败"); }
     }
 
+    private static unsafe bool ReadFollowMovement()
+    {
+        var input = FFXIVClientStructs.FFXIV.Client.UI.UIInputData.Instance();
+        if (input == null) return false;
+        // Read bound game movement actions, rather than position changes produced by our own navigation.
+        foreach (var id in FollowMovementInputs)
+            if (input->IsInputIdDown(id) || input->IsInputIdHeld(id)) return true;
+        return FFXIVClientStructs.FFXIV.Client.Game.Control.InputManager.IsAutoRunning()
+            || FFXIVClientStructs.FFXIV.Client.Game.Control.InputManager.IsLeftMouseDown()
+            && FFXIVClientStructs.FFXIV.Client.Game.Control.InputManager.IsRightMouseDown();
+    }
+    private static readonly FFXIVClientStructs.FFXIV.Client.System.Input.InputId[] FollowMovementInputs =
+    [
+        FFXIVClientStructs.FFXIV.Client.System.Input.InputId.MOVE_FORE,
+        FFXIVClientStructs.FFXIV.Client.System.Input.InputId.MOVE_BACK,
+        FFXIVClientStructs.FFXIV.Client.System.Input.InputId.MOVE_LEFT,
+        FFXIVClientStructs.FFXIV.Client.System.Input.InputId.MOVE_RIGHT,
+        FFXIVClientStructs.FFXIV.Client.System.Input.InputId.MOVE_STRIFE_L,
+        FFXIVClientStructs.FFXIV.Client.System.Input.InputId.MOVE_STRIFE_R,
+        FFXIVClientStructs.FFXIV.Client.System.Input.InputId.JUMP,
+        FFXIVClientStructs.FFXIV.Client.System.Input.InputId.MOVE_AND_STEER,
+        FFXIVClientStructs.FFXIV.Client.System.Input.InputId.VIRTUAL_PAD_LSTICK_UP,
+        FFXIVClientStructs.FFXIV.Client.System.Input.InputId.VIRTUAL_PAD_LSTICK_DOWN,
+        FFXIVClientStructs.FFXIV.Client.System.Input.InputId.VIRTUAL_PAD_LSTICK_LEFT,
+        FFXIVClientStructs.FFXIV.Client.System.Input.InputId.VIRTUAL_PAD_LSTICK_RIGHT,
+    ];
+
     public void Dispose()
     {
         if (disposed) return;
         disposed = true;
         StopDiscordBridge();
         remotePipe?.Dispose();
-
         StopRemote("插件卸载，Discord 任务已停止。");
         chat.ChatMessage -= OnChat; framework.Update -= Update;
         trigger.Stop("插件卸载，触发已停止。");

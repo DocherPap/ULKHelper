@@ -29,7 +29,8 @@ New-Item -ItemType Directory -Path $dist -Force | Out-Null
 $zipName = "ULKHelper-$version.zip"
 $zip = Join-Path $dist $zipName
 # Explicit allowlist: no game files, caches, debug symbols or Dalamud runtime DLLs.
-$files = @($dll, $manifestFile, (Join-Path $root 'README.md'), (Join-Path $root 'ThirdPartyNotices'), (Join-Path $root 'DiscordBridge'))
+$bridge = Join-Path (Split-Path -Parent $dll) 'bridge.py'
+$files = @($dll, $manifestFile, $bridge, (Join-Path $root 'README.md'), (Join-Path $root 'CHANGELOG.md'), (Join-Path $root 'ThirdPartyNotices'), (Join-Path $root 'DiscordBridge'))
 Compress-Archive -LiteralPath $files -DestinationPath $zip -Force
 $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText("$zip.sha256", "$hash  $zipName`n", [Text.UTF8Encoding]::new($false))

@@ -59,6 +59,8 @@ internal sealed class MainWindow : Window
         if (firstDraw && settings != null) LayoutSettings.Restore(settings);
         var restoreTab = selectedTab;
         var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * (TabCount - 1)) / TabCount;
+        // Whole pixels avoid the unassignable width remainder in cimgui 1.88.
+        tabWidth = MathF.Floor(tabWidth);
         if (!ImGui.BeginTabBar("##MainPages", ImGuiTabBarFlags.FittingPolicyResizeDown)) return;
         try
         {

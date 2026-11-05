@@ -1,5 +1,6 @@
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Inventory.InventoryEventArgTypes;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
@@ -20,6 +21,7 @@ internal sealed unsafe class InventoryTracker : IStatisticsProvider, IDisposable
     private readonly IFramework framework;
     private readonly IClientState client;
     private readonly IPlayerState player;
+    private readonly ICondition conditions;
     private readonly IDataManager data;
     private readonly IGameInventory gameInventory;
     private readonly IAddonLifecycle addons;
@@ -33,6 +35,7 @@ internal sealed unsafe class InventoryTracker : IStatisticsProvider, IDisposable
     private Dictionary<uint, uint[]> outfits = new();
     private long nextScan, nextSave, nextErrorLog;
     private ulong activeRetainer;
+    private uint currentWorld;
     private long retainerReadyAt;
     private int refreshRequested = 1;
     private bool cacheWritable = true;
@@ -51,8 +54,8 @@ internal sealed unsafe class InventoryTracker : IStatisticsProvider, IDisposable
     }
     public string StatusText { get { lock (sync) return GetStatusText(); } }
     private string GetStatusText() => error.Length > 0 ? error : ledger.Profile.ContentId == 0 ? "请登录角色以获取库存"
-        : !HasData ? "库存尚未获取" : Sources.Any(s => s.UpdatedAt == null)
-            ? "已计入已获取库存 · 部分来源未获取" : "已计入各来源库存";
+        : !HasData ? "库存尚未获取" : ledger.Sources.All(s => !s.ReadThisSession) ? "正在显示当前角色的库存缓存"
+        : ledger.Sources.Any(s => s.UpdatedAt == null) ? "已计入已获取库存 · 部分来源未获取" : "已计入各来源库存";
 
     private static readonly string[] WatchedAddons =
     [
@@ -74,11 +77,12 @@ internal sealed unsafe class InventoryTracker : IStatisticsProvider, IDisposable
     ];
 
     public InventoryTracker(IDalamudPluginInterface pi, IFramework framework, IClientState client, IPlayerState player,
-        IDataManager data, IGameInventory gameInventory, IAddonLifecycle addons, IPluginLog log, IGameGui gameGui)
+        IDataManager data, IGameInventory gameInventory, IAddonLifecycle addons, IPluginLog log, IGameGui gameGui, ICondition conditions)
     {
         this.pi = pi; this.framework = framework; this.client = client; this.player = player;
         this.data = data; this.gameInventory = gameInventory; this.addons = addons; this.log = log;
         this.gameGui = gameGui;
+        this.conditions = conditions;
         framework.Update += Update;
         gameInventory.InventoryChangedRaw += InventoryChanged;
         addons.RegisterListener(AddonEvent.PostSetup, WatchedAddons, AddonChanged);
@@ -96,13 +100,20 @@ internal sealed unsafe class InventoryTracker : IStatisticsProvider, IDisposable
 
     private void UpdateCore()
     {
-        var cid = client.IsLoggedIn && player.IsLoaded ? player.ContentId : 0;
+        var loggedIn = client.IsLoggedIn;
+        var cid = loggedIn && player.IsLoaded ? player.ContentId : 0;
+        if (loggedIn && cid == 0)
+        {
+            ObserveWorld(0);
+            return;
+        }
         if (cid != ledger.Profile.ContentId)
         {
             Save();
             cacheWritable = true;
             ledger.Activate(cid);
             activeRetainer = 0;
+            currentWorld = 0;
             error = "";
             nextScan = 0;
             if (cid != 0)
@@ -117,6 +128,8 @@ internal sealed unsafe class InventoryTracker : IStatisticsProvider, IDisposable
             }
         }
         if (cid == 0) return;
+        var loading = conditions[ConditionFlag.BetweenAreas] || conditions[ConditionFlag.BetweenAreas51];
+        ObserveWorld(loading ? 0 : player.CurrentWorld.RowId);
         var now = Environment.TickCount64;
         if (Volatile.Read(ref refreshRequested) != 0 && nextScan > now + 250) nextScan = now + 250;
         if (now < nextScan) return;
@@ -125,7 +138,7 @@ internal sealed unsafe class InventoryTracker : IStatisticsProvider, IDisposable
         try
         {
             if (catalog == null) InitializeCatalog();
-            Scan(now);
+            if (currentWorld != 0) Scan(now);
             if (cacheWritable) error = "";
             if (now >= nextSave) { Save(); nextSave = now + 5000; }
         }
@@ -139,6 +152,15 @@ internal sealed unsafe class InventoryTracker : IStatisticsProvider, IDisposable
             }
             nextScan = now + 3000;
         }
+    }
+
+    private void ObserveWorld(uint world)
+    {
+        if (currentWorld == world) return;
+        currentWorld = world;
+        ledger.MarkSourcesCached();
+        activeRetainer = 0;
+        nextScan = 0;
     }
 
     private void InitializeCatalog()
@@ -166,7 +188,8 @@ internal sealed unsafe class InventoryTracker : IStatisticsProvider, IDisposable
         ReadContainers(inventory, "premium-saddle", "高级陆行鸟背包", [InventoryType.PremiumSaddleBag1, InventoryType.PremiumSaddleBag2]);
         ReadCabinet();
         ReadDresser();
-        ReadRetainers(inventory, now);
+        // A visited world cannot provide an authoritative home-world retainer roster.
+        if (currentWorld == player.HomeWorld.RowId) ReadRetainers(inventory, now);
     }
 
     private void ReadContainers(InventoryManager* manager, string key, string label, InventoryType[] types)

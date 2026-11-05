@@ -29,8 +29,13 @@ internal sealed class ArrivalGameAdapter(IObjectTable objects, IPartyList party,
         // The localized FATE title normally ends with the NM name after an em dash.
         // Never substitute an add's HP when the boss is not loaded or cannot be matched.
         var name = fate.Name.TextValue.Split('—', StringSplitOptions.RemoveEmptyEntries).LastOrDefault()?.Trim();
-        var named = enemies.Where(n => n.Name.TextValue == name).ToArray();
-        var boss = named.Length == 1 ? named[0] : null;
+        var named = objects.OfType<IBattleNpc>().Where(n => n.Address != 0 && n.MaxHp > 0 && n.Name.TextValue == name
+            && NavigationRules.Distance(n.Position, fate.Position) <= Math.Max(50, fate.Radius)
+            && (((Character*)n.Address)->FateId == fate.FateId || ((Character*)n.Address)->FateId == 0)).ToArray();
+        // Ignore a stale untargetable model when exactly one living targetable boss is present.
+        var bossIndex = ArrivalRules.BossIndex(named.Select(n => (!n.IsDead, n.IsTargetable)).ToArray());
+        var boss = bossIndex is { } index ? named[index] : null;
+        if (boss != null) enemyIds.Add(boss.GameObjectId);
         float? hp = boss != null ? (float)boss.CurrentHp / boss.MaxHp : null;
         var teammates = party.Select(p => (ulong)p.EntityId).ToHashSet();
         var localId = objects.LocalPlayer?.GameObjectId ?? 0;

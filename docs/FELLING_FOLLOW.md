@@ -1,5 +1,13 @@
 # 跟随伐木、坐骑与战斗联动
 
+2026-11-05 现场修正：骑乘时的战斗状态属于路过仇恨，不触发用户操作暂停；保留水晶传送前脱战要求。车头链接缺高度时，匹配活动FATE后采用该FATE原生XYZ。移动失败按10/20/30秒退避；新坐标可立即覆盖，三次失败后转水晶待机，不重复每帧重试。水晶待机优先对象实际位置及高度，未加载先取当前高度层；对象加载后重新校正，终点必须距水晶10米内且高度差不超过3米，避免附近屋顶。
+
+最新开怪流程：30米等开怪，确认开怪和同步后，距头目超过10米先独立导航至约9米目标（候选须在头目10米内），到10米内才开启循环/BM。已经更近不向外移动。头目暂不可见时先按活动FATE实际中心靠近以加载对象；同名不可选旧模型不遮挡唯一存活可选模型，存在多个可选同名则保持未知。
+
+0.3.1 跟车等待：车头在说话/呼喊/喊话包含“原地”“等待”时，途中取消本插件路线，战斗中则先完成当前NM。战后仅上坐骑，骑乘确认后原地等10秒；有效新坐标可立即解除等待，即使与上一坐标相同。10秒无坐标后选最近的活动且未完成NM，无NM则前往最近水晶。等待指令及结果记入车头历史。
+
+持续跟车中，游戏绑定移动键、手柄左摇杆、双鼠标前进、自动奔跑、额外交战、临时交互和外部导航仅暂停会话并释放本插件控制，空闲2秒后从当前位置重算最新目标。自动化自身NM战斗不会被战斗状态当作手动操作。单次吃FATE流程保持原规则。停止/紧急停止、切区、死亡、缺失依赖及既有任务时限仍停止任务；暂停不跨地图、不自动重启已停止的会话。
+
 更新于2026-11-03。用户已明确授权将车头监听、坐骑、岛内水晶导航、开怪判断、目标选择、等级同步、自动循环和BossMod整合为显式开始的流程。默认不运行。最新自动化页左侧为地图及自动触发预览，右侧为车头/右旁紧凑岛民名单、导航和可折叠消息；坐骑下拉放在导航区，名单请求状态行已移除。
 
 ## 使用与当前行为
@@ -70,3 +78,5 @@ BossMod：原版通过 `BossMod.AI.IsEnabled` 读状态，使用 `/vbm ai on/off
 主要源码依据：[RSR IPC](https://github.com/FFXIV-CombatReborn/RotationSolverReborn/blob/main/RotationSolver/IPC/IPCProvider.cs)、[RSR DataCenter](https://github.com/FFXIV-CombatReborn/RotationSolverReborn/blob/main/RotationSolver/Basic/DataCenter.cs)、[BossMod IPC](https://github.com/awgil/ffxiv_bossmod/blob/master/BossMod/Services/IpcService.cs)、[Reborn IPC](https://github.com/FFXIV-CombatReborn/BossmodReborn/blob/main/BossMod/Framework/IPCProvider.cs)、[Reborn AIManager](https://github.com/FFXIV-CombatReborn/BossmodReborn/blob/main/BossMod/AI/AIManager.cs)。
 
 测试分支：每场实际进入战斗且锁定已确认的 NM 头目后，仅发送一次原生 /magiaattack。游戏按所选头目的元素判定攻势旋转，使用当前投入最多的魔石属性；不恢复、不重试。
+
+跟车首次启动：尚无车头新坐标时，在脱战且未读条的安全状态检查本岛客户端活动 NM，选择最近者并绑定当前场次。没有活动 NM 则直接前往最近水晶附近待机。若已收到车头坐标，优先采用车头坐标。

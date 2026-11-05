@@ -193,7 +193,7 @@ internal sealed partial class AutomationHelpers
                         .MinBy(f => NavigationRules.Distance(player.Position, MapProjection.MapToWorld(new(f.Seed.X, f.Seed.Y), island)));
                     if (island == null || point == null) return;
                     bunnyTravel.Start(new(world.Territory, world.Map, MapProjection.MapToWorld(new(point.Seed.X, point.Seed.Y), island), "兔子 FATE 待机"),
-                        world, player.Position, [], now, summonMount: mounts.Selected != 0, waitWithoutFate: false,
+                        world, player.Position, [], now, summonMount: EnsureTravelMount(), waitWithoutFate: false,
                         nearbyGroundRadius: NavigationRules.BunnyNearbyGroundRadius, preferCrystals: true);
                     bunnyStandbyIssued = true;
                     bunnyStandbyArrived = false;
@@ -222,7 +222,7 @@ internal sealed partial class AutomationHelpers
             bunnyFate = (next.FateId, next.StartTimeEpoch);
             bunnyHandled.Add(bunnyFate);
             bunnyTravel.Start(new(world.Territory, world.Map, next.Position, next.Name.TextValue),
-                world, player.Position, [], now, mounts.Selected != 0, waitWithoutFate: false, nearbyGroundRadius: Math.Clamp(next.Radius - 3, 0, NavigationRules.BunnyNearbyGroundRadius), preferCrystals: true);
+                world, player.Position, [], now, EnsureTravelMount(), waitWithoutFate: false, nearbyGroundRadius: Math.Clamp(next.Radius - 3, 0, NavigationRules.BunnyNearbyGroundRadius), preferCrystals: true);
             if (!bunnyTravel.Active) { StopBunnyAutomation(bunnyTravel.Status); return; }
             SetBunnyPhase(BunnyPhase.Travel, now, "前往幸福兔 FATE。");
             return;
@@ -524,7 +524,7 @@ internal sealed partial class AutomationHelpers
         bunnyGoal = goal;
         if (NavigationRules.Distance(player, goal) <= 3) return;
         bunnyTravel.Start(new(world.Territory, world.Map, goal, "幸福兔宝箱线索"), world, player, [], now,
-            summonMount: mounts.Selected != 0, waitWithoutFate: false, unknownHeight: unknownHeight,
+            summonMount: EnsureTravelMount(), waitWithoutFate: false, unknownHeight: unknownHeight,
             nearbyGroundRadius: NavigationRules.BunnyNearbyGroundRadius);
         BunnyAutomationStatus = bunnyTravel.Active ? "正在前往宝箱线索。" : bunnyTravel.Status;
     }

@@ -30,22 +30,22 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     private float finalNearbyGroundRadius;
     private IReadOnlySet<uint>? surveyVisited;
     public bool SurveyExhausted { get; private set; }
-    private int mountAttempts;
-    private DateTimeOffset nextMount;
+    private readonly TravelMountHelper travelMount = new(mount);
     public bool Active { get; private set; }
     public bool Transferring => Active && phase == Phase.Transfer;
     public bool Interacting => Active && phase == Phase.Menu;
-    public string Status { get; private set; } = "未开始导航。";
+    public Vector3? LocateCrystal(IslandCrystal crystal) => crystals.Locate(crystal);
+    public string Status { get; private set; } = "尚未开始导航。";
     public string? CrystalDecision { get; private set; }
     public MapDestination? TakeArrival() { var result = arrival; arrival = null; return result; }
     public void Start(MapDestination destination, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now,
-        bool summonMount = false, bool useCrystals = true, bool waitWithoutFate = true, float arrivalRadius = 3, bool unknownHeight = true, float nearbyGroundRadius = 0, bool preferCrystals = false)
+        bool summonMount = false, bool useCrystals = true, bool waitWithoutFate = true, float arrivalRadius = 3, bool unknownHeight = true, float nearbyGroundRadius = 25, bool preferCrystals = false)
     {
         if (Active) { Status = "请先停止当前导航。"; return; }
         Stop(); CrystalDecision = null; goal = destination; context = world; origin = player; started = now;
         if (destination.Territory != world.Territory || destination.Map != world.Map || !NavigationRules.Finite(player))
         { Stop("目的地范围无效。"); return; }
-        requireMount = summonMount; this.useCrystals = useCrystals; resumeFinal = false; mountAttempts = 0; nextMount = now;
+        requireMount = summonMount; this.useCrystals = useCrystals; resumeFinal = false; travelMount.Reset();
         this.waitWithoutFate = waitWithoutFate;
         finalArrivalRadius = arrivalRadius;
         finalUnknownHeight = unknownHeight;
@@ -83,7 +83,9 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     private void BeginJourney(Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now)
     {
         route = useCrystals ? ChooseRoute(player) : null;
-        CrystalDecision = route == null ? "水晶路线更远，直接前往。" : $"选择岛内水晶路线：{route.Source.PlaceNameId} → {route.Target.PlaceNameId}。";
+        var estimate = measuredRoutes == null ? "平面估算" : "vnavmesh 路长";
+        CrystalDecision = route == null ? $"{estimate}：水晶路线收益不足，直接前往。"
+            : $"{estimate}：选择岛内水晶路线 {route.Source.PlaceNameId} → {route.Target.PlaceNameId}。";
         if (route == null) Final(player, fates, now);
         else BeginSource(player, fates, now);
     }
@@ -92,11 +94,11 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     {
         Stop();
         SurveyExhausted = false;
-        if (source.Territory != world.Territory || !NavigationRules.Finite(player)) { Stop("遍历水晶无效。"); return; }
+        if (source.Territory != world.Territory || !NavigationRules.Finite(player)) { Stop("巡查源水晶无效。"); return; }
         surveyVisited = visited;
         context = world;
         started = now;
-        goal = new(world.Territory, world.Map, source.Position, "元灵搜索");
+        goal = new(world.Territory, world.Map, source.Position, "元灵巡查");
         route = new(source, source, 0);
         Active = true;
         BeginSource(player, [], now);
@@ -163,11 +165,16 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
                     else Fallback(player, fates, now, "战斗中无法上坐骑或传送。");
                     return;
                 }
-                if (casting) return;
-                if (mounted) { if (resumeFinal) Final(player, fates, now); else BeginJourney(player, fates, now); return; }
-                if (now < nextMount) return;
-                if (mountAttempts++ >= 3) { Stop("无法召唤所选坐骑，已停止导航。"); return; }
-                nextMount = now.AddSeconds(3); mount.Mount(); Status = "等待所选坐骑召唤完成。"; return;
+                var result = travelMount.Tick(mounted, casting, inCombat, now);
+                if (result == TravelMountResult.Failed) { Stop("无法召唤所选坐骑，已停止导航。"); return; }
+                if (result == TravelMountResult.Mounted)
+                {
+                    if (resumeFinal) Final(player, fates, now);
+                    else BeginJourney(player, fates, now);
+                    return;
+                }
+                Status = "等待所选坐骑召唤完成。";
+                return;
             }
             if (phase == Phase.Transfer)
             {
@@ -177,7 +184,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
                 if (surveyVisited != null)
                 {
                     var reached = goal! with { Position = route.Target.Position };
-                    Stop("遍历水晶已落地。");
+                    Stop("巡查水晶已落地。");
                     arrival = reached;
                     return;
                 }
@@ -243,7 +250,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
                 if (!opened)
                 {
                     opened = true;
-                    if (!crystals.Open(route!.Source)) Fallback(player, fates, now, crystals.Error ?? "无法与水晶交互。");
+                    if (!crystals.Open(route!.Source)) Fallback(player, fates, now, crystals.Error ?? "无法与源水晶交互。");
                 }
                 return;
             }
@@ -254,14 +261,14 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
                     && c != route!.Source && !visited.Contains(c.PlaceNameId) && choices.Contains(c.PlaceNameId));
                 if (next == null)
                 {
-                    Stop("已遍历全部可用水晶。");
+                    Stop("已巡查全部可用水晶。");
                     SurveyExhausted = true;
                     return;
                 }
                 availableRoute = new(route!.Source, next, 0);
             }
             else availableRoute = ChooseRoute(origin, route!.Source, choices);
-            if (availableRoute == null) { Fallback(player, fates, now, "菜单中无已解锁且更近的目标水晶。"); return; }
+            if (availableRoute == null) { Fallback(player, fates, now, "菜单中无已解锁且有收益的目标水晶。"); return; }
             route = availableRoute;
             if (!crystals.Select(route.Target)) { Fallback(player, fates, now, "未能唯一匹配并选择传送菜单条目。"); return; }
             phase = Phase.Transfer; phaseAt = now; Status = "等待岛内水晶传送落地。";
@@ -282,7 +289,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     private void PrepareFinal(Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now)
     {
         if (!requireMount) { Final(player, fates, now); return; }
-        resumeFinal = true; mountAttempts = 0; nextMount = now; phase = Phase.Mount; Status = "传送后检查所选坐骑。";
+        resumeFinal = true; travelMount.Reset(); phase = Phase.Mount; Status = "传送后检查所选坐骑。";
     }
     private void Final(Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now)
     {

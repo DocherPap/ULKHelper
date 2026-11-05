@@ -37,7 +37,7 @@ public sealed class Plugin : IDalamudPlugin
         this.pluginInterface = pluginInterface;
         this.commandManager = commandManager;
         settings = new(Path.Combine(pluginInterface.GetPluginConfigDirectory(), "settings.json"), ex => log.Warning(ex, "保存或读取设置失败"));
-        inventoryTracker = new(pluginInterface, framework, clientState, playerState, dataManager, gameInventory, addonLifecycle, log, gameGui);
+        inventoryTracker = new(pluginInterface, framework, clientState, playerState, dataManager, gameInventory, addonLifecycle, log, gameGui, conditions);
         IReadOnlyList<WeatherZone> weatherZones = [];
         string? weatherError = null;
         try { weatherZones = WeatherCatalogLoader.Load(dataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>()!); }

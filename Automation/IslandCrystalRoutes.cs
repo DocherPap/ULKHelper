@@ -53,6 +53,7 @@ internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, V
     private Vector3 destination;
     private Leg current;
     private Task<List<Vector3>>? path;
+    private readonly NavigationEndpoint endpoint = new(mesh);
     private bool initialized;
     public IReadOnlyList<CrystalRoute>? Routes { get; private set; }
 
@@ -64,14 +65,14 @@ internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, V
         {
             if (mesh.Busy) return false;
             initialized = true;
-            var samples = nearbyGroundRadius > 0 ? NavigationRules.NearbyGroundSamples(goal, nearbyGroundRadius) : [goal];
-            var ground = samples.Select(p => mesh.Ground(p, !knownHeight)).FirstOrDefault(p => p is { } floor
-                && NavigationRules.Finite(floor) && NavigationRules.Distance(floor, goal) <= (nearbyGroundRadius > 0 ? nearbyGroundRadius : 5));
+            var samples = NavigationGround.Candidates(mesh, goal, !knownHeight,
+                nearbyGroundRadius > 0 ? nearbyGroundRadius : NavigationGround.SearchRadius);
+            Vector3? ground = samples.Select(p => (Vector3?)p).FirstOrDefault();
             if (ground is not { } floor) return true;
             destination = floor;
             points = IslandCrystalRoutes.All.Where(c => c.Territory == territory)
                 .Select(c => (Crystal: c, Ground: CrystalGround(c.Position)))
-                .Where(c => c.Ground is { } p && NavigationRules.Finite(p) && NavigationRules.Distance(p, c.Crystal.Position) <= 5)
+                .Where(c => c.Ground is { } p && NavigationRules.Finite(p) && NavigationRules.Distance(p, c.Crystal.Position) <= NavigationGround.SearchRadius)
                 .Select(c => (c.Crystal, c.Ground!.Value)).ToArray();
             if (points.Length < 2) return true;
             sources = points.OrderBy(c => NavigationRules.Distance(player, c.Ground)).Take(2).Select(c => c.Crystal).ToArray();
@@ -86,13 +87,22 @@ internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, V
         if (path != null)
         {
             if (!path.IsCompleted) return false;
-            lengths[current] = PathLength(current, path.GetAwaiter().GetResult());
+            endpoint.TakeDestination(out var result);
+            if (result.Count == 0)
+            {
+                path = endpoint.Next(current.From, cancel.Token);
+                if (path != null) return false;
+            }
+            lengths[current] = result.Count == 0 ? float.PositiveInfinity
+                : PathLength(new(current.From, endpoint.Point), result);
             path = null;
         }
         if (mesh.Busy) return false;
         if (pending.TryDequeue(out current))
         {
-            path = mesh.FindPath(current.From, current.To, cancel.Token);
+            endpoint.Start(current.To, unknownHeight: false);
+            path = endpoint.Next(current.From, cancel.Token);
+            if (path == null) lengths[current] = float.PositiveInfinity;
             return false;
         }
 
@@ -113,13 +123,7 @@ internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, V
 
     private Vector3? CrystalGround(Vector3 point)
     {
-        if (mesh.Ground(point, true) is { } exact && NavigationRules.Distance(exact, point) <= 5) return exact;
-        for (var i = 0; i < 4; i++)
-        {
-            var angle = i * MathF.PI / 2;
-            var sample = point + 3 * new Vector3(MathF.Cos(angle), 0, MathF.Sin(angle));
-            if (mesh.Ground(sample, true) is { } floor && NavigationRules.Distance(floor, point) <= 5) return floor;
-        }
+        foreach (var candidate in NavigationGround.Candidates(mesh, point, true)) return candidate;
         return null;
     }
 
@@ -140,6 +144,7 @@ internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, V
     public void Dispose()
     {
         cancel.Cancel();
+        endpoint.Reset();
         cancel.Dispose();
         if (path != null)
             _ = path.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);

@@ -1,0 +1,26 @@
+[
+  {
+    "Author": "DocherPap",
+    "Name": "优雷卡助手",
+    "InternalName": "ULKHelper",
+    "AssemblyVersion": "0.3.1.0",
+    "Changelog": "0.3.1：修复调整窗口大小时的卡死。改进跟车等待、暂停恢复和失败重试，优化 FATE 头目识别、洞内寻路与水晶待机。换服期间保留物品统计缓存，改善寻宝和 Discord 远程进岛的坐骑准备。",
+    "Description": "优雷卡装备与材料统计、四岛天气与 FATE 地图、幸福兔挖宝、文理技能、常用功能及自动化。",
+    "Punchline": "优雷卡地图、装备统计与岛内便捷工具",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "Tags": [
+      "eureka",
+      "优雷卡"
+    ],
+    "DownloadLinkInstall": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.3.1/ULKHelper-0.3.1.0.zip",
+    "DownloadLinkUpdate": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.3.1/ULKHelper-0.3.1.0.zip",
+    "RepoUrl": "https://github.com/DocherPap/ULKHelper",
+    "IsTestingExclusive": false,
+    "LastUpdate": 1793908451,
+    "IsHide": false
+  }
+]

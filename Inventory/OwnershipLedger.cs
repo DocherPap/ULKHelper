@@ -60,6 +60,13 @@ internal sealed class OwnershipLedger
         Dirty = true;
     }
 
+    public void MarkSourcesCached()
+    {
+        if (!Profile.Sources.Values.Any(source => source.ReadThisSession)) return;
+        foreach (var source in Profile.Sources.Values) source.ReadThisSession = false;
+        Revision++;
+    }
+
     public void Replace(string key, string label, Dictionary<uint, int> items, bool touch = false)
     {
         if (Profile.ContentId == 0) return;

@@ -139,7 +139,7 @@ internal sealed partial class AutomationHelpers
                     : elemental != null && elemental.Territory == world.Territory && elemental.Map == world.Map
                     && SendElementalFlag(elemental);
                 if (sent) nextShout = now.AddSeconds(3);
-                commonStatus = sent ? "已发送喊话。" : "当前地图没有已知元灵。";
+                commonStatus = sent ? "已提交喊话。" : "当前地图没有已知元灵或喊话不可用。";
             }
             return;
         }
@@ -162,15 +162,16 @@ internal sealed partial class AutomationHelpers
                 StartBunnyTreasure(world, now);
                 break;
             case CommonAction.Camp:
-            case CommonAction.NearestCrystal:
-                var crystal = action == CommonAction.Camp
-                    ? IslandCrystalRoutes.Entrance(world.Territory)
-                    : IslandCrystalRoutes.Nearest(world.Territory, player.Position);
+                var crystal = IslandCrystalRoutes.Entrance(world.Territory);
                 if (crystal == null) { commonStatus = "没有已知水晶。"; return; }
                 commonUsesNavigation = true;
                 StartPointNavigation(new(world.Territory, world.Map, ArrivalRules.Position(player.Position, crystal.Position, 7),
-                    action == CommonAction.Camp ? "入口营地" : "最近的水晶"), false,
-                    waitWithoutFate: action != CommonAction.Camp);
+                    "入口营地"), false, waitWithoutFate: false);
+                break;
+            case CommonAction.NearestCrystal:
+                if (!EnsureTravelMount()) { commonStatus = "请先选择已解锁且可移动的坐骑。"; return; }
+                usingFollow = commonUsesFollow = true;
+                follow.StartCrystalStandby(world, player.Position, now);
                 break;
             case CommonAction.Coordinate:
             case CommonAction.Fate:

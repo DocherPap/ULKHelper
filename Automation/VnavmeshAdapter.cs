@@ -13,8 +13,8 @@ internal sealed class VnavmeshAdapter(IDalamudPluginInterface plugin) : INavigat
     public Vector3? Ground(Vector3 position, bool unknownHeight)
     {
         var floor=plugin.GetIpcSubscriber<Vector3,bool,float,Vector3?>("vnavmesh.Query.Mesh.PointOnFloor");
-        if(unknownHeight) return floor.InvokeFunc(new(position.X,1024,position.Z),false,5);
-        var near=plugin.GetIpcSubscriber<Vector3,float,float,Vector3?>("vnavmesh.Query.Mesh.NearestPoint").InvokeFunc(position,3,8);
+        if(unknownHeight) return floor.InvokeFunc(new(position.X,1024,position.Z),false,25);
+        var near=plugin.GetIpcSubscriber<Vector3,float,float,Vector3?>("vnavmesh.Query.Mesh.NearestPoint").InvokeFunc(position,25,8);
         if(near!=null)return near;
         var below=floor.InvokeFunc(position+new Vector3(0,3,0),false,5);
         return below is {} p && Math.Abs(p.Y-position.Y)<=8 ? below : null;

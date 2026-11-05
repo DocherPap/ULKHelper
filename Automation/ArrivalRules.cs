@@ -11,6 +11,14 @@ internal sealed record PullDecision(bool Started, int Players, int Attackers, in
 
 internal static class ArrivalRules
 {
+    public static int? BossIndex(IReadOnlyList<(bool Alive, bool Targetable)> candidates)
+    {
+        var selectable = Enumerable.Range(0, candidates.Count).Where(i => candidates[i] is (true, true)).ToArray();
+        if (selectable.Length == 1) return selectable[0];
+        if (selectable.Length > 1) return null;
+        var alive = Enumerable.Range(0, candidates.Count).Where(i => candidates[i].Alive).ToArray();
+        return alive.Length == 1 ? alive[0] : candidates.Count == 1 ? 0 : null;
+    }
     public static bool? NeedsSync(int? elementalLevel, int maxLevel, bool alreadySynced)
         => alreadySynced ? true : elementalLevel is >= 1 and <= 60 && maxLevel is >= 1 and <= 60
             ? elementalLevel > maxLevel : null;
@@ -40,4 +48,27 @@ internal interface IArrivalActions
 {
     bool Mount();
     bool Dismount();
+}
+
+internal enum TravelMountResult { Waiting, Mounted, InCombat, Failed }
+
+// Framework-thread polling shared by travel and remote waiting. Each caller owns one attempt state.
+internal sealed class TravelMountHelper(IArrivalActions actions)
+{
+    private int attempts;
+    private DateTimeOffset next;
+    public void Reset() { attempts = 0; next = default; }
+
+    public TravelMountResult Tick(bool mounted, bool casting, bool inCombat, DateTimeOffset now)
+    {
+        if (inCombat) return TravelMountResult.InCombat;
+        if (casting) return TravelMountResult.Waiting;
+        if (mounted) return TravelMountResult.Mounted;
+        if (now < next) return TravelMountResult.Waiting;
+        if (attempts >= 3) return TravelMountResult.Failed;
+        attempts++;
+        next = now.AddSeconds(3);
+        actions.Mount();
+        return TravelMountResult.Waiting;
+    }
 }

@@ -28,6 +28,7 @@ internal sealed partial class AutomationHelpers
         public string FateName = "", Result = "";
         public string? FateOutcome;
         public readonly Queue<(DateTimeOffset Time, string Text)> Rewards = [];
+        public TravelMountHelper? Mount;
         public RemotePhase Phase;
         public WorldContext Origin, IslandContext;
         public DateTimeOffset NextScan, PhaseDeadline, SettlementAt;
@@ -242,13 +243,15 @@ internal sealed partial class AutomationHelpers
 
         var worlds = data.GetExcelSheet<Lumina.Excel.Sheets.World>().Where(w => DiscordCommandRules.ChineseWorld(w.RowId)).ToArray();
         var current = objects.LocalPlayer?.CurrentWorld.Value;
+        var home = objects.LocalPlayer?.HomeWorld.Value;
         var worldAliases = worlds.Select(w => (w.Name.ExtractText(), w.RowId)).ToList();
         var woxian = worlds.FirstOrDefault(w => w.Name.ExtractText() == "沃仙曦染");
         if (woxian.RowId != 0) worldAliases.Add(("沃仙", woxian.RowId));
         foreach (var group in worlds.GroupBy(w => w.DataCenter.RowId))
         {
             var first = group.OrderBy(w => w.RowId).First();
-            var chosen = current is { } active && active.DataCenter.RowId == group.Key ? active.RowId : first.RowId;
+            var chosen = home is { } original && group.Any(w => w.RowId == original.RowId) ? original.RowId
+                : current is { } active && group.Any(w => w.RowId == active.RowId) ? active.RowId : first.RowId;
             var name = first.DataCenter.Value.Name.ExtractText();
             worldAliases.Add((name, chosen));
             foreach (var alias in name switch
@@ -297,7 +300,7 @@ internal sealed partial class AutomationHelpers
         if (BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active || follow.Active
             || navigation.Active || combat.CleanupPending || conditions[ConditionFlag.InDutyQueue])
             return "已有游戏任务，请先结束当前任务。";
-        if (mounts.Selected == 0) return "请先在常用功能选择坐骑。";
+        if (!EnsureTravelMount()) return "无法读取已解锁的可移动坐骑，请在角色就绪后重试。";
 
         var world = Context();
         if (world.PlayerId == 0 || current == null) return "当前角色尚未就绪。";
@@ -340,6 +343,7 @@ internal sealed partial class AutomationHelpers
         {
             run.IslandContext = world;
             run.Phase = RemotePhase.Waiting;
+            run.Mount = new TravelMountHelper(mounts);
             run.PhaseDeadline = now.AddMinutes(15);
             remoteStatus = "已进岛，监听目标 FATE（最长 15 分钟）。";
             return;
@@ -448,6 +452,13 @@ internal sealed partial class AutomationHelpers
             return;
         }
         if (loading || now < run.NextScan || !CanMove() || objects.LocalPlayer is not { } local) return;
+        if (!EnsureTravelMount()) return;
+        if (!run.ApproachPending)
+        {
+            var mountResult = run.Mount!.Tick(conditions[ConditionFlag.Mounted], local.IsCasting, false, now);
+            if (mountResult == TravelMountResult.Failed) { StopRemote("寻找 FATE 时无法召唤坐骑，已停止任务。"); return; }
+            if (mountResult != TravelMountResult.Mounted) { remoteStatus = "寻找 FATE 前等待坐骑召唤完成。"; return; }
+        }
         run.NextScan = now.AddSeconds(1);
         var fate = ReadFates(includePreparing: true).Where(f => NavigationRules.Finite(f.Position)
                 && (run.Fate != 0 ? f.Id == run.Fate : DiscordCommandRules.Special(f.Id)))
@@ -500,7 +511,7 @@ internal sealed partial class AutomationHelpers
         pointNm = false;
         usingFollow = false;
         navigation.Start(new(world.Territory, world.Map, centre, seed.ShortName), world, player, [], now,
-            summonMount: mounts.Selected != 0, waitWithoutFate: false, arrivalRadius: 15, preferCrystals: true);
+            summonMount: EnsureTravelMount(), waitWithoutFate: false, arrivalRadius: 15, preferCrystals: true);
         run.ApproachPending = true;
         remoteStatus = $"正在前往{seed.ShortName}的地图点位。";
     }

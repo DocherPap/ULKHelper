@@ -24,21 +24,21 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
     private float arrivalRadius = 3;
     private float nearbyGroundRadius;
     private Vector3 requestedGround;
-    private IEnumerator<Vector3>? groundSamples;
-    private readonly List<Vector3> attemptedGround = [];
+    private Func<Vector3, bool>? groundFilter;
+    private readonly NavigationEndpoint endpoint = new(mesh);
     private bool relaxedArrival;
     private List<Vector3> issued = [];
     private CancellationTokenSource? cancellation;
     private Task<List<Vector3>>? path;
     private MapDestination? arrival;
     public bool Active { get; private set; }
-    public string Status { get; private set; } = "未开始导航。";
+    public string Status { get; private set; } = "尚未开始导航。";
     public Vector3? Target => Active ? target : null;
     public bool OwnsMovement => Active && !mesh.Busy && NavigationRules.OwnsRoute(mesh.Route, issued);
 
     public MapDestination? TakeArrival() { var value = arrival; arrival = null; return value; }
 
-    public void Start(MapDestination goal, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool waitWithoutFate = true, float arrivalRadius = 3, bool unknownHeight = true, bool relaxedArrival = false, float nearbyGroundRadius = 0)
+    public void Start(MapDestination goal, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool waitWithoutFate = true, float arrivalRadius = 3, bool unknownHeight = true, bool relaxedArrival = false, float nearbyGroundRadius = 25, Func<Vector3, bool>? groundFilter = null)
     {
         if (Active) { Status = "请先停止当前导航。"; return; }
         if (goal.Territory != world.Territory || goal.Map != world.Map) { Status = "目的地不在当前地图。"; return; }
@@ -48,8 +48,9 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
             if (!mesh.Ready) { Status = "vnavmesh 未加载或当前地图网格未就绪。"; return; }
             if (mesh.Busy || mesh.Route.Count > 0) { Status = "vnavmesh 正被其他任务使用。"; return; }
             destination = goal; unknownDestinationHeight = unknownHeight;
+            this.groundFilter = groundFilter;
             this.relaxedArrival = relaxedArrival;
-            this.nearbyGroundRadius = nearbyGroundRadius;
+            this.nearbyGroundRadius = Math.Max(nearbyGroundRadius, NavigationGround.SearchRadius);
             this.arrivalRadius = relaxedArrival ? 5 : Math.Clamp(arrivalRadius, .5f, 3);
             context = world;
             started = now;
@@ -83,11 +84,11 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
             if (path != null)
             {
                 if (!path.IsCompleted) return;
-                var result = path.GetAwaiter().GetResult();
+                endpoint.TakeDestination(out var result);
                 path = null;
                 cancellation?.Dispose(); cancellation = null;
                 if (mesh.Busy || mesh.Route.Count > 0) { Stop("寻路期间出现其他导航任务，已停止。"); return; }
-                if (result.Count == 0 || result.Any(p => !NavigationRules.Finite(p)) || Vector3.Distance(result[^1], target) > 5)
+                if (result.Count == 0 || groundFilter?.Invoke(result[^1]) == false)
                                 {
                     if (nearbyGroundRadius > 0 && TryNearbyGround(player)) return;
                     Stop(nearbyGroundRadius > 0 ? "目标附近未找到完整可达路径。" : "未找到到达终点的完整路径。");
@@ -115,7 +116,8 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
                     return;
                 }
             }
-            if (NavigationRules.Distance(player, target) <= arrivalRadius && (relaxedArrival || Math.Abs(player.Y - target.Y) <= 5))
+            if (NavigationRules.Distance(player, target) <= arrivalRadius && (relaxedArrival || Math.Abs(player.Y - target.Y) <= 5)
+                && groundFilter?.Invoke(player) != false)
             { Finish("已到达目的地。"); return; }
             if (issued.Count > 0 && route.Count == 0)
             {
@@ -131,42 +133,19 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
     private void RequestPath(Vector3 player, bool unknownHeight)
     {
         if (mesh.Busy || mesh.Route.Count > 0) { Stop("vnavmesh 正被其他任务使用。"); return; }
-        if (nearbyGroundRadius > 0)
-        {
-            requestedGround = target;
-            groundSamples?.Dispose();
-            groundSamples = NavigationRules.NearbyGroundSamples(target, nearbyGroundRadius).GetEnumerator();
-            attemptedGround.Clear();
-            if (!TryNearbyGround(player)) Stop($"目标及周围 {nearbyGroundRadius:0.#} 米内未找到可行走地面。");
-            return;
-        }
-        var grounded = mesh.Ground(target, unknownHeight);
-        if (grounded == null || !NavigationRules.Finite(grounded.Value) || NavigationRules.Distance(target, grounded.Value) > 5)
-        { Stop($"无法在目的地找到可行走地面：目标={target}，查询结果={grounded}，未知高度={unknownHeight}。"); return; }
-        StartPath(player, grounded.Value);
+        requestedGround = target;
+        endpoint.Start(target, unknownHeight, nearbyGroundRadius, groundFilter);
+        if (!TryNearbyGround(player)) Stop($"目标及周围 {nearbyGroundRadius:0.#} 米内未找到可行走地面。");
     }
 
     private bool TryNearbyGround(Vector3 player)
     {
-        while (attemptedGround.Count < 6 && groundSamples?.MoveNext() == true)
-        {
-            var sample = groundSamples.Current;
-            if (mesh.Ground(sample, unknownDestinationHeight) is not { } grounded || !NavigationRules.Finite(grounded)
-                || NavigationRules.Distance(grounded, sample) > 5 || NavigationRules.Distance(grounded, requestedGround) > nearbyGroundRadius
-                || attemptedGround.Any(p => Vector3.DistanceSquared(p, grounded) < 1)) continue;
-            attemptedGround.Add(grounded);
-            StartPath(player, grounded);
-            return true;
-        }
-        return false;
-    }
-
-    private void StartPath(Vector3 player, Vector3 grounded)
-    {
-        target = grounded;
-        cancellation = new();
-        path = mesh.FindPath(player, target, cancellation.Token);
-        Status = "正在计算路径。";
+        cancellation?.Dispose(); cancellation = new();
+        path = endpoint.Next(player, cancellation.Token);
+        if (path == null) return false;
+        target = endpoint.Point;
+        Status = "正在检查终点的完整可达路径。";
+        return true;
     }
 
     private void StopOwnRoute()
@@ -179,7 +158,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
     public void Stop(string reason = "已手动停止导航。")
     {
         arrival = null;
-        groundSamples?.Dispose(); groundSamples = null;
+        endpoint.Reset();
         Active = false;
         cancellation?.Cancel(); cancellation?.Dispose(); cancellation = null;
         if (path != null)
@@ -198,4 +177,61 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
     }
 
     public void Dispose() => Stop("导航模块已卸载。");
+}
+
+internal static class NavigationGround
+{
+    public const float SearchRadius = 25;
+    public static IEnumerable<Vector3> Candidates(INavigationMesh mesh, Vector3 target, bool unknownHeight, float radius = SearchRadius)
+    {
+        var centre = mesh.Ground(target, unknownHeight);
+        if (centre is { } exact && Valid(exact) && NavigationRules.Distance(exact, target) < .1f)
+        {
+            yield return exact;
+        }
+
+        var candidates = new List<Vector3>();
+        var yieldedCentre = centre is { } first && Valid(first) && NavigationRules.Distance(first, target) < .1f;
+        if (centre is { } initial && Valid(initial) && !yieldedCentre) candidates.Add(initial);
+        foreach (var sample in NavigationRules.NearbyGroundSamples(target, radius).Skip(1))
+            if (mesh.Ground(sample, unknownHeight) is { } point && Valid(point)
+                && (!yieldedCentre || Vector3.DistanceSquared(point, centre!.Value) >= .25f)
+                && !candidates.Any(p => Vector3.DistanceSquared(p, point) < .25f)) candidates.Add(point);
+        foreach (var point in candidates.OrderBy(p => NavigationRules.Distance(p, target))
+            .ThenBy(p => Math.Abs(p.Y - target.Y))) yield return point;
+
+        bool Valid(Vector3 point) => NavigationRules.Finite(point)
+            && NavigationRules.Distance(point, target) <= radius + .001f
+            && (unknownHeight || Math.Abs(point.Y - target.Y) <= 8);
+    }
+}
+
+// Poll the returned task on the framework thread. This helper never starts movement.
+// TakeDestination returns a coordinate only after a complete path has been confirmed.
+internal sealed class NavigationEndpoint(INavigationMesh mesh)
+{
+    private IEnumerator<Vector3>? candidates;
+    private Task<List<Vector3>>? pending;
+    public Vector3 Point { get; private set; }
+    public void Start(Vector3 destination, bool unknownHeight, float radius = NavigationGround.SearchRadius, Func<Vector3, bool>? filter = null)
+    {
+        Reset();
+        candidates = NavigationGround.Candidates(mesh, destination, unknownHeight, Math.Max(radius, NavigationGround.SearchRadius))
+            .Where(p => filter?.Invoke(p) != false).GetEnumerator();
+    }
+    public Task<List<Vector3>>? Next(Vector3 origin, CancellationToken token)
+    {
+        if (candidates?.MoveNext() != true) return null;
+        Point = candidates.Current;
+        return pending = mesh.FindPath(origin, Point, token);
+    }
+    public Vector3? TakeDestination(out List<Vector3> route)
+    {
+        var result = pending!.GetAwaiter().GetResult();
+        pending = null;
+        var valid = result.Count > 0 && result.All(NavigationRules.Finite) && Vector3.Distance(result[^1], Point) <= 3;
+        route = valid ? result : [];
+        return valid ? Point : null;
+    }
+    public void Reset() { candidates?.Dispose(); candidates = null; pending = null; }
 }

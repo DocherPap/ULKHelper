@@ -7,6 +7,8 @@ namespace ULKHelper.Windows;
 
 internal sealed class CommonPage(AutomationHelpers helpers, IFateMapProvider maps)
 {
+    private string discordOwner = "", discordToken = "";
+
     public void Draw()
     {
         ImGui.TextUnformatted("常用功能");
@@ -31,11 +33,11 @@ internal sealed class CommonPage(AutomationHelpers helpers, IFateMapProvider map
         var checkRing = helpers.CheckPagosRing;
         if (ImGui.Checkbox("进入恒冰之地前检查闪袭指环", ref checkRing)) helpers.SetCheckPagosRing(checkRing);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("未来 3 个现实小时内有薄雾时，携带或装备闪袭指环会取消自动参加。");
+            ImGui.SetTooltip("未来 3 小时内有薄雾，携带或装备闪袭指环会取消自动参加。如果需要跳过检查请取消勾选。");
         var walkNearDragon = helpers.WalkNearPagosDragon;
-        if (ImGui.Checkbox("恒冰靠近冰雪龙时自动走路", ref walkNearDragon)) helpers.SetWalkNearPagosDragon(walkNearDragon);
+        if (ImGui.Checkbox("恒冰之地靠近冰雪龙时自动切换走路", ref walkNearDragon)) helpers.SetWalkNearPagosDragon(walkNearDragon);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("进入虚无冰雪龙 15 米范围时检查一次，已走路时保持原状，离开后保留走路模式。");
+            ImGui.SetTooltip("靠近虚无冰雪龙 15 米范围时进入走路状态");
         var survey = helpers.QuickElementalSurvey;
         if (ImGui.Checkbox("快速检查元灵", ref survey)) helpers.SetQuickElementalSurvey(survey);
         if (ImGui.IsItemHovered())
@@ -43,6 +45,7 @@ internal sealed class CommonPage(AutomationHelpers helpers, IFateMapProvider map
         ImGui.Separator();
 
         DrawNavigationSettings();
+        if (ImGui.CollapsingHeader("Discord 远程进岛")) DrawDiscord();
         ImGui.Separator();
         ImGui.TextUnformatted("地图与战斗");
         ImGui.TextWrapped("坐标导航使用当前岛地图上的旗标。");
@@ -52,6 +55,8 @@ internal sealed class CommonPage(AutomationHelpers helpers, IFateMapProvider map
             Button("自动寻路FATE", CommonAction.Fate);
             Button("自动等待开怪", CommonAction.WaitForPull);
             Button("等级同步", CommonAction.Sync);
+            Button("自动寻找宝藏", CommonAction.BunnyTreasure);
+            Button("吃 FATE", CommonAction.EatFate);
             ImGui.EndTable();
         }
         ImGui.Separator();
@@ -104,6 +109,56 @@ internal sealed class CommonPage(AutomationHelpers helpers, IFateMapProvider map
         if (ImGui.Button("停止")) helpers.Stop();
         ImGui.EndDisabled();
         ImGui.TextWrapped(state.NavigationStatus);
+    }
+
+    private void DrawDiscord()
+    {
+        var discord = helpers.DiscordSnapshot;
+        ImGui.TextUnformatted("Discord 远程进岛");
+        if (ImGui.Button(discord.Enabled ? "关闭 Discord 接入" : "开启 Discord 接入"))
+            helpers.EnableDiscord(!discord.Enabled);
+        ImGui.SameLine();
+        ImGui.BeginDisabled(!discord.Active);
+        if (ImGui.Button("停止 Discord 任务")) helpers.StopDiscord();
+        ImGui.EndDisabled();
+
+        var bridgeStatus = !discord.Enabled ? "接入已关闭"
+            : discord.BotId == 0 ? "等待机器人桥接上报"
+            : DateTimeOffset.UtcNow - discord.LastSeen <= TimeSpan.FromSeconds(45)
+                ? $"已收到桥接心跳，Bot ID {discord.BotId}"
+                : $"桥接心跳超时，最近 Bot ID {discord.BotId}";
+        ImGui.TextWrapped(bridgeStatus);
+        ImGui.TextWrapped(discord.Status);
+        var partyRequest = discord.PartyRequest;
+        var autoParty = discord.AutoParty;
+        if (ImGui.Checkbox("锁定 FATE 后喊话组队", ref partyRequest))
+            helpers.SetDiscordParty(partyRequest, autoParty);
+        ImGui.SameLine();
+        if (ImGui.Checkbox("任务期间自动组队", ref autoParty))
+            helpers.SetDiscordParty(partyRequest, autoParty);
+        ImGui.SetNextItemWidth(Math.Min(360, ImGui.GetContentRegionAvail().X));
+        ImGui.InputText("Discord 用户 ID", ref discordOwner, 24, ImGuiInputTextFlags.CharsDecimal);
+        ImGui.SetNextItemWidth(Math.Min(360, ImGui.GetContentRegionAvail().X));
+        ImGui.InputText("Bot Token", ref discordToken, 256, ImGuiInputTextFlags.Password);
+        var useSaved = discord.CredentialsSaved && discordOwner.Length == 0 && discordToken.Length == 0;
+        ImGui.BeginDisabled(!useSaved && (string.IsNullOrWhiteSpace(discordOwner) || string.IsNullOrWhiteSpace(discordToken)));
+        if (ImGui.Button("连接 Discord Bot"))
+        {
+            helpers.StartDiscordBridge(discordOwner, discordToken);
+            discordOwner = discordToken = "";
+        }
+        ImGui.EndDisabled();
+        ImGui.SameLine();
+        ImGui.BeginDisabled(!discord.CredentialsSaved);
+        if (ImGui.Button("清除已保存凭据"))
+        {
+            helpers.ClearDiscordCredentials();
+            discordOwner = discordToken = "";
+        }
+        ImGui.EndDisabled();
+        if (discord.CredentialsSaved) ImGui.TextWrapped("已加密保存用户 ID 和 Token，两框留空即可连接。");
+        if (!string.IsNullOrEmpty(discord.BridgeStatus)) ImGui.TextWrapped(discord.BridgeStatus);
+        ImGui.TextWrapped("填你自己的 Discord 用户 ID 和开发者后台 Bot 页面的 Token。看到 Bot ID 后，私聊机器人发送「状态」。");
     }
 
     private void Button(string label, CommonAction action)

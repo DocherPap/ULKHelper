@@ -16,7 +16,7 @@ internal sealed unsafe class IslandRosterGameSource(IGameInteropProvider interop
     private (byte Request, uint Count)? cachedRevision;
     private IslandMember[] socialMembers = [];
     public IReadOnlyList<IslandMember> SocialMembers => socialMembers;
-    public string Diagnostics { get; private set; } = "尚未收到玩家名单回调。";
+    public string Diagnostics { get; private set; } = "尚未刷新玩家名单。";
     public string NativeDiagnostics()
     {
         var proxy = InfoProxyContentMember.Instance();
@@ -115,7 +115,7 @@ internal sealed unsafe class IslandRosterGameSource(IGameInteropProvider interop
         socialMembers = [];
         var proxy = InfoProxyContentMember.Instance();
         cachedRevision = proxy == null || proxy->EntryCount == 0 ? null : (proxy->CurrentRequestId, proxy->EntryCount);
-        Diagnostics = "尚未收到当前副本的玩家名单回调。";
+        Diagnostics = "尚未刷新当前副本的玩家名单。";
     }
     public void Dispose() { hook?.Dispose(); hook = null; }
 }

@@ -117,7 +117,7 @@ internal sealed class ItemStatisticsPage
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip(source.UpdatedAt is { } time
                     ? $"最后获取：{time.ToLocalTime():yyyy-MM-dd HH:mm:ss}\n保存于当前角色的本地缓存。"
-                    : "请打开此来源获取库存；未获取不代表没有物品。");
+                    : "请刷新获取库存。");
         }
         ImGui.Spacing();
         ImGui.TextWrapped("库存自动更新；缓存来源保留上次获取的结果。");
@@ -179,7 +179,7 @@ internal sealed class ItemStatisticsPage
 
     private static void DrawLegend()
     {
-        ImGui.TextWrapped("亮色：实际拥有　浅色：前置阶段　空心：未拥有");
+        ImGui.TextWrapped("亮色：实际拥有　浅色：已完成前置阶段　空心：未拥有/未完成");
         foreach (var entry in new[] { ("常风", "常风水晶"), ("恒冰", "恒冰水晶"), ("涌火", "涌火水晶"), ("丰水", "丰水水晶"), ("改", "优雷卡的断片") })
         {
             if (entry.Item1 != "常风") ImGui.SameLine();
@@ -408,16 +408,16 @@ internal sealed class ItemStatisticsPage
                 ImGui.TextDisabled("库存尚未获取，请打开对应的物品来源。");
                 return;
             }
-            ImGui.TextUnformatted($"目前拥有：{value.Owned:N0}　推算已投入：{value.Spent:N0}");
-            ImGui.TextUnformatted($"后续所需：{value.Remaining:N0}　缺口：{value.Deficit:N0}");
+            ImGui.TextUnformatted($"目前拥有：{value.Owned:N0}　已使用：{value.Spent:N0}");
+            ImGui.TextUnformatted($"后续所需：{value.Remaining:N0}　还需要：{value.Deficit:N0}");
             if (value.Material.ExchangeMaterial is not { } exchange) return;
             ImGui.Separator();
             var required = (int)Math.Ceiling(value.Deficit * value.Material.ExchangeCost);
             ImGui.TextColored(StatisticsPalette.Material(value.Material.Name).Pale, $"兑换缺口需{(value.Material.Approximate ? "约 " : " ")}{required:N0} 个{exchange}");
             ImGui.TextDisabled(value.Material.Approximate
-                ? "按 1 常风水晶 ≈ 3.5 乱属性水晶估算，向上取整。"
+                ? "按 1 常风水晶 ≈ 3.5 乱属性水晶估算。"
                 : $"每个{value.Material.Name}需 {value.Material.ExchangeCost:0} 个{exchange}。");
-            ImGui.TextDisabled("独立估算，未扣兑换材料库存及其他用途。");
+            ImGui.TextDisabled("单独估算，没有扣除兑换材料库存及其他用途。");
         }
         finally { ImGui.EndTooltip(); }
     }

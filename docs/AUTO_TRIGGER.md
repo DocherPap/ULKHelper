@@ -8,7 +8,7 @@
 - 攻击拉怪在拉怪阶段保持步行，目标为尚无仇恨的触发怪。前往 FATE 中心或远处怪群的准备行程仍可用坐骑，开始攻击前下坐骑。
 - 自动路线到 FATE 中心后从 45 米内最近的可拉怪开始。按 5 米宽的移动走廊累计覆盖，达到每批上限、45 米内已无可拉目标或观测到仇恨减少时转入击杀。脱战后继续找下一群，无怪时等待。每批上限为 1–20 或无限。
 - 预设路线按保存顺序从起点走到终点。在起点观察，15 米宽的路线走廊内至少有 3 只缓存中的可拉怪才出发。抵达终点击杀，脱战后回起点，等出现新目标且再次达到三只门槛才出发。每个 FATE 可保存多条路线，支持选取预览、记录起点与途经点、命名和删除。
-- 自动循环和 BMR AI 开关分别保存。放弃阈值为 50–300（每 50 一档）或无限，按每个 FATE 的本地观测击杀数累计。
+- 自动循环和 BossMod AI 开关分别保存。放弃阈值为 50–300（每 50 一档）或无限，按每个 FATE 的本地观测击杀数累计。
 - 原普通 FATE 默认攻击加自动路线，原特殊 FATE 默认路过加预设路线。保留旧配置与已保存路线。
 
 目标 FATE 出现或达到放弃阈值后结束该计划，先处理已有仇恨的触发怪。预设路线已出发时先走完本轮，再检查剩余计划。
@@ -25,7 +25,7 @@
 
 拉怪移动中每 750 毫秒最多尝试一次技能。国服本机 `GeneralAction` 核实冲刺 4，`Action` 核实速行 7557、疾风怒涛之计 25868，以及 `TriggerMobility` 列出的 PvE 职业位移。已有冲刺、速行或擢升时跳过速度增益。定向和地面位移检查当前途经点与沿线地面，自动路线对敌突进只面向当前选中的触发怪。
 
-`AutoTriggerHelper` 是状态机，`TriggerGameReader` 负责框架线程只读快照，`AutomationHelpers` 处理 UI 命令、互斥与持久化。攻击拉怪时开启游戏自动攻击，启用 RSR 时使用 Manual 并由插件选中无仇恨的触发怪。击杀时 RSR 使用 Auto、HighHP 和有仇恨范围。自动路线的攻击组合在开启 BMR 时沿用 BMR 靠近，关闭时由 vnavmesh 接近。预设路线由移动跟随器连续走完，BMR 不接管移动。结束时释放本次开启的自动攻击，并按所有权还原 RSR／BMR 设置。
+`AutoTriggerHelper` 是状态机，`TriggerGameReader` 负责框架线程只读快照，`AutomationHelpers` 处理 UI 命令、互斥与持久化。攻击拉怪时开启游戏自动攻击，启用 RSR 时使用 Manual 并由插件选中无仇恨的触发怪。击杀时 RSR 使用 Auto、HighHP 和有仇恨范围。普通攻击拉怪时，BossMod Reborn 可负责靠近；原版 BossMod 使用 vnavmesh 拉怪，击杀阶段启用原版 AI 移动。原版接口未注册且启用 RSR 时降级为 vnavmesh 和 RSR。预设路线由移动跟随器连续走完，BMR 不接管移动。结束时释放本次开启的自动攻击，并按所有权还原 RSR／BMR 设置。
 
 仇恨证据来自本机UIState.Hater战斗敌对列表或怪物正在以自己为目标。拉怪目标连续6秒未明显接近且血量未下降，或25秒未确认仇恨时，暂缓该目标30秒并继续挑选本波目标。只有连续观测到已拉怪活到死才计入放弃数量，怪物消失、首次见尸体和采样断开超过2秒均不算击杀。该数量是本地观察，其他玩家可能参与击杀。没有可确认的敌人时暂停循环并等脱战。
 
@@ -51,3 +51,5 @@ trigger-waves.13 的224项自动化检查通过，覆盖最近优先、先巡查
 2026-11-03用户报告证明IBattleNpc.Level是普通战斗等级70，不能匹配优雷卡8级小怪。现统一从本机Character.GetForayInfo()->Level读取元素等级，用于名称/等级筛选与击杀统计；0/空指针或异常等级保持未知。源码接口参考 https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/Game/Character/Character.cs ，使用本机配套程序集编译，不硬编码国际服偏移。现场常风鸟妖NameId6822与规则8级已核对。
 
 接口参考：[BMR自动靠近配置](https://github.com/FFXIV-CombatReborn/BossmodReborn/blob/main/BossMod/AI/AIConfig.cs)、[BMR移动逻辑](https://github.com/FFXIV-CombatReborn/BossmodReborn/blob/main/BossMod/AI/AIBehaviour.cs)、[BMR IPC](https://github.com/FFXIV-CombatReborn/BossmodReborn/blob/main/BossMod/Framework/IPCProvider.cs)、[FFXIVClientStructs Hater](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/Game/UI/Hater.cs)。BMR配置字段与本机7.5.7.3程序集核对，仇恨结构使用本机API 15程序集。
+
+测试分支：自动触发、跟随及 Discord NM 自动识别当前启用的 BossMod 或 BossMod Reborn，任务绑定该提供者。两者共享 IPC 名称，同时启用时提示只启用其中一个。原版 BossMod 7.5.7.20 的 Configuration、AI.IsEnabled 和 Presets IPC 已通过本机程序集注册代码核对。

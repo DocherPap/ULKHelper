@@ -48,9 +48,9 @@ public sealed class Plugin : IDalamudPlugin
         }
         automation = new(pluginInterface, framework, clientState, objects, fates, conditions, chat, gameGui, log, party, dataManager, interop, playerState, commandManager, targets, weatherZones.SingleOrDefault(zone => zone.TerritoryId == CommonJourney.Pagos), settings);
         logosInventory=new(framework,objects,playerState,gameGui,logos.Catalog);
-        fateTracker = new(dataManager, framework, clientState, objects, fates, gameGui, log, scanner, playerState, chat, settings);
+        fateTracker = new(dataManager, framework, clientState, objects, fates, gameGui, log, scanner, playerState, chat, party, conditions, settings);
         automation.ElementalMaps = fateTracker;
-        bunnies=new(framework,clientState,objects,playerState,chat,fateTracker,log);
+        bunnies=new(framework,clientState,objects,playerState,chat,fateTracker,log,settings);
         automation.AttachBunnyTracker(bunnies);
         mainWindow = new(inventoryTracker, automation, weatherZones, fateTracker, new GameMapTextures(textures), weatherError, settings, new LogosPage(id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText(), id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>()!.GetRow(id).Name.ExtractText(), () => objects.LocalPlayer is {} player ? new LogosWorld(player.CurrentWorld.RowId,player.CurrentWorld.Value.Name.ExtractText(),player.CurrentWorld.Value.DataCenter.Value.Name.ExtractText()) : null, logos, settings,()=>logosInventory.Snapshot), new BunnyPage(bunnies,id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText(),settings));
         windows.AddWindow(mainWindow);
@@ -67,6 +67,9 @@ public sealed class Plugin : IDalamudPlugin
         if (arguments.Trim().Equals("refreshplayers", StringComparison.OrdinalIgnoreCase)) automation.RefreshPlayers();
         else if (arguments.Trim().Equals("entrance", StringComparison.OrdinalIgnoreCase)) automation.GoToEntrance();
         else if (arguments.Trim().Equals("stop", StringComparison.OrdinalIgnoreCase)) automation.Stop();
+        else if (arguments.Trim().Equals("discord on", StringComparison.OrdinalIgnoreCase)) automation.EnableDiscord(true);
+        else if (arguments.Trim().Equals("discord off", StringComparison.OrdinalIgnoreCase)) automation.EnableDiscord(false);
+
         else OpenMainUi();
     }
 

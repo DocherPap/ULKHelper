@@ -39,6 +39,13 @@ internal sealed unsafe class IslandCrystalGameAdapter(IObjectTable objects, IGam
         if (unit.IsNull || !unit.IsVisible || !unit.IsReady) return null;
         return (AddonSelectString*)unit.Address;
     }
+    public Vector3? Locate(IslandCrystal source)
+    {
+        var match = objects.Where(o => o.IsTargetable && IsCrystal(o)
+            && NavigationRules.Distance(o.Position, source.Position) < 10).Take(2).ToArray();
+        return match.Length == 1 ? match[0].Position : null;
+    }
+
     public bool Open(IslandCrystal source)
     {
         Error = null;

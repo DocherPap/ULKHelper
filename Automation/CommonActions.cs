@@ -15,7 +15,7 @@ namespace ULKHelper.Automation;
 internal enum CommonAction
 {
     Entrance, Camp, Potion, Anemos, Pagos, Pyros, Hydatos, Emergency,
-    Coordinate, Fate, WaitForPull, NearestCrystal, Sync, Elemental, Rescue,
+    Coordinate, Fate, WaitForPull, NearestCrystal, Sync, Elemental, Rescue, BunnyTreasure, EatFate,
 }
 
 internal sealed partial class AutomationHelpers
@@ -38,7 +38,7 @@ internal sealed partial class AutomationHelpers
     public bool AutoAccept => autoAccept;
     public bool CheckPagosRing => commonJourney.CheckPagosRing;
     public bool WalkNearPagosDragon => walkNearPagosDragon;
-    public string CommonStatus => SurveyActive ? surveyStatus : commonJourney.Active ? commonJourney.Status
+    public string CommonStatus => bunnySearchOnly ? BunnyAutomationStatus : SurveyActive ? surveyStatus : commonJourney.Active ? commonJourney.Status
         : commonUsesFollow ? follow.Status : commonUsesNavigation ? navigation.Status : commonStatus;
 
     public void SetCommonParty(bool invite, bool enabled) => commands.Enqueue(() =>
@@ -84,6 +84,7 @@ internal sealed partial class AutomationHelpers
 
     private void StopTasks()
     {
+        StopRemote("已从游戏内停止 Discord 任务。");
         StopBunnyAutomation("已停止自动挖宝。");
         if (SurveyActive) StopSurvey("已停止元灵巡查。");
         commonJourney.Stop("已停止常用功能。");
@@ -138,13 +139,13 @@ internal sealed partial class AutomationHelpers
                     : elemental != null && elemental.Territory == world.Territory && elemental.Map == world.Map
                     && SendElementalFlag(elemental);
                 if (sent) nextShout = now.AddSeconds(3);
-                commonStatus = sent ? "已提交喊话。" : "当前地图没有已知元灵或喊话不可用。";
+                commonStatus = sent ? "已发送喊话。" : "当前地图没有已知元灵。";
             }
             return;
         }
         if (!SafeState() || objects.LocalPlayer is not { } player)
         { commonStatus = "请结束交互后重试。"; return; }
-        if (BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active || follow.Active || navigation.Active || combat.CleanupPending)
+        if (RemoteActive || BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active || follow.Active || navigation.Active || combat.CleanupPending)
         { commonStatus = "请先停止当前任务。"; return; }
 
         if (action is CommonAction.Entrance or CommonAction.Potion or CommonAction.Anemos or CommonAction.Pagos or CommonAction.Pyros or CommonAction.Hydatos)
@@ -157,6 +158,9 @@ internal sealed partial class AutomationHelpers
         if (!IsEureka(world.Territory)) { commonStatus = "请先进入优雷卡岛内。"; return; }
         switch (action)
         {
+            case CommonAction.BunnyTreasure:
+                StartBunnyTreasure(world, now);
+                break;
             case CommonAction.Camp:
             case CommonAction.NearestCrystal:
                 var crystal = action == CommonAction.Camp
@@ -176,6 +180,15 @@ internal sealed partial class AutomationHelpers
                 { commonStatus = "旗标50米内没有进行中的FATE。"; return; }
                 commonUsesNavigation = true;
                 StartPointNavigation(goal, action == CommonAction.Fate);
+                break;
+            case CommonAction.EatFate:
+                var eatGoal = CurrentFlag(world);
+                var eatFate = eatGoal == null ? null : NavigationRules.FindFate(eatGoal.Position, ReadFates());
+                if (eatGoal == null || eatFate == null) { commonStatus = "请在本岛正在进行的 FATE 上设置旗标。"; return; }
+                usingFollow = commonUsesFollow = true;
+                arrivalGame.Reset();
+                if (follow.Start(world, now, repeatFollowing: false))
+                    follow.Receive(eatGoal with { Position = eatFate.Position, Label = eatFate.Name }, eatFate);
                 break;
             case CommonAction.WaitForPull:
                 var fate = ReadFates().Where(f => NavigationRules.Distance(player.Position, f.Position) <= 100)
@@ -231,7 +244,7 @@ internal sealed partial class AutomationHelpers
     private unsafe void InviteFromShout(PlayerIdentity identity, WorldContext world)
     {
         var now = DateTimeOffset.UtcNow;
-        if (!autoInvite || world != Context() || !IsEureka(world.Territory) || !SafeState()
+        if ((!autoInvite && !RemotePartyActive) || world != Context() || !IsEureka(world.Territory) || !SafeState()
             || now < nextInvite || commonParty.Count() >= 8 || invited.GetValueOrDefault(identity) > now
             || objects.LocalPlayer is not { } self
             || identity == new PlayerIdentity(self.Name.TextValue, self.HomeWorld.RowId)) return;
@@ -249,7 +262,7 @@ internal sealed partial class AutomationHelpers
 
     private unsafe void TickCommonParty(DateTimeOffset now)
     {
-        if (!autoAccept || !IsEureka(client.TerritoryType) || !SafeState() || now < nextAccept) return;
+        if ((!autoAccept && !RemotePartyActive) || !IsEureka(client.TerritoryType) || !SafeState() || now < nextAccept) return;
         nextAccept = now.AddSeconds(1);
         var proxy = InfoProxyPartyInvite.Instance();
         if (proxy == null || proxy->InviteTime == 0) return;

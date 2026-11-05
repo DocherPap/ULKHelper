@@ -22,14 +22,14 @@ internal sealed class LogosService : IDisposable
     private uint requestWorld;
     private DateTimeOffset nextRequest;
     public IReadOnlyDictionary<uint,LogosPrice> Prices { get; private set; } = new Dictionary<uint,LogosPrice>();
-    public string Status { get; private set; } = "点击查询价格获取Universalis报价。";
+    public string Status { get; private set; } = "点击查询价格。";
     public DateTimeOffset? Updated { get; private set; }
     public bool Busy => request != null;
     public void Poll(uint world)
     {
         if (request != null && request.IsCompleted)
         {
-            try { var result=request.GetAwaiter().GetResult(); if(requestWorld==world){Prices=result;Updated=DateTimeOffset.Now;Status="Universalis最低在售价；众包数据可能过期。";} }
+            try { var result=request.GetAwaiter().GetResult(); if(requestWorld==world){Prices=result;Updated=DateTimeOffset.Now;Status="最低在售价。";} }
             catch(Exception ex){Status="价格查询失败："+ex.GetBaseException().Message;}
             request=null;
         }

@@ -61,7 +61,7 @@ internal sealed partial class AutomationHelpers
         if (loading) return;
         if (objects.LocalPlayer is not { IsDead: false } player || conditions[ConditionFlag.InCombat])
         { StopSurvey("角色进入战斗或倒地，元灵巡查已停止。"); return; }
-        if (BunnyAutomationActive || commonJourney.Active || navigation.Active || follow.Active || trigger.Active)
+        if (RemoteActive || BunnyAutomationActive || commonJourney.Active || navigation.Active || follow.Active || trigger.Active)
         { StopSurvey("已有其他任务，已停止元灵巡查。"); return; }
         var safe = SafeState(surveyTravel.Interacting || surveyTravel.Transferring);
         if (surveyTravel.Transferring && !safe) return;

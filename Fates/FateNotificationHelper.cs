@@ -64,7 +64,7 @@ internal sealed class FateNotificationHelper(IReadOnlyList<IslandMap> islands)
     public void Reset()
     {
         seen.Clear(); pending.Clear(); lastQueued.Clear(); needsBaseline = true; baselineAt = default;
-        Status = Settings.Enabled ? "等待进岛建立活动基线。" : "通知未开启。";
+        Status = Settings.Enabled ? "等待进岛。" : "通知未开启。";
     }
     public void Observe(uint territory, IReadOnlyList<FateObservation> observations, DateTimeOffset now)
     {
@@ -76,7 +76,7 @@ internal sealed class FateNotificationHelper(IReadOnlyList<IslandMap> islands)
         foreach (var observation in observations)
         {
             var definition = island.Fates.FirstOrDefault(f => f.Seed.Id == observation.Id);
-            if (definition == null) continue;
+            if (definition == null || definition.Seed.Bunny) continue;
             observedIds.Add(observation.Id);
             var active = observation.Activity != FateActivity.Ended;
             var known = seen.TryGetValue(observation.Id, out var previous);

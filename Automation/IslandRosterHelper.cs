@@ -27,7 +27,7 @@ internal sealed class IslandRosterHelper(IIslandRosterSource source)
         if (!safe || territory is not (732 or 763 or 795 or 827)) return;
         IReadOnlyList<IslandMember>? members;
         try { members = source.TakeCompleted(territory); }
-        catch { pending = false; Snapshot = Snapshot with { Status = "名单读取失败，保留上次缓存。" }; return; }
+        catch { pending = false; Snapshot = Snapshot with { Status = "名单读取失败，使用上次缓存。" }; return; }
         if (members != null)
         {
             if (!pending) nextRequest = now.AddSeconds(30);
@@ -35,12 +35,12 @@ internal sealed class IslandRosterHelper(IIslandRosterSource source)
             Snapshot = new(members.DistinctBy(p => p.Identity).ToArray(), now, "岛内玩家名单已更新。");
         }
         else if (pending && now - requestedAt >= TimeSpan.FromSeconds(15))
-        { pending = false; Snapshot = Snapshot with { Status = "名单请求超时，保留上次缓存。" }; }
+        { pending = false; Snapshot = Snapshot with { Status = "名单请求超时，使用上次缓存。" }; }
         if (pending || now < nextRequest && !(manual && now - requestedAt >= TimeSpan.FromSeconds(5))) return;
         manual = false; requestedAt = now; nextRequest = now.AddSeconds(30);
         try { pending = source.Request(); }
         catch { pending = false; }
-        Snapshot = Snapshot with { Status = pending ? "正在获取岛内玩家名单。" : "名单请求未接受，保留上次缓存。" };
+        Snapshot = Snapshot with { Status = pending ? "正在获取岛内玩家名单。" : "名单请求未接受，使用上次缓存。" };
     }
     public int? OtherPlayers(PlayerIdentity self, DateTimeOffset now) => Snapshot.UpdatedAt is { } updated
         && now - updated <= TimeSpan.FromSeconds(90) ? Snapshot.Members.Count(p => p.Identity != self) : null;

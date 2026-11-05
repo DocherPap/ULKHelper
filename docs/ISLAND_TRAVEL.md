@@ -50,3 +50,11 @@
 - 游戏内名单请求及hook、菜单/目标交互、传送和落地续走未实测；本次不更新已准备好的0.0.1发布ZIP。
 
 协议依据：[InfoProxyContentMember](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/UI/Info/InfoProxyContentMember.cs)、[InfoProxyPageInterface](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/UI/Info/InfoProxyPageInterface.cs)、[InfoProxyInterface](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/UI/Info/InfoProxyInterface.cs)、[AddonSelectString](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/UI/AddonSelectString.cs)。实际调用以本机国服API15依赖为准。
+
+测试分支 FATE 行程：优先水晶策略使用 60 米等效传送成本和 25 米额外收益门槛，选目标时仍核对实际可用菜单。距离源水晶参考点 3 米内可直接进入交互阶段。普通坐标导航保留原估算，原版和 Reborn 使用相同水晶策略。
+
+测试分支：自动行程到达源水晶后如在战斗，暂停水晶菜单并用 RSR Auto 等待脱战。已有循环交由原使用方管理；插件仅关闭本次启动且所有权仍有效的循环。脱战后重新开启水晶菜单。单次等待上限 60 秒，停止或失败释放本次循环，元灵巡查仍按原规则遇敌停止。
+
+测试分支 FATE 路线在发出移动前，用 vnavmesh 逐条规划直达、到最近两个可测源水晶，以及各候选落地后到目标的路径，以三维路径长度比较。传送仍计 60 米等效成本与 25 米收益门槛，目标需在实际菜单可用。规划最多 10 秒，无法测量时用原平面估算。接近源水晶优先使用唯一已加载水晶的实际坐标，保留原路线回退。
+
+testing.13：活动 FATE 导航及开怪站位使用客户端 FATE / 已加载头目的实际世界 Y。已知高度同时用于 vnavmesh 水晶路长比较，避免把恒冰荷鲁斯、双牛、娄希的洞内目标投到上层。没有活动场次时的地图旗标缺少高度，无法据此确认洞层。

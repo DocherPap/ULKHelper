@@ -141,7 +141,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             DrawTriggerRoutes(0, auto, island, false);
         ImGui.Checkbox("自动循环", ref useTriggerRotation);
         ImGui.SameLine();
-        ImGui.Checkbox("BMR AI", ref useTriggerBmr);
+        ImGui.Checkbox("BossMod AI", ref useTriggerBmr);
         if (current != null)
         {
             ImGui.SameLine();
@@ -367,12 +367,12 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
                 var itemSpacing = ImGui.GetStyle().ItemSpacing;
                 ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(itemSpacing.X, Math.Min(itemSpacing.Y, 2)));
                 var textLine = ImGui.GetTextLineHeightWithSpacing();
-                var bunnyHeight = bunnies == null ? 0 : ImGui.GetFrameHeightWithSpacing() * 3 + textLine * 3 + 8;
+                var bunnyHeight = bunnies == null ? 0 : ImGui.GetFrameHeightWithSpacing() * 4 + textLine * 3 + 8;
                 var triggerHeight = ImGui.GetFrameHeightWithSpacing() * 7.6f + textLine * 2 + 6;
                 if (ImGui.BeginChild("##SelectedFateDetails", new Vector2(0, textLine * 5.7f), false, pinned))
                     DrawSelectedFate(island, snapshot);
                 ImGui.EndChild();
-                ImGui.Separator();
+                DrawAutomationDivider();
                 if (navigation != null)
                 {
                     if (ImGui.BeginChild("##PinnedTrigger", new Vector2(0, triggerHeight), false, pinned))
@@ -381,19 +381,19 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
                 }
                 if (automation != null && navigation != null)
                 {
-                    ImGui.Separator();
+                    DrawAutomationDivider();
                     if (ImGui.BeginChild("##PinnedFollow", new Vector2(0, textLine * 4.8f), false, pinned))
                         automation.DrawFollow(navigation.Snapshot);
                     ImGui.EndChild();
                 }
                 if (bunnies != null)
                 {
-                    ImGui.Separator();
+                    DrawAutomationDivider();
                     if (ImGui.BeginChild("##PinnedBunny", new Vector2(0, bunnyHeight), false, pinned))
                         bunnies.DrawSummary(island, navigation);
                     ImGui.EndChild();
                 }
-                ImGui.Separator();
+                DrawAutomationDivider();
                 ImGui.PopStyleVar();
                 if (ImGui.BeginChild("##ScrollableMapLists", Vector2.Zero))
                 {
@@ -411,6 +411,13 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             ImGui.EndChild();
         }
         finally { ImGui.EndTable(); }
+    }
+
+    private static void DrawAutomationDivider()
+    {
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
     }
 
     private void DrawNotifications(FateMapSnapshot snapshot)
@@ -431,7 +438,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         notificationChanged |= ImGui.InputTextWithHint("##FateNotificationTemplate", "通知内容", ref notificationTemplate, 512);
         if (notificationChanged) provider.ConfigureNotifications(new(notificationEnabled, (FateNotificationChannel)notificationChannel, notificationTemplate));
         ImGui.TextWrapped("<位置> 代表位置，<名字> 代表 FATE 缩写。开启后仅通知新出现的 FATE。");
-        if (notificationEnabled && snapshot.NotificationStatus is {} notificationStatus && notificationStatus!="等待进岛建立活动基线。")
+        if (notificationEnabled && snapshot.NotificationStatus is {} notificationStatus && notificationStatus!="等待进岛。")
             ImGui.TextWrapped(notificationStatus);
         if (snapshot.CrowdsourceStatus != null)
             ImGui.TextWrapped($"{(snapshot.RoomId != 0 ? $"房间 {snapshot.RoomId} · " : "")}{snapshot.CrowdsourceStatus}");

@@ -58,14 +58,14 @@ internal sealed class TriggerKillLedger(IReadOnlyList<TriggerMobRule> rules)
         foreach (var delta in increments)
         {
             var rule = rules.First(r => r.FateId == delta.Key);
-            events.Add(new(now, $"{rule.FateName} · {rule.MobName} +{delta.Value}", $"本轮本地观测累计 {counts[delta.Key]} 只"));
+            events.Add(new(now, $"{rule.FateName} · {rule.MobName} +{delta.Value}", $"本轮已累计 {counts[delta.Key]} 只"));
         }
         foreach (var id in activeFates.Where(id => !active.Contains(id)))
         {
             if (counts.Remove(id, out var total) && total > 0)
             {
                 var rule = rules.First(r => r.FateId == id);
-                events.Add(new(now, $"{rule.FateName} 已触发", $"本轮本地观测 {rule.MobName} 击杀 {total} 只，开始新一轮计数。"));
+                events.Add(new(now, $"{rule.FateName} 已触发", $"本轮已 {rule.MobName} 击杀 {total} 只，开始新一轮计数。"));
             }
         }
         previous.Clear();

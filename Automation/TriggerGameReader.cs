@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -21,17 +21,22 @@ internal sealed class TriggerGameReader(IObjectTable objects, IDataManager data)
         var hud = AgentHUD.Instance();
         return hud != null && (hud->ExpFlags & AgentHudExpFlag.InEureka) != 0 && hud->ExpContentLevel > 0 ? hud->ExpContentLevel : null;
     }
+    public static unsafe HashSet<uint>? ReadEnmity()
+    {
+        var ui = UIState.Instance();
+        if (ui == null) return null;
+        var enemies = new HashSet<uint>();
+        var haters = ui->Hater.Haters;
+        foreach (var hater in haters[..Math.Clamp(ui->Hater.HaterCount, 0, haters.Length)])
+            if (hater.Enmity > 0) enemies.Add(hater.EntityId);
+        return enemies;
+    }
+
     public unsafe IReadOnlyList<TriggerMob> Read(uint territory)
     {
-        var result = new List<TriggerMob>(); var localId = objects.LocalPlayer?.GameObjectId;
-        var enemies = new HashSet<uint>();
-        var ui = UIState.Instance();
-        if (ui != null)
-        {
-            var haters = ui->Hater.Haters;
-            foreach (var hater in haters[..Math.Clamp(ui->Hater.HaterCount, 0, haters.Length)])
-                if (hater.Enmity > 0) enemies.Add(hater.EntityId);
-        }
+        var result = new List<TriggerMob>();
+        var localId = objects.LocalPlayer?.GameObjectId;
+        var enemies = ReadEnmity();
         foreach (var npc in objects.OfType<IBattleNpc>().Where(n => n.Address != 0 && n.MaxHp > 0))
         {
         var elementalLevel=EurekaNpcLevel.Read(npc);
@@ -39,7 +44,7 @@ internal sealed class TriggerGameReader(IObjectTable objects, IDataManager data)
         foreach (var rule in Rules.Where(r => r.Territory == territory && r.Level == elementalLevel && r.NameIds.Contains(npc.NameId)))
         {
             var dead = npc.IsDead || npc.CurrentHp == 0;
-            var aggro = enemies.Contains(npc.EntityId) || localId != null && npc.TargetObjectId == localId;
+            var aggro = enemies?.Contains(npc.EntityId) == true || localId != null && npc.TargetObjectId == localId;
             var engaged = ((Character*)npc.Address)->InCombat;
             result.Add(new(npc.GameObjectId, rule.FateId, npc.Position, dead, aggro, npc.IsTargetable, engaged, npc.CurrentHp, npc.HitboxRadius));
             // Don't turn mobs pulled after the player into false spawn distributions.

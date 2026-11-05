@@ -1,0 +1,26 @@
+[
+  {
+    "Author": "DocherPap",
+    "Name": "优雷卡助手",
+    "InternalName": "ULKHelper",
+    "AssemblyVersion": "0.2.3.0",
+    "Changelog": "0.2.3：同步正式功能更新，加入吃 FATE、单轮自动寻宝和 Discord 接入，改进幸福兔待机与挖宝点位记录、洞内导航、水晶路线和 BossMod 兼容性，更新界面说明。",
+    "Description": "优雷卡装备与材料统计、四岛天气与 FATE 地图、幸福兔挖宝、文理技能、常用功能及自动化。",
+    "Punchline": "优雷卡地图、装备统计与岛内便捷工具",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "Tags": [
+      "eureka",
+      "优雷卡"
+    ],
+    "IsTestingExclusive": false,
+    "LastUpdate": 1793859293,
+    "RepoUrl": "https://github.com/DocherPap/ULKHelper",
+    "DownloadLinkInstall": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.2.3/ULKHelper-0.2.3.0.zip",
+    "DownloadLinkUpdate": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.2.3/ULKHelper-0.2.3.0.zip",
+    "IsHide": false
+  }
+]

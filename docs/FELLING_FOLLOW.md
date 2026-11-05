@@ -68,3 +68,5 @@ BossMod：原版通过 `BossMod.AI.IsEnabled` 读状态，使用 `/vbm ai on/off
 - 实际角色坐骑列表、原生同步/目标、RSR/BossMod AI启停、职业循环与NM战斗尚未游戏内实测；本轮不修改版本、不重新打包原0.0.1发布ZIP。
 
 主要源码依据：[RSR IPC](https://github.com/FFXIV-CombatReborn/RotationSolverReborn/blob/main/RotationSolver/IPC/IPCProvider.cs)、[RSR DataCenter](https://github.com/FFXIV-CombatReborn/RotationSolverReborn/blob/main/RotationSolver/Basic/DataCenter.cs)、[BossMod IPC](https://github.com/awgil/ffxiv_bossmod/blob/master/BossMod/Services/IpcService.cs)、[Reborn IPC](https://github.com/FFXIV-CombatReborn/BossmodReborn/blob/main/BossMod/Framework/IPCProvider.cs)、[Reborn AIManager](https://github.com/FFXIV-CombatReborn/BossmodReborn/blob/main/BossMod/AI/AIManager.cs)。
+
+测试分支：每场实际进入战斗且锁定已确认的 NM 头目后，仅发送一次原生 /magiaattack。游戏按所选头目的元素判定攻势旋转，使用当前投入最多的魔石属性；不恢复、不重试。

@@ -68,7 +68,7 @@ internal sealed class LogosPage(Func<uint,string> itemName, Func<uint,string> ac
     private void Synthesis()
     {
         ImGui.SetNextItemWidth(180);ImGui.Combo("成本价格范围",ref scope,new[]{"当前服务器","当前大区","国服"},3);
-        ImGui.TextWrapped("估价未计随机鉴定损耗。名称后数字为已读取记忆库存；合成后的技能存储数量未获取。");
+        ImGui.TextWrapped("估价不考虑合成成功率。名称后数字为已读取记忆库存；合成后的技能存储数量未获取。");
         var rows=service.Catalog.Actions.Where(a=>search.Length==0||actionName(a.Action).Contains(search)).OrderByDescending(a=>favorites.Contains(a.Action)).ThenBy(a=>a.Number).ToArray();
         if(!rows.Any(a=>a.Action==selectedAction))selectedAction=rows.FirstOrDefault()?.Action??0;
         if(!BeginColumns("##LogosSynthesisColumns"))return;
@@ -92,7 +92,7 @@ internal sealed class LogosPage(Func<uint,string> itemName, Func<uint,string> ac
             {
                 ImGui.TextUnformatted($"{a.Number:00} {actionName(a.Action)} · {a.Recipes.Length} 种组合");
                 var costs=a.Recipes.Select(r=>service.Cost(r,scope)).Where(c=>c!=null).ToArray();
-                ImGui.TextWrapped(costs.Length==0?"暂无完整报价；下方列出每种组合缺少的报价。":$"已知报价中的最低采购基准：≈ {costs.Min():N0} 金币");
+                ImGui.TextWrapped(costs.Length==0?"暂无完整报价；下方列出每种组合缺少的报价。":$"已知报价中的最低成本：≈ {costs.Min():N0} 金币");
                 Cards("##RecipeCards",a.Recipes.Length,i=>
                 {
                     var recipe=a.Recipes[i];ImGui.TextUnformatted($"组合 {i+1}");

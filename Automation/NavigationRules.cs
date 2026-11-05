@@ -18,6 +18,18 @@ internal static class NavigationRules
     // Local Chinese Fate sheet 2026.10.06: Eureka=1 / Rule=1 are the 67 NMs;
     // the five Happy Bunny events use Rule=4. Other Eureka values describe other content.
     public static bool IsEurekaNm(byte eureka, byte rule) => eureka == 1 && rule == 1;
+    public const float BunnyNearbyGroundRadius = 25;
+    public static IEnumerable<Vector3> NearbyGroundSamples(Vector3 centre, float radius)
+    {
+        yield return centre;
+        for (var ring = 1; ring <= 5; ring++)
+            for (var direction = 0; direction < 8; direction++)
+            {
+                var angle = direction * MathF.PI / 4;
+                yield return centre + radius * ring / 5 * new Vector3(MathF.Cos(angle), 0, MathF.Sin(angle));
+            }
+    }
+
     public static bool Finite(Vector3 p) => float.IsFinite(p.X) && float.IsFinite(p.Y) && float.IsFinite(p.Z);
     public static float Distance(Vector3 a, Vector3 b) => Vector2.Distance(new(a.X, a.Z), new(b.X, b.Z));
     public static bool Overlaps(Vector3 player, Vector3 destination) => Distance(player, destination) <= 25;

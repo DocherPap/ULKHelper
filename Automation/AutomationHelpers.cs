@@ -29,7 +29,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     private readonly ITargetManager targets;
     private readonly SettingsStore? settings;
     private bool pointNm;
-    private string? reportedCrystalDecision;
+    private string? reportedCrystalDecision, reportedBunnyCrystalDecision;
     private readonly ConcurrentQueue<Action> commands = new();
     private readonly LeaderListenerHelper listener = new();
     private readonly IslandTravelHelper navigation;
@@ -72,17 +72,22 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         mesh = new VnavmeshAdapter(plugin); this.data = data;
         mounts = new(objects, data);
         arrivalGame = new(objects, party, fates, mounts);
-        navigation = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame);
-        surveyTravel = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame);
-        bunnyTravel = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame);
-        quickElementalSurvey = settings?.Get("common.quickElementalSurvey", false) ?? false;
         combat = new(plugin, commandManager, objects, targets);
+        navigation = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame, combat);
+        surveyTravel = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame);
+        bunnyTravel = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame, combat);
+        quickElementalSurvey = settings?.Get("common.quickElementalSurvey", false) ?? false;
         follow = new(navigation, mesh, mounts, combat);
         kills = new(objects, fates, data);
         trigger = new(mesh, mounts, combat, new IslandCrystalGameAdapter(objects, gui, data),
             new TriggerMobility(objects, data, mesh).TryUse);
         triggerReader = new(objects, data);
-        commonJourney = new(plugin, mesh, client, objects, gui, data, conditions, arrivalGame, pagosWeather, message => chat.Print(message));
+        discordBridgeDirectory = plugin.AssemblyLocation.DirectoryName ?? "";
+        discordCredentialsPath = Path.Combine(plugin.GetPluginConfigDirectory(), "discord-credentials.dat");
+        discordCredentialsSaved = File.Exists(discordCredentialsPath);
+        discordPlugin = plugin;
+
+        commonJourney = new(plugin, mesh, client, objects, gui, data, conditions, arrivalGame, pagosWeather, message => chat.Print(message), combat);
         commonJourney.CheckPagosRing = settings?.Get("common.checkPagosRing", false) ?? false;
         autoInvite = settings?.Get("common.autoInvite", false) ?? false;
         autoAccept = settings?.Get("common.autoAccept", false) ?? false;
@@ -176,7 +181,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         commands.Enqueue(() =>
         {
             if (trigger.Active) return;
-            if (BunnyAutomationActive || SurveyActive || commonJourney.Active || follow.Active || navigation.Active || combat.CleanupPending) { trigger.Stop("请先停止当前任务，等待控制恢复。"); return; }
+            if (RemoteActive || BunnyAutomationActive || SurveyActive || commonJourney.Active || follow.Active || navigation.Active || combat.CleanupPending) { trigger.Stop("请先停止当前任务，等待控制恢复。"); return; }
             if (copy.Any(p => !triggerReader.Rules.Any(r => r.FateId == p.FateId && r.Territory == client.TerritoryType))) { trigger.Stop("所选FATE没有已核实的本岛击杀规则。"); return; }
             var verified = copy.Select(p => p with { Level = data.GetExcelSheet<Lumina.Excel.Sheets.Fate>()!.GetRow(p.FateId).ClassJobLevel,
                 Route = triggerRoutes.GetValueOrDefault(p.FateId)?.Current.ToArray() ?? [] }).ToArray();
@@ -195,7 +200,8 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     private void SetLeader(PlayerIdentity identity)
     {
         if (trigger.Active) return;
-        follow.Stop("车头已更换。"); listener.Select(identity);
+        if (!RemoteActive) follow.Stop("车头已更换。");
+        listener.Select(identity);
     }
     public void ClearLeader() => commands.Enqueue(() =>
     {
@@ -207,7 +213,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         if (targets.Target is not Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player || player.HomeWorld.RowId == 0) return;
         SetLeader(new(player.Name.TextValue, player.HomeWorld.RowId));
     });
-    public void Listen(bool enabled) => commands.Enqueue(() => { if (!enabled && !trigger.Active) follow.Stop("监听已停止。"); listener.SetListening(enabled, follow.Following); });
+    public void Listen(bool enabled) => commands.Enqueue(() => { if (!enabled && !trigger.Active && !RemoteActive) follow.Stop("监听已停止。"); listener.SetListening(enabled, follow.Following); });
     public void RefreshPlayers() => commands.Enqueue(roster.Refresh);
     public void SelectMount(uint id) => commands.Enqueue(() => { if (!trigger.Active && !follow.Active) { mounts.Select(id); settings?.Put("mount", mounts.Selected); settings?.Flush(); } });
     public void NavigateTo(MapDestination destination) => commands.Enqueue(() => StartPointNavigation(destination));
@@ -220,16 +226,18 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     });
     private void StartPointNavigation(MapDestination destination, bool useNm = true, bool useCrystals = true, bool waitWithoutFate = true)
     {
-        if (BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active) return;
+        if (RemoteActive || BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active) return;
         follow.Stop(); navigation.Stop(); arrivalGame.Reset(); usingFollow = false;
         if (!SafeState()) { navigation.Stop("当前角色状态不允许移动，请结束交互后重试。"); return; }
+        var liveFate = useNm ? NavigationRules.FindFate(destination.Position, ReadFates()) : null;
+        if (liveFate != null) destination = destination with { Position = liveFate.Position };
         pointNm = useNm;
-        navigation.Start(destination, Context(), objects.LocalPlayer!.Position, useNm ? ReadFates() : [], DateTimeOffset.UtcNow, mounts.Selected != 0, useCrystals, waitWithoutFate);
+        navigation.Start(destination, Context(), objects.LocalPlayer!.Position, useNm ? ReadFates() : [], DateTimeOffset.UtcNow, mounts.Selected != 0, useCrystals, waitWithoutFate, unknownHeight: liveFate == null, preferCrystals: useNm);
     }
     public void Follow(bool enabled) => commands.Enqueue(() =>
     {
-        if (!enabled) { if (trigger.Active) return; follow.Stop(); listener.SetListening(false); return; }
-        if (BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active) return;
+        if (!enabled) { if (RemoteActive || trigger.Active) return; follow.Stop(); listener.SetListening(false); return; }
+        if (RemoteActive || BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active) return;
         usingFollow = true;
         if (listener.Leader == null) { follow.Stop("请先选择车头。"); return; }
         if (mounts.Selected == 0) { follow.Stop("请先选择已解锁且可移动的坐骑。"); return; }
@@ -243,7 +251,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     public void Stop() => commands.Enqueue(StopTasks);
     public void Navigate() => commands.Enqueue(() =>
     {
-        if (BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active) return;
+        if (RemoteActive || BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active) return;
         usingFollow = true; follow.Stop(); arrivalGame.Reset();
         if (listener.Destination is { } goal && objects.LocalPlayer is { } player && CanMove())
         {
@@ -261,8 +269,9 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         && (!conditions[ConditionFlag.OccupiedInQuestEvent] || ownCrystalMenu) && !conditions[ConditionFlag.OccupiedSummoningBell]
         && (!conditions[ConditionFlag.Occupied] || ownCrystalMenu);
 
-    private IReadOnlyList<FateEntry> ReadFates() => fates
-        .Where(f => f != null && f.State == FateState.Running && f.TerritoryType.RowId == client.TerritoryType
+    private IReadOnlyList<FateEntry> ReadFates(bool includePreparing = false) => fates
+        .Where(f => f != null && (f.State == FateState.Running || includePreparing && f.State == FateState.Preparing)
+            && f.TerritoryType.RowId == client.TerritoryType
             && NavigationRules.IsEurekaNm(f.GameData.Value.EurekaFate, f.GameData.Value.Rule))
         .Select(f => new FateEntry(f.FateId, f.Name.TextValue, f.Position, f.StartTimeEpoch)).ToArray();
 
@@ -299,6 +308,8 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             var journeyWasActive = commonJourney.Active;
             commonJourney.Tick(Context(), now);
             if (journeyWasActive && !commonJourney.Active) commonStatus = commonJourney.Status;
+            TickRemote(world, transferScreen, now);
+
             TickSurvey(world, transferScreen, now);
             TickBunnyAutomation(world, transferScreen, now);
             TickPagosDragon(world, transferScreen, now);
@@ -338,7 +349,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                 follow.Tick(new(world, local?.Position ?? Vector3.Zero, SafeState(follow.Interacting || follow.Transferring),
                     conditions[ConditionFlag.Mounted], local?.IsCasting ?? false, conditions[ConditionFlag.InCombat], observation.Fate),
                     transferScreen && client.IsLoggedIn && local?.IsDead != true && !conditions[ConditionFlag.InCombat]
-                        && !conditions[ConditionFlag.WatchingCutscene], ReadFates(), observation, now);
+                        && !conditions[ConditionFlag.WatchingCutscene], ReadFates(includePreparing: RemoteActive), observation, now);
             }
             else if (!follow.Active && navigation.Active)
                 navigation.Tick(world, objects.LocalPlayer?.Position ?? Vector3.Zero, SafeState(navigation.Interacting || navigation.Transferring),
@@ -348,6 +359,11 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                 listener.History, BunnyAutomationActive || commonJourney.Active || trigger.Active || follow.Active || navigation.Active,
                 BunnyAutomationActive ? BunnyAutomationStatus : commonJourney.Active ? commonJourney.Status : trigger.Active ? trigger.Status : usingFollow ? follow.Status : navigation.Status, roster.Snapshot,
                 mounts.Owned, mounts.Selected, follow.Following, combat.CleanupPending && !follow.Active && !trigger.Active ? "等待恢复战斗插件状态。" : follow.Status, kills.Snapshot);
+            if (BunnyAutomationActive && bunnyTravel.CrystalDecision != reportedBunnyCrystalDecision)
+            {
+                reportedBunnyCrystalDecision = bunnyTravel.CrystalDecision;
+                if (reportedBunnyCrystalDecision != null) log.Information("幸福兔水晶导航：{Decision}", reportedBunnyCrystalDecision);
+            }
             if (navigation.CrystalDecision != reportedCrystalDecision)
             {
                 reportedCrystalDecision = navigation.CrystalDecision;
@@ -356,9 +372,10 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         }
         catch (Exception ex)
         {
+            StopRemote("游戏状态读取失败，Discord 任务已停止。");
             trigger.Stop("游戏状态读取失败，触发已停止。");
             commonJourney.Stop("游戏状态读取失败，常用功能已停止。");
-            if (SurveyActive) StopSurvey("游戏状态读取失败，元灵巡查已停止。");
+            if (SurveyActive) StopSurvey("游戏状态读取失败，元灵搜索已停止。");
             StopBunnyAutomation("游戏状态读取失败，已停止自动挖宝。");
             triggerSnapshot = triggerSnapshot with { Active = false, Status = trigger.Status };
             navigation.Stop("游戏状态读取失败，导航已停止。");
@@ -372,7 +389,13 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     private void OnChat(IChatMessage message)
     {
         var current = snapshot;
-        var invite = autoInvite && message.LogKind == XivChatType.Shout;
+        if (!disposed)
+        {
+            try { RecordDiscordReward(message); }
+            catch (Exception ex) { log.Warning(ex, "解析 Discord 任务奖励消息失败"); }
+        }
+
+        var invite = (autoInvite || RemotePartyActive) && message.LogKind == XivChatType.Shout;
         if (disposed || !invite && !current.Listening || message.LogKind is not (XivChatType.Say or XivChatType.Yell or XivChatType.Shout)) return;
         try
         {
@@ -421,6 +444,10 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     {
         if (disposed) return;
         disposed = true;
+        StopDiscordBridge();
+        remotePipe?.Dispose();
+
+        StopRemote("插件卸载，Discord 任务已停止。");
         chat.ChatMessage -= OnChat; framework.Update -= Update;
         trigger.Stop("插件卸载，触发已停止。");
         commonJourney.Dispose();

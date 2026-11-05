@@ -6,7 +6,7 @@ internal sealed record FateSeed(uint Territory, ushort Id, float X, float Y, str
     uint WeatherId, bool Night, bool Bunny);
 internal sealed record FateDefinition(FateSeed Seed, string Name, byte Level)
 {
-    public string Trigger => FateTriggers.All.GetValueOrDefault(Seed.Id, "触发条件待核实。");
+    public string Trigger => FateTriggers.All.GetValueOrDefault(Seed.Id, "触发条件未知。");
 }
 internal sealed record IslandMap(uint Territory, uint MapId, string Name, string TexturePath, float SizeFactor,
     short OffsetX, short OffsetY, IReadOnlyList<FateDefinition> Fates);

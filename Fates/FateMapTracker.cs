@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Numerics;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Fates;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
@@ -19,6 +20,10 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
     private readonly IGameGui gui;
     private readonly IPluginLog log;
     private readonly IChatGui chat;
+    private readonly IPartyList party;
+    private readonly ICondition conditions;
+    private ulong partyPlayer, partyId;
+    private bool wasInParty;
     private readonly FateLedger ledger;
     private readonly FateNotificationHelper notifications;
     private volatile FateNotificationSettings requestedNotifications = FateNotificationSettings.Default;
@@ -47,11 +52,12 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
     public FateMapSnapshot Snapshot => snapshot;
 
     public FateMapTracker(IDataManager data, IFramework framework, IClientState client, IObjectTable objects,
-        IFateTable fates, IGameGui gui, IPluginLog log, ISigScanner scanner, IPlayerState playerState, IChatGui chat, SettingsStore? settings = null)
+        IFateTable fates, IGameGui gui, IPluginLog log, ISigScanner scanner, IPlayerState playerState, IChatGui chat, IPartyList party, ICondition conditions, SettingsStore? settings = null)
     {
         this.framework = framework; this.client = client; this.objects = objects; this.fates = fates; this.gui = gui; this.log = log;
         this.playerState = playerState;
         this.chat = chat;
+        this.party = party; this.conditions = conditions;
         this.settings = settings;
         requestedNotifications = settings?.Get("notifications", FateNotificationSettings.Default) ?? FateNotificationSettings.Default;
         if (!FateNotificationText.Valid(requestedNotifications)) requestedNotifications = FateNotificationSettings.Default;
@@ -96,6 +102,30 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
         settings?.Put("notifications", value); settings?.Flush();
     }
 
+    private void ObserveParty(ulong player)
+    {
+        if (player == 0)
+        {
+            if (!client.IsLoggedIn) partyPlayer = 0;
+            return;
+        }
+        if (objects.LocalPlayer == null || conditions[ConditionFlag.BetweenAreas] || conditions[ConditionFlag.BetweenAreas51]) return;
+
+        var currentId = (ulong)party.PartyId;
+        var inParty = currentId != 0 || party.Length > 1;
+        var changed = partyPlayer == player && (wasInParty != inParty
+            || partyId != 0 && currentId != 0 && partyId != currentId);
+        partyPlayer = player;
+        partyId = currentId;
+        wasInParty = inParty;
+        if (!changed) return;
+
+        // This automatic reset intentionally bypasses the manual channel-change disable rule.
+        requestedNotifications = requestedNotifications with { Channel = FateNotificationChannel.Echo, Enabled = true };
+        settings?.Put("notifications", requestedNotifications);
+        settings?.Flush();
+    }
+
     private void Update(IFramework frame)
     {
         if (disposed) return;
@@ -111,6 +141,7 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
                 lookup.Reset(); enteredAt = now; roomId = roomCandidate = roomDataCenter = 0; candidateSince = now;
                 while (commands.TryDequeue(out _)) { }
             }
+            ObserveParty(world.Item4);
             var changed = false;
             if (notifications.Settings != requestedNotifications) { notifications.Configure(requestedNotifications); changed = true; }
             while (commands.TryDequeue(out var command)) { command(); changed = true; }

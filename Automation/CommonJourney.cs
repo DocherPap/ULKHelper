@@ -18,7 +18,7 @@ namespace ULKHelper.Automation;
 
 internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavigationMesh mesh,
     IClientState client, IObjectTable objects, IGameGui gui, IDataManager data, ICondition conditions,
-    IArrivalActions mounts, WeatherZone? pagosWeather, Action<string> notify) : IDisposable
+    IArrivalActions mounts, WeatherZone? pagosWeather, Action<string> notify, ICrystalCombat? combat = null) : IDisposable
 {
     internal const uint Pagos = 763;
     private const uint Blitzring = 36121, Fog = 4;
@@ -36,7 +36,7 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
         [732] = new(19f, 32.1f), [763] = new(4.1f, 24.3f), [795] = new(16.7f, 23.8f), [827] = new(19.8f, 13.9f),
     };
     private readonly DestinationNavigationHelper walk = new(mesh);
-    private readonly IslandTravelHelper islandWalk = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), mounts);
+    private readonly IslandTravelHelper islandWalk = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), mounts, combat);
     public bool Transferring => islandWalk.Transferring;
     private enum Stage { City, Pier, Walk, Interact, Menu, Enter, Purchase }
     private Stage stage;
@@ -51,12 +51,14 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
     private uint gilBefore;
     private uint purchaseShopId;
     public bool Active { get; private set; }
+    public bool ArrivedAtEntrance { get; private set; }
     public bool CheckPagosRing { get; set; }
     public string Status { get; private set; } = "请选择常用功能。";
 
     public void Start(CommonAction action, WorldContext world, DateTimeOffset now)
     {
         if (Active) return;
+        ArrivedAtEntrance = false;
         if (HasDialog() || conditions[ConditionFlag.InDutyQueue])
         { Status = "请先关闭当前对话、商店或排队。"; return; }
         purchase = action == CommonAction.Potion;
@@ -164,7 +166,7 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
                     if (now - stageAt > TimeSpan.FromSeconds(12)) { Stop("未在交互距离内找到目标NPC。"); return; }
                     var npc = FindNpc(player.Position);
                     if (npc == null || Vector3.Distance(npc.Position, player.Position) > 4) break;
-                    if (!purchase && destinationIsland == 0) { Stop("已到达罗德尼面前。"); return; }
+                    if (!purchase && destinationIsland == 0) { ArrivedAtEntrance = true; Stop("已到达罗德尼面前。"); return; }
                     if (conditions[ConditionFlag.Mounted])
                     {
                         if (now >= nextDismount)
@@ -277,7 +279,7 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
         if (!CheckPagosRing || destinationIsland != Pagos) return true;
         if (pagosWeather == null)
         {
-            Stop("无法读取恒冰天气，已停止自动参加。");
+            Stop("无法读取恒冰天气，已停止自动参加。如果需要跳过请取消勾选。");
             return false;
         }
 
@@ -303,14 +305,14 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
                 var item = container->GetInventorySlot(slot);
                 if (item == null || item->GetBaseItemId() != Blitzring || item->GetQuantity() == 0) continue;
                 var timing = fog.Start <= now ? "当前为薄雾" : $"预计 {fog.Start.ToLocalTime():HH:mm} 出现薄雾";
-                var message = $"恒冰之地{timing}，检测到你携带或装备了闪袭指环，已取消自动参加。";
+                var message = $"恒冰之地{timing}，检测到你携带或装备了闪袭指环，已取消自动参加。如果需要跳过请取消勾选。";
                 Stop(message);
                 notify(message);
                 return false;
             }
         }
         if (!unread) return true;
-        Stop("恒冰之地三小时内有薄雾，但无法确认随身库存，已停止自动参加。");
+        Stop("恒冰之地三小时内有薄雾，但无法确认随身库存，已停止自动参加。如果需要跳过请取消勾选。");
         return false;
     }
 
@@ -484,7 +486,7 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
         purchaseShopId = shop->Id;
         if (!Callback(shop, [0, matches[0], Quantity])) { Stop("购买指令未提交。"); return; }
         confirmed = false;
-        ChangeStage(Stage.Purchase, now, "已提交购买99个恢复药，等待验证。");
+        ChangeStage(Stage.Purchase, now, "准备购买99个恢复药。");
     }
 
     private void VerifyPurchase(DateTimeOffset now)

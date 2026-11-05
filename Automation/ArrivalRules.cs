@@ -23,9 +23,8 @@ internal static class ArrivalRules
             .DistinctBy(p => p.Id).ToArray();
         var attackers = people.Count(p => p.Attacking);
         var party = people.Count(p => p.Attacking && p.Party);
-        var denominator = fate.IslandPlayerCount is { } count ? Math.Max(count, people.Length)
-            : fate.RequireIslandRoster ? 0 : people.Length;
-        return new(denominator > 0 && attackers * 4 >= denominator || fate.HpRatio is >= 0 and < .8f || party >= 2,
+        var denominator = people.Length;
+        return new(denominator > 0 && attackers * 3 >= denominator * 2 || fate.HpRatio is >= 0 and < .8f || party >= 2,
             denominator, attackers, party);
     }
 

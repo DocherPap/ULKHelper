@@ -35,6 +35,8 @@ internal sealed record TriggerFrame(WorldContext World, Vector3 Position, bool S
 internal interface ITriggerCombat
 {
     string? Error => null;
+    string? TriggerWarning => null;
+    bool TriggerApproachAvailable => true;
     string? BeginTrigger(bool needsApproach, bool useRotation, bool useBmr) => null;
     void EndTrigger() { }
     void ReleasePullAttack() { }
@@ -104,7 +106,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
     Func<TriggerFrame, Vector3, TriggerMob?, bool>? useMobility = null)
 {
     private readonly DestinationNavigationHelper move = new(mesh);
-    private readonly IslandTravelHelper? islandTravel = crystals == null ? null : new(mesh, crystals, mounts);
+    private readonly IslandTravelHelper? islandTravel = crystals == null ? null : new(mesh, crystals, mounts, combat as ICrystalCombat);
     private readonly List<TriggerPlan> plans = [];
     private readonly Dictionary<ushort, int> kills = new();
     private readonly Dictionary<ulong, (TriggerMob Mob, DateTimeOffset Seen)> seen = new();
@@ -137,7 +139,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
     private uint targetHp;
     private int pullLimit, killLimit, attempts;
     private ulong target, pullMoveTarget;
-    private bool rotation, walking, returnHome, finishPending;
+    private bool rotation, pullRotationOnly, walking, returnHome, finishPending;
     private enum Phase { Search, Centre, Approach, Pull, Fight, Return, Wait }
     private Phase phase;
     public bool Active { get; private set; }
@@ -159,14 +161,14 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         if (requested.Any(p => p.Mode == TriggerMode.Recorded && (p.Route.Length < 2 || p.Route.Length > 128 || p.Route.Any(v => !NavigationRules.Finite(v)))))
         { Status = "特殊触发需先记录本岛起点和终点（最多128点）。"; return false; }
         if (!mesh.Ready || mesh.Busy || mesh.Route.Count > 0) { Status = "导航网格未就绪或正在使用。"; return false; }
-        useApproach = useBmr;
-        var error = combat.BeginTrigger(useApproach && requested.Any(p => p.Mode == TriggerMode.Normal && p.PullMethod == TriggerPull.Attack), useRotation, useBmr) ?? combat.PrepareStart();
+        var error = combat.BeginTrigger(requested.Any(p => p.Mode == TriggerMode.Normal && p.PullMethod == TriggerPull.Attack), useRotation, useBmr) ?? combat.PrepareStart();
         if (error != null) { combat.EndTrigger(); Status = error; return false; }
+        useApproach = useBmr && combat.TriggerApproachAvailable;
         appeared.Clear(); plans.Clear(); plans.AddRange(requested); kills.Clear(); seen.Clear();
         world = frame.World; started = now;
         pullLimit = batch == 21 ? int.MaxValue : Math.Clamp(batch, 1, 20);
         killLimit = maxKills == 7 ? int.MaxValue : Math.Clamp(maxKills, 1, 6) * 50;
-        Active = true; rotation = walking = returnHome = false;
+        Active = true; rotation = pullRotationOnly = walking = returnHome = false;
         nextMobility = now;
         SelectNearest(frame.Position, now);
         Status = "自动触发已开始（会话上限2小时）。"; return true;
@@ -211,7 +213,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         attempts++;
         actionAt = now.AddSeconds(3); if (desired) mounts.Mount(); else mounts.Dismount(); return false;
     }
-    private bool Go(Vector3 point, TriggerFrame frame, DateTimeOffset now, bool unknownHeight = false, bool pulling = false)
+    private bool Go(Vector3 point, TriggerFrame frame, DateTimeOffset now, bool unknownHeight = false, bool pulling = false, bool preferCrystals = false)
     {
         var grounded=AutoTriggerRules.Ground(mesh,point,unknownHeight);
         if(grounded==null || !NavigationRules.Finite(grounded.Value) || NavigationRules.Distance(point,grounded.Value)>5)
@@ -220,9 +222,9 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         }
         point=grounded.Value;
         var destination = new MapDestination(world.Territory, world.Map, point, "触发路线");
-        if (!pulling && islandTravel != null && !frame.InCombat && IslandCrystalRoutes.Choose(world.Territory, frame.Position, point) != null)
+        if (!pulling && islandTravel != null && !frame.InCombat && (preferCrystals || IslandCrystalRoutes.Choose(world.Territory, frame.Position, point) != null))
         {
-            islandTravel.Start(destination, world, frame.Position, [], now, waitWithoutFate: false);
+            islandTravel.Start(destination, world, frame.Position, [], now, waitWithoutFate: false, preferCrystals: preferCrystals);
             walking = islandTravel.Active;
             if (!walking) Stop(islandTravel.Status);
             return walking;
@@ -243,14 +245,19 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
     private bool StartRotation(ulong id, bool fighting, bool approach, IReadOnlyList<ulong>? eligible = null, bool recordedPull = false)
     {
         if (!combat.PrepareTarget(id, fighting, eligible)) { Stop("准备攻击目标失败：" + (combat.Error ?? "目标不可用或战斗设置已变化。")); return false; }
-        if (!rotation) { rotation = recordedPull ? combat.EnableRecordedPull() : combat.EnableTrigger(approach); if (!rotation) Stop("无法开启战斗控制：" + (combat.Error ?? "RSR／BMR未确认启用。")); }
+        if (!rotation)
+        {
+            pullRotationOnly = !fighting && (recordedPull || !approach);
+            rotation = pullRotationOnly ? combat.EnableRecordedPull() : combat.EnableTrigger(approach);
+            if (!rotation) Stop("无法开启战斗控制：" + (combat.Error ?? "RSR／BossMod未确认启用。"));
+        }
         return rotation;
     }
     private bool EndRotation()
     {
         combat.ReleasePullAttack();
         if (rotation && !combat.Disable()) { Stop("等待自动循环关闭，请稍后重新开始。"); return false; }
-        rotation = false; return true;
+        rotation = pullRotationOnly = false; return true;
     }
     private void StopRecordedMovement()
     {
@@ -279,7 +286,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         StopRecordedMovement();
         walking = false;
         target = 0;
-        if (plans[0].Mode != TriggerMode.Recorded || EndRotation()) SetPhase(Phase.Fight, now);
+        if (!pullRotationOnly || EndRotation()) SetPhase(Phase.Fight, now);
     }
     public void Tick(TriggerFrame frame, DateTimeOffset now)
     {
@@ -316,6 +323,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             var coverage = plan.Mode == TriggerMode.Recorded ? $"沿线可拉 {cache.Count}（出发需 3 只）"
                 : $"缓存 {cache.Count} · 已覆盖 {covered.Count}/{(pullLimit == int.MaxValue ? "∞" : pullLimit)}";
             Status = $"{plan.Centre.Label} · {phaseText} · {coverage} · 已拉 {pulled.Count} · 本次观测击杀 {kills.GetValueOrDefault(plan.FateId)}/{(killLimit == int.MaxValue ? "∞" : killLimit)}";
+            if (combat.TriggerWarning is { } warning) Status += $" · {warning}";
             if (finishPending && phase != Phase.Fight && !(plan.Mode == TriggerMode.Recorded && phase == Phase.Pull))
             { if (frame.InCombat) Fight(now); else { Advance(frame.Position, now); return; } }
             if (phase == Phase.Centre && !Transferring && cache.Count >= pullLimit)
@@ -374,7 +382,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
                     .OrderByDescending(m => m.Hp).ThenBy(m => Vector3.DistanceSquared(frame.Position, m.Position)).ToArray();
                 if (frame.InCombat && eligible.Length > 0)
                 {
-                    StartRotation(eligible[0].Id, true, useApproach && plan.Mode == TriggerMode.Normal && plan.PullMethod == TriggerPull.Attack, eligible.Select(m => m.Id).ToArray());
+                    StartRotation(eligible[0].Id, true, plan.Mode == TriggerMode.Normal && plan.PullMethod == TriggerPull.Attack, eligible.Select(m => m.Id).ToArray());
                     return;
                 }
                 if (frame.InCombat) { EndRotation(); return; }
@@ -715,7 +723,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             if (walking) return;
             if (!frame.InCombat && frame.CanMountForTravel && NavigationRules.Distance(frame.Position, plan.Centre.Position) > 5
                 && !Riding(true, frame, now, optional: true)) return;
-            Go(plan.Centre.Position, frame, now, true);
+            Go(plan.Centre.Position, frame, now, true, preferCrystals: true);
             return;
         }
         if (phase == Phase.Approach)

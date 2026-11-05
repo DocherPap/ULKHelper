@@ -30,6 +30,7 @@ internal static class FateTiming
 
     public static FateTimingResult ForMarker(FateDefinition fate, FateRecord? record, FateTimingResult detail, DateTimeOffset now)
     {
+        if (fate.Seed.Bunny && record is { Active: true }) return detail;
         var ready = record?.Appeared.AddMinutes(fate.Seed.CooldownMinutes);
         return ready > now ? new("刷新剩余", ready, detail.Color) : detail;
     }

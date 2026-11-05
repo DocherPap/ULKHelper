@@ -5,6 +5,7 @@ namespace ULKHelper.Automation;
 
 internal sealed class VnavmeshAdapter(IDalamudPluginInterface plugin) : INavigationMesh
 {
+    public bool SupportsRouteEstimates => true;
     public bool Ready => plugin.GetIpcSubscriber<bool>("vnavmesh.Nav.IsReady").InvokeFunc();
     public bool Busy => plugin.GetIpcSubscriber<bool>("vnavmesh.Nav.PathfindInProgress").InvokeFunc()
         || plugin.GetIpcSubscriber<bool>("vnavmesh.SimpleMove.PathfindInProgress").InvokeFunc();

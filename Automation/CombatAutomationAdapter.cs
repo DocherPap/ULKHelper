@@ -3,6 +3,7 @@ using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Dalamud.Plugin.Ipc;
+using Dalamud.Plugin.Ipc.Exceptions;
 using FFXIVClientStructs.FFXIV.Client.Game.Fate;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 
@@ -10,33 +11,50 @@ namespace ULKHelper.Automation;
 
 // RSR handles actions; BossMod AI handles movement with its own actions/auto-target disabled.
 internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, ICommandManager commands,
-    IObjectTable objects, ITargetManager targets) : IFellingCombat, ITriggerCombat
+    IObjectTable objects, ITargetManager targets) : IFellingCombat, ITriggerCombat, ICrystalCombat
 {
     private bool reborn, rotationOwned, aiOwned;
     private bool triggerAuto;
+    private object? crystalCombatOwner;
+    private Assembly? crystalRotationProvider;
+    private bool crystalRotationEnding;
     private bool triggerSession, triggerUseRotation, triggerUseAi;
     private bool recordedPullOnly;
     private Assembly? triggerOwner;
     private object? overridesBefore, overridesWritten, targetingBefore, targetingWritten;
     private bool triggerSettingsWritten;
     private string? triggerModeBefore;
-    private object? triggerBossOwner;
+    private object? triggerBossOwner, followBossOwner;
     private string? triggerPresetBefore;
     private bool triggerAiSuspended, triggerRotationSuspended, triggerEnding;
     private bool triggerAutoAttackOwned;
     private ulong triggerPullTarget;
     private int triggerRestoreAttempts;
+    public bool TriggerApproachAvailable => triggerUseAi && reborn;
+    public string? TriggerWarning { get; private set; }
     public string? BeginTrigger(bool needsApproach, bool useRotation, bool useBmr)
     {
         try
         {
             Error = null;
+            TriggerWarning = null;
             if (CleanupPending) return "等待上次战斗控制还原。";
             if (useBmr)
             {
-                if (!commands.Commands.ContainsKey("/bmrai")) return "已开启 BMR AI，请先加载 BossMod Reborn。";
-                if (needsApproach)
-                    foreach (var (field, _) in TriggerApproachSettings) _ = Read(field);
+                if (ResolveBossMod() is { } providerError) return providerError;
+                try
+                {
+                    _ = Read("ForbidActions"); _ = Read("ForbidMovement");
+                    if (reborn && needsApproach)
+                        foreach (var (field, _) in TriggerApproachSettings) _ = Read(field);
+                    if (!reborn) { _ = AIActive(); _ = ActivePreset(); _ = Read("GoalZoneFallback"); }
+                }
+                catch (IpcNotReadyError) when (!reborn)
+                {
+                    if (!useRotation) return "原版 BossMod 的配置接口未注册。请启用 RSR 自动循环，或检查 BossMod 是否已加载完成。";
+                    useBmr = false;
+                    TriggerWarning = "原版 BossMod 接口未注册，本次使用 vnavmesh 和 RSR。";
+                }
             }
             triggerSession = true;
             recordedPullOnly = false;
@@ -171,7 +189,41 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     private object? aiBehaviour;
     public string? Error { get; private set; }
     private bool OwnedCleanupPending => rotationOwned || aiOwned || settings.Count > 0 || presetBefore != null;
-    public bool CleanupPending => OwnedCleanupPending || triggerEnding;
+    public bool CleanupPending => OwnedCleanupPending || triggerEnding || crystalRotationEnding;
+
+    public string? BeginCrystalCombat(object owner)
+    {
+        try
+        {
+            if (crystalCombatOwner != null) return "其他水晶行程正在处理战斗。";
+            var provider = CurrentRotationOwner();
+            if (provider == null) return "水晶前正在战斗，请先启用 RSR。";
+            if (RotationRequested() || RotationActive()) return null;
+            crystalCombatOwner = owner;
+            crystalRotationProvider = provider;
+            RotationMode("Auto");
+            return RotationRequested() && !ManualRequested() ? null : "水晶前无法开启 RSR 自动循环。";
+        }
+        catch (Exception ex) { return "水晶前自动循环不可用：" + ex.GetBaseException().Message; }
+    }
+
+    public bool EndCrystalCombat(object owner)
+    {
+        if (!ReferenceEquals(crystalCombatOwner, owner)) return true;
+        try
+        {
+            if (ReferenceEquals(crystalRotationProvider, CurrentRotationOwner()) && RotationRequested() && !ManualRequested())
+            {
+                RotationMode("Off");
+                if (RotationRequested() && !ManualRequested()) { crystalRotationEnding = true; return false; }
+            }
+        }
+        catch (Exception) { crystalRotationEnding = true; return false; }
+        crystalCombatOwner = null;
+        crystalRotationProvider = null;
+        crystalRotationEnding = false;
+        return true;
+    }
     private bool RotationActive() => plugin.GetIpcSubscriber<bool>("RotationSolverReborn.AutorotationActive").InvokeFunc();
     private Assembly? CurrentRotationOwner() => commands.Commands.TryGetValue("/rotation", out var c) ? c.Handler.Method.DeclaringType?.Assembly : null;
     private object? CurrentBossOwner() => commands.Commands.TryGetValue(reborn ? "/bmrai" : "/vbm", out var c)
@@ -213,8 +265,13 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     private bool AIActive() => reborn ? RebornBehaviour() != null : plugin.GetIpcSubscriber<bool>("BossMod.AI.IsEnabled").InvokeFunc();
     private List<string> Config(params string[] args)
     {
-        try { return plugin.GetIpcSubscriber<List<string>, bool, List<string>>("BossMod.Configuration").InvokeFunc(args.ToList(), false); }
-        catch { return plugin.GetIpcSubscriber<IReadOnlyList<string>, bool, List<string>>("BossMod.Configuration").InvokeFunc(args, false); }
+        if (reborn)
+        {
+            try { return plugin.GetIpcSubscriber<List<string>, bool, List<string>>("BossMod.Configuration").InvokeFunc(args.ToList(), false); }
+            catch (IpcTypeMismatchError) { return plugin.GetIpcSubscriber<IReadOnlyList<string>, bool, List<string>>("BossMod.Configuration").InvokeFunc(args, false); }
+        }
+        try { return plugin.GetIpcSubscriber<IReadOnlyList<string>, bool, List<string>>("BossMod.Configuration").InvokeFunc(args, false); }
+        catch (IpcTypeMismatchError) { return plugin.GetIpcSubscriber<List<string>, bool, List<string>>("BossMod.Configuration").InvokeFunc(args.ToList(), false); }
     }
     private string Read(string field)
     {
@@ -236,15 +293,22 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         ("AutoAFK", "false"), ("FocusTargetMaster", "false"), ("FollowRSRDesiredPositional", "false"),
         ("DesiredPositional", "Any"),
     ];
+    private string? ResolveBossMod()
+    {
+        var loaded = plugin.InstalledPlugins.Where(p => p.IsLoaded).Select(p => p.InternalName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var originalLoaded = loaded.Contains("BossMod");
+        var rebornLoaded = loaded.Contains("BossModReborn");
+        if (originalLoaded && rebornLoaded) return "请仅启用一种 BossMod，避免 IPC 冲突。";
+        reborn = rebornLoaded || !originalLoaded && commands.Commands.ContainsKey("/bmrai");
+        return commands.Commands.ContainsKey(reborn ? "/bmrai" : "/vbm") ? null : "请启用 BossMod 或 BossMod Reborn。";
+    }
     public string? CheckReady()
     {
         try
         {
             if (CleanupPending) return "等待上一次战斗控制恢复完成。";
             if (!commands.Commands.ContainsKey("/rotation")) return "请安装并启用Rotation Solver Reborn。";
-            reborn = commands.Commands.ContainsKey("/bmrai");
-            if (!reborn && !commands.Commands.ContainsKey("/vbm")) return "请启用BossMod或BossMod Reborn。";
-            if (reborn && commands.Commands.ContainsKey("/vbmai")) return "请仅启用一种BossMod，避免IPC冲突。";
+            if (followBossOwner == null || !ReferenceEquals(followBossOwner, CurrentBossOwner())) return "BossMod 提供者已变更，请重新开始任务。";
             if (RotationRequested() || RotationActive() || AIActive()) return "请先关闭已运行的自动循环和BossMod AI，再开始跟随。";
             var preset = plugin.GetIpcSubscriber<string?>("BossMod.Presets.GetActive").InvokeFunc();
             if (!string.IsNullOrEmpty(preset)) return "请先关闭BossMod已启用的循环预设。";
@@ -261,9 +325,12 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             var useRotation = !triggerSession || triggerUseRotation;
             var useAi = !triggerSession || triggerUseAi;
             if (useRotation && !commands.Commands.ContainsKey("/rotation")) return "请安装并启用Rotation Solver Reborn。";
-            reborn = commands.Commands.ContainsKey("/bmrai");
-            if (useAi && !reborn && !commands.Commands.ContainsKey("/vbm")) return "请启用BossMod或BossMod Reborn。";
-            if (useAi && reborn && commands.Commands.ContainsKey("/vbmai")) return "请仅启用一种BossMod，避免IPC冲突。";
+            if (useAi && ResolveBossMod() is { } providerError) return providerError;
+            if (!triggerSession)
+            {
+                followBossOwner = CurrentBossOwner();
+                if (followBossOwner == null) return "BossMod AI 命令尚未注册。";
+            }
             // This explicit start is authorized to close existing controls before taking a new session.
             var rotationOn = useRotation && RotationRequested(); var aiOn = useAi && AIActive();
             if (useAi) { _ = Read("ForbidActions"); _ = Read("ForbidMovement"); }
@@ -285,6 +352,9 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         }
         catch (Exception ex) { return "初始化战斗控制失败：" + ex.GetBaseException().Message; }
     }
+    // The game resolves the selected NM element and rotates the highest investment to attack.
+    public void SetBossMagiaAttack() => AutomationHelpers.SendGameCommand("/magiaattack");
+
     public bool Target(ulong bossId)
     {
         var boss = objects.OfType<IBattleNpc>().FirstOrDefault(o => o.GameObjectId == bossId && !o.IsDead && o.IsTargetable);
@@ -300,19 +370,19 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         return manager->GetCurrentFateId() == fateId && manager->LevelSync() != null;
     }
     public bool Enable() => EnableWithAI(false);
-    private string? CheckTriggerReady()
+    public string? CheckTriggerReady()
     {
         if (CleanupPending) return "等待上次战斗控制还原。";
         if (triggerUseRotation && (!ReferenceEquals(triggerOwner, CurrentRotationOwner()) || RotationRequested() || RotationActive()))
             return "RSR 已更换或有其他循环正在运行。";
         if (triggerUseAi && (!ReferenceEquals(triggerBossOwner, CurrentBossOwner()) || AIActive() || !string.IsNullOrEmpty(ActivePreset())))
-            return "BossMod Reborn 已更换或有其他 AI 正在运行。";
+            return "BossMod 已更换或有其他 AI 正在运行。";
         return null;
     }
     public bool EnableTrigger(bool approach)
     {
         recordedPullOnly = false;
-        return triggerUseAi ? EnableWithAI(approach, !approach) : EnableStationary();
+        return triggerUseAi ? EnableWithAI(approach && reborn, !approach) : EnableStationary();
     }
 
     public bool EnableRecordedPull()
@@ -328,7 +398,6 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             if (rotationOwned || aiOwned) return triggerSession ? StationaryHealthy : Healthy;
             var error = triggerSession ? CheckTriggerReady() : CheckReady();
             if (error != null) { Error = error; return false; }
-            if (triggerApproach && !reborn) { Error = "普通自动触发的自动靠近需要BossMod Reborn。"; return false; }
             if (triggerApproach && !ReferenceEquals(triggerBossOwner, CurrentBossOwner()))
             { Error = "BossMod Reborn已更换，停止触发。"; return false; }
             bossOwner = CurrentBossOwner();
@@ -345,7 +414,6 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             aiOwned = true;
             if (!commands.ProcessCommand(reborn ? "/bmrai on" : "/vbm ai on") || !AIActive()) throw new InvalidOperationException("BossMod AI启动失败。");
             if (reborn) aiBehaviour = RebornBehaviour();
-            if (!reborn && !commands.ProcessCommand("/vbm ai follow slot1")) throw new InvalidOperationException("BossMod跟随自身失败。");
             if (!triggerSession || triggerUseRotation)
             {
                 rotationOwned = true;
@@ -396,6 +464,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     }
     public bool Disable()
     {
+        if (crystalRotationEnding && crystalCombatOwner is { } pendingCrystal) EndCrystalCombat(pendingCrystal);
         // Unloading/replacing a provider ends our ownership; never switch off the replacement's session.
         if (rotationOwned && !ReferenceEquals(rotationOwner, CurrentRotationOwner())) rotationOwned = false;
         if (bossOwner != null && !ReferenceEquals(bossOwner, CurrentBossOwner()))
@@ -456,7 +525,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             bossOwner = null; rotationOwner = null; aiBehaviour = null;
             if (triggerEnding) RestoreTrigger();
         }
-        return !OwnedCleanupPending;
+        return !OwnedCleanupPending && !crystalRotationEnding;
     }
 
     public void SuppressEmergencyResume()

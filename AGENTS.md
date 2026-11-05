@@ -1,5 +1,7 @@
 # 优雷卡助手开发约定
 
+- 最新分支约定：全部产品功能与修复必须在 main 完成。codex/testing 仅增加测试页、现场记录、离线检查和 UI 预览。Discord、自动寻宝、地图、水晶及战斗改动都属于产品功能，不能仅保留在 testing 或用 DEBUG 排除正式构建。
+
 - 正式发布只使用 `main`。本地调试使用 `codex/testing`，测试入口、现场记录、离线检查和 UI 预览集中于该分支；生产修复先落到 main，再同步至测试分支。以下 0.2.0 Debug 构建内置测试的描述为历史。
 
 - 0.2.0 正式版为六页，调试测试页与记录仅 Debug 构建启用。发布只使用 DocherPap/ULKHelper 的独立 repo.json，见 docs/RELEASE.md。

@@ -19,14 +19,14 @@ internal sealed class WeatherPage(IReadOnlyList<WeatherZone> zones, string? erro
     public void Draw()
     {
         ImGui.TextUnformatted("优雷卡天气预报");
-        ImGui.TextWrapped("按本机时间和游戏天气表计算。每段持续 23 分 20 秒；倒计时为距离下一时段的时间。");
+        ImGui.TextWrapped("每个天气持续 23 分 20 秒。");
         if (error != null || zones.Count == 0)
         {
             ImGui.TextWrapped(error ?? "无法读取天气数据。");
             return;
         }
-        ImGui.SetNextItemWidth(ImGui.CalcTextSize("当前及后续 23 段").X + ImGui.GetFrameHeight() + ImGui.GetStyle().FramePadding.X * 2);
-        ImGui.Combo("预报时段", ref countIndex, ["当前及后续 5 段", "当前及后续 11 段", "当前及后续 23 段"], 3);
+        ImGui.SetNextItemWidth(ImGui.CalcTextSize("当前及后续 23 个天气").X + ImGui.GetFrameHeight() + ImGui.GetStyle().FramePadding.X * 2);
+        ImGui.Combo("预报时段", ref countIndex, ["当前及后续 5 个天气", "当前及后续 11 个天气", "当前及后续 23 个天气"], 3);
         ImGui.SameLine(); ImGui.Checkbox("显示 UTC 时间", ref utc);
         ImGui.TextDisabled(utc ? "时间：UTC" : $"时间：系统本地（UTC{DateTimeOffset.Now:zzz}）");
         var now = DateTimeOffset.UtcNow;

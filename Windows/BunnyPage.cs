@@ -12,6 +12,7 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
     private long lastResetVersion=tracker.Snapshot.ResetVersion;
     private readonly BunnyPoint[] all=BunnyCatalog.Load();
     private readonly HashSet<ushort> selectedBunnyFates = [];
+    private int minimumMinutes = Math.Clamp(settings?.Get("bunny.minimumMinutes", 5) ?? 5, 0, 30);
     private int digLimit = Math.Max(0, settings?.Get("bunny.digLimit", 0) ?? 0);
     public bool ConsumeReset()
     {
@@ -25,7 +26,7 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
     }
     public void DrawSummary(IslandMap map, IAutomationHelpers? automation = null)
     {
-        var state=tracker.Snapshot;var points=all.Count(p=>p.Territory==map.Territory);
+        var state=tracker.Snapshot;var points=(tracker.Catalog.Count > 0 ? tracker.Catalog : all).Count(p=>p.Territory==map.Territory);
         var current=state.Territory==map.Territory;
         var bunnyFates = map.Fates.Where(f => f.Seed.Bunny).ToArray();
         var running = automation?.BunnyAutomationActive == true;
@@ -37,7 +38,7 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
             ImGui.BeginDisabled(!running && (!current || selected.Length == 0));
             if (ImGui.Button(running ? "停止自动挖宝" : "自动挖宝",
                 new Vector2(Math.Max(70, ImGui.GetContentRegionAvail().X - limitWidth - limitLabelWidth), 0)))
-                automation.SetBunnyAutomation(map.Territory, selected, !running, digLimit);
+                automation.SetBunnyAutomation(map.Territory, selected, !running, digLimit, minimumMinutes);
             ImGui.EndDisabled();
             ImGui.SameLine(); ImGui.AlignTextToFramePadding(); ImGui.TextUnformatted("挖");
             ImGui.SameLine();
@@ -52,6 +53,11 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("0 表示不限数量。仅统计系统确认挖出的宝箱。");
             ImGui.SameLine(); ImGui.TextUnformatted("个");
             ImGui.BeginDisabled(running);
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderInt("##BunnyMinimumMinutes", ref minimumMinutes, 0, 30,
+                minimumMinutes == 0 ? "最少剩余时间：不限" : "最少剩余时间：%d 分钟", ImGuiSliderFlags.AlwaysClamp))
+                settings?.Put("bunny.minimumMinutes", minimumMinutes);
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("按开始时所选的 FATE 剩余时间门槛筛选。0 表示不限。");
             for (var i = 0; i < bunnyFates.Length; i++)
             {
                 var fate = bunnyFates[i];
@@ -86,7 +92,7 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
         if(ImGui.BeginPopup("##BunnyDetails"))
         {
             ImGui.PushTextWrapPos(0);
-            ImGui.TextWrapped("胡萝卜提示按方向＋距离筛选。地图正北为基准，边界含6米容差；剩1点自动插旗。状态结束自动重置。");
+            ImGui.TextWrapped("胡萝卜按方向和距离筛选。地图正北为基准，参考点周围 5 米圆与线索范围相交即保留。剩 1 点自动插旗。");
             ImGui.BeginDisabled(!current||!state.Active);
             if(ImGui.CollapsingHeader("手动补记提示"))
             {
@@ -103,7 +109,7 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
                 ImGui.TextColored(type switch{BunnyChest.Bronze=>new Vector4(.8f,.55f,.3f,1),BunnyChest.Silver=>new Vector4(.8f,.85f,.9f,1),_=>new Vector4(1,.85f,.2f,1)},type switch{BunnyChest.Bronze=>"青铜宝箱",BunnyChest.Silver=>"白银宝箱",_=>"黄金宝箱"});
                 foreach(var id in BunnyLootCatalog.All.First(l=>l.Territory==map.Territory&&l.Chest==type).Items)ImGui.TextWrapped("• "+itemName(id));
             }
-            ImGui.TextWrapped("经典特色奖励；部分已有其他获取途径。橙点为候选，灰点为排除，绿点为唯一候选。");
+            ImGui.TextWrapped("只保留在优雷卡的奖励。橙点为候选，灰点为排除，绿点为唯一候选。");
             ImGui.PopTextWrapPos();ImGui.EndPopup();
         }
         settings?.Put("bunny.showPoints",showPoints);settings?.Put("bunny.showExcluded",showExcluded);
@@ -112,24 +118,25 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
     public void DrawOverlay(IslandMap map,Vector2 pos,float side,float zoom,Vector2 uvMin,bool hover,bool dragged)
     {
         if(!showPoints)return;
-        var state=tracker.Snapshot;var points=all.Where(p=>p.Territory==map.Territory).ToArray();
+        var state=tracker.Snapshot;var points=(tracker.Catalog.Count > 0 ? tracker.Catalog : all).Where(p=>p.Territory==map.Territory).ToArray();
         Vector2 At(Vector2 p)=>pos+(MapProjection.ToUv(p,map.SizeFactor)-uvMin)*side*zoom;
         var draw=ImGui.GetWindowDrawList();var current=map.Territory==state.Territory;
         if(current&&state.Clues.LastOrDefault() is {} clue)
         {
             var origin=At(MapProjection.WorldToMap(clue.Position,map));var range=BunnyRules.Range(clue.Distance);
             var scale=map.SizeFactor/100f/2048*side*zoom;
-            if(float.IsFinite(range.Max))draw.AddCircle(origin,(range.Max+BunnyRules.Tolerance)*scale,0xD0FFFF40,96,2);
-            if(range.Min>BunnyRules.Tolerance)draw.AddCircle(origin,(range.Min-BunnyRules.Tolerance)*scale,0xD0FFFF40,96,2);
+            if(float.IsFinite(range.Max))draw.AddCircle(origin,range.Max*scale,0xD0FFFF40,96,2);
+            if(range.Min>0)draw.AddCircle(origin,range.Min*scale,0xD0FFFF40,96,2);
             if(clue.Direction is {} direction&&clue.Distance!=BunnyDistance.Here)
             {
-                var angle=(int)direction*MathF.PI/4;var length=float.IsFinite(range.Max)?range.Max+BunnyRules.Tolerance:300;
-                var spread=MathF.PI/8+MathF.Asin(Math.Min(1,BunnyRules.Tolerance/Math.Max(range.Min,30)));
+                var angle=(int)direction*MathF.PI/4;var length=float.IsFinite(range.Max)?range.Max:300;
+                var spread=MathF.PI/8;
                 foreach(var edge in new[]{angle-spread,angle+spread})draw.AddLine(origin,origin+new Vector2(MathF.Sin(edge),-MathF.Cos(edge))*length*scale,0xD0FFFF40,2);
                 draw.AddLine(origin,origin+new Vector2(MathF.Sin(angle),-MathF.Cos(angle))*length*scale,0xA0FFFF40,1);
             }
             draw.AddCircleFilled(origin,4,0xFFFFFF40);
         }
+        var highlightTreasure = current && state.Active;
         BunnyPoint? tooltip=null;
         for(var i=0;i<points.Length;i++)
         {
@@ -137,10 +144,17 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
             if(!candidate&&!showExcluded)continue;
             var mark=At(new(p.X,p.Y));var unique=current&&state.Candidates.Count==1&&state.Candidates.Contains(p.Id);
             var color=unique?0xFF55FF55u:candidate?0xFF20CFFFu:0x70888888u;
-            draw.AddCircleFilled(mark,(unique?7:candidate?4:2)*.6f,color);
+            var radius = (unique ? 7 : candidate ? 4 : 2) * .6f;
+            if (highlightTreasure && candidate)
+            {
+                radius = unique ? 6.5f : 4.2f;
+                color = unique ? 0xFF61FF91u : 0xFF48E1FFu;
+                draw.AddCircleFilled(mark, radius + 1.5f, 0xF0202020);
+            }
+            draw.AddCircleFilled(mark, radius, color);
             if(candidate&&zoom>=2)draw.AddText(mark+new Vector2(7,-7),0xFFFFFFFF,(i+1).ToString());
             if(hover&&Vector2.Distance(mark,ImGui.GetIO().MousePos)<9)tooltip=p;
         }
-        if(tooltip!=null&&!dragged){ImGui.BeginTooltip();ImGui.TextUnformatted($"参考挖宝点 ({tooltip.X:0.0}, {tooltip.Y:0.0})");ImGui.EndTooltip();}
+        if(tooltip!=null&&!dragged){ImGui.BeginTooltip();ImGui.TextUnformatted($"{(tooltip.Height.HasValue ? "已校准挖宝点" : "参考挖宝点")} ({tooltip.X:0.###}, {tooltip.Y:0.###})");ImGui.EndTooltip();}
     }
 }

@@ -3,14 +3,15 @@ using System.Numerics;
 namespace ULKHelper.Automation;
 
 internal enum TriggerMode { Normal, Recorded }
-internal enum TriggerPull { Attack, PassBy }
-internal sealed record TriggerPlan(ushort FateId, byte Level, MapDestination Centre, TriggerMode Mode, Vector3[] Route, TriggerPull? Pull = null)
+internal enum TriggerPull { Attack, PassBy, Passive }
+internal sealed record TriggerPlan(ushort FateId, byte Level, MapDestination Centre, TriggerMode Mode, Vector3[] Route,
+    TriggerPull? Pull = null, Vector3? StandbyPoint = null, bool GrindLight = false)
 {
     public TriggerPull PullMethod => Pull ?? DefaultPull(Mode);
     public static TriggerPull DefaultPull(TriggerMode mode) => mode == TriggerMode.Recorded ? TriggerPull.PassBy : TriggerPull.Attack;
 }
 internal sealed record TriggerMob(ulong Id, ushort FateId, Vector3 Position, bool Dead, bool Aggro, bool Targetable = true, bool Engaged = false, uint Hp = 0,
-    float HitboxRadius = 0);
+    float HitboxRadius = 0, uint MaxHp = 0);
 internal sealed record MobArea(ushort FateId, Vector3 Position);
 internal sealed record TriggerRouteSet(int Selected, Vector3[][] Paths, string[]? Names = null)
 {
@@ -20,10 +21,12 @@ internal sealed record TriggerRouteSet(int Selected, Vector3[][] Paths, string[]
     public string NameAt(int index) => Names != null && index < Names.Length && !string.IsNullOrWhiteSpace(Names[index])
         ? Names[index] : $"路线{index + 1}";
 }
-internal sealed record AutoTriggerSnapshot(bool Active, string Status, int? Level, IReadOnlyList<MobArea> Areas, IReadOnlyDictionary<ushort, TriggerRouteSet> Routes)
+internal sealed record AutoTriggerSnapshot(bool Active, string Status, int? Level, IReadOnlyList<MobArea> Areas,
+    IReadOnlyDictionary<ushort, TriggerRouteSet> Routes, IReadOnlyDictionary<ushort, Vector3>? StandbyPoints = null)
 {
     public static readonly AutoTriggerSnapshot Empty = new(false, "尚未开始自动触发。", null, [], new Dictionary<ushort, TriggerRouteSet>());
     public Vector3[] SelectedRoute(ushort fateId) => Routes.GetValueOrDefault(fateId)?.Current ?? [];
+    public Vector3? StandbyPoint(ushort fateId) => StandbyPoints?.TryGetValue(fateId, out var point) == true ? point : null;
 }
 internal sealed record TriggerFrame(WorldContext World, Vector3 Position, bool Safe, bool Mounted, bool Casting, bool InCombat,
     int? Level, IReadOnlyList<TriggerMob> Mobs, IReadOnlySet<ushort> ActiveFates, bool CanMountForTravel = false, bool Loading = false,
@@ -37,7 +40,8 @@ internal interface ITriggerCombat
     string? Error => null;
     string? TriggerWarning => null;
     bool TriggerApproachAvailable => true;
-    string? BeginTrigger(bool needsApproach, bool useRotation, bool useBmr) => null;
+    bool TriggerControlsAvailable => true;
+    string? BeginTrigger(bool needsApproach, bool useRotation, bool useBmr, bool optionalControls = false) => null;
     void EndTrigger() { }
     void ReleasePullAttack() { }
     bool PrepareTarget(ulong id, bool fighting, IReadOnlyList<ulong>? eligible = null) => Target(id);
@@ -51,6 +55,8 @@ internal interface ITriggerCombat
 }
 internal static class AutoTriggerRules
 {
+    public const float PassiveStandbyRadius = 5;
+    public const float LightStandbyRadius = 10;
     public const string PassByLevelWarning = "当前FATE触发等级过低，路过无法建立仇恨";
     public static bool CanPassBy(int? playerLevel, int fateLevel) =>
         playerLevel == null || playerLevel.Value - fateLevel < 2;
@@ -132,9 +138,13 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
     private int pullLimit, killLimit, attempts;
     private ulong target, pullMoveTarget;
     private bool rotation, pullRotationOnly, walking, returnHome, finishPending;
-    private enum Phase { Search, Centre, Approach, Pull, Fight, Return, Wait }
+    private readonly HashSet<ulong> passiveEngaged = [];
+    private DateTimeOffset passiveLastAddition;
+    private bool passiveParked, passiveSawCombat;
+    private enum Phase { Search, Centre, Approach, Pull, Fight, Return, Wait, PassiveWait, PassiveFight }
     private Phase phase;
     public bool Active { get; private set; }
+    public bool ObserveAllEngaged => Active && plans[0] is { PullMethod: TriggerPull.Passive, GrindLight: true };
     public bool Transferring => islandTravel?.Transferring == true;
     public bool Interacting => islandTravel?.Interacting == true;
     public string Status { get; private set; } = "尚未开始自动触发。";
@@ -150,10 +160,19 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         { Status = "无法开始：检查元素等级、选点数量、当前岛屿与脱战状态。"; return false; }
         if (requested.Any(p => p.PullMethod == TriggerPull.PassBy && !AutoTriggerRules.CanPassBy(frame.Level, p.Level)))
         { Status = AutoTriggerRules.PassByLevelWarning; return false; }
-        if (requested.Any(p => p.Mode == TriggerMode.Recorded && (p.Route.Length < 2 || p.Route.Length > 128 || p.Route.Any(v => !NavigationRules.Finite(v)))))
+        if (requested.Any(p => p.PullMethod == TriggerPull.Passive &&
+            (p.StandbyPoint is not { } point || !NavigationRules.Finite(point))))
+        { Status = "请先设定被动拉怪的挂机点位。"; return false; }
+        var hasPassive = requested.Any(p => p.PullMethod == TriggerPull.Passive);
+        var onlyPassive = requested.All(p => p.PullMethod == TriggerPull.Passive);
+        if (requested.Any(p => p.PullMethod != TriggerPull.Passive && p.Mode == TriggerMode.Recorded &&
+            (p.Route.Length < 2 || p.Route.Length > 128 || p.Route.Any(v => !NavigationRules.Finite(v)))))
         { Status = "特殊触发需先记录本岛起点和终点（最多128点）。"; return false; }
-        if (!mesh.Ready || mesh.Busy || mesh.Route.Count > 0) { Status = "导航网格未就绪或正在使用。"; return false; }
-        var error = combat.BeginTrigger(requested.Any(p => p.Mode == TriggerMode.Normal && p.PullMethod == TriggerPull.Attack), useRotation, useBmr) ?? combat.PrepareStart();
+        if (!onlyPassive && (!mesh.Ready || mesh.Busy || mesh.Route.Count > 0))
+        { Status = "导航网格未就绪或正在使用。"; return false; }
+        var error = combat.BeginTrigger(hasPassive || requested.Any(p => p.Mode == TriggerMode.Normal && p.PullMethod == TriggerPull.Attack),
+            useRotation, useBmr, optionalControls: onlyPassive);
+        error ??= combat.PrepareStart();
         if (error != null) { combat.EndTrigger(); Status = error; return false; }
         useApproach = useBmr && combat.TriggerApproachAvailable;
         appeared.Clear(); plans.Clear(); plans.AddRange(requested); kills.Clear(); seen.Clear();
@@ -176,14 +195,16 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
     }
     private void SelectNearest(Vector3 position, DateTimeOffset now)
     {
-        var nearest = plans.MinBy(p => NavigationRules.Distance(position, p.Centre.Position))!;
+        var nearest = plans.MinBy(p => NavigationRules.Distance(position,
+            p.PullMethod == TriggerPull.Passive ? p.StandbyPoint!.Value : p.Centre.Position))!;
         plans.Remove(nearest); plans.Insert(0, nearest);
         cache.Clear(); retryAfter.Clear(); pulled.Clear(); waitingMobs.Clear(); seen.Clear();
         target = pullMoveTarget = 0; finishPending = returnHome = false;
         recoveryAttempts = 0;
         recordedReady = true;
         ResetCoverage(position);
-        SetPhase(nearest.Mode == TriggerMode.Recorded ? Phase.Search : Phase.Centre, now);
+        if (nearest.PullMethod == TriggerPull.Passive) BeginPassiveWait(now);
+        else SetPhase(nearest.Mode == TriggerMode.Recorded ? Phase.Search : Phase.Centre, now);
     }
     private void SetPhase(Phase value, DateTimeOffset now)
     {
@@ -274,22 +295,130 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         target = 0;
         if (!pullRotationOnly || EndRotation()) SetPhase(Phase.Fight, now);
     }
+
+    private void BeginPassiveWait(DateTimeOffset now)
+    {
+        passiveParked = passiveSawCombat = false;
+        passiveEngaged.Clear();
+        passiveLastAddition = now;
+        SetPhase(Phase.PassiveWait, now);
+    }
+
+    private bool PassiveNavigationReady()
+    {
+        try { return mesh.Ready; }
+        catch { return false; }
+    }
+
+    private void TickPassive(TriggerPlan plan, TriggerFrame frame, TriggerMob[] living, DateTimeOffset now, bool navigationReady)
+    {
+        var candidates = plan.GrindLight ? frame.Mobs : living;
+        var engaged = candidates.Where(m => !m.Dead && m.Engaged && (plan.GrindLight || m.Targetable)
+            && Math.Abs(m.Position.Y - frame.Position.Y) <= 8
+            && NavigationRules.Distance(m.Position, frame.Position) <= PullRadius)
+            .DistinctBy(m => m.Id).OrderByDescending(m => m.Hp).ToArray();
+        var eligible = engaged.Where(m => m.Targetable).Select(m => m.Id).ToArray();
+        var mode = plan.GrindLight ? "被动拉怪 / 顺便刷光" : "被动拉怪";
+        var label = $"{plan.Centre.Label} · {mode} · 击杀 {kills.GetValueOrDefault(plan.FateId)}";
+
+        if (phase == Phase.PassiveFight)
+        {
+            passiveSawCombat |= frame.InCombat;
+            if (!frame.InCombat && (passiveSawCombat || now - phaseAt >= TimeSpan.FromSeconds(8)))
+            {
+                if (!EndRotation()) return;
+                pulled.Clear();
+                if (finishPending) Advance(frame.Position, now);
+                else BeginPassiveWait(now);
+                return;
+            }
+            Status = $"{label} · 战斗中 · 已交战 {engaged.Length} 只";
+            if (combat.TriggerControlsAvailable)
+            {
+                if (eligible.Length > 0) StartRotation(eligible[0], true, true, eligible);
+                else EndRotation();
+            }
+            return;
+        }
+
+        if (finishPending && !frame.InCombat) { Advance(frame.Position, now); return; }
+        var anchor = plan.StandbyPoint!.Value;
+        var radius = plan.GrindLight ? AutoTriggerRules.LightStandbyRadius : AutoTriggerRules.PassiveStandbyRadius;
+        bool InStandbyRange(Vector3 point) => NavigationRules.Distance(point, anchor) <= radius
+            && Math.Abs(point.Y - anchor.Y) <= 3;
+        if (!navigationReady)
+        {
+            if (walking) { move.Stop(); walking = false; }
+            passiveParked = InStandbyRange(frame.Position);
+            if (!passiveParked)
+            {
+                passiveEngaged.Clear();
+                Status = $"{label} · 请手动走到记录点 {radius} 米内";
+                return;
+            }
+        }
+        if (!passiveParked)
+        {
+            Status = $"{label} · 前往 {radius} 米范围内的挂机点";
+            if (!walking)
+            {
+                if (mesh.Busy || mesh.Route.Count > 0) { Status = $"{label} · 等待其他导航结束"; return; }
+                if (!Riding(false, frame, now)) return;
+                var angle = Random.Shared.NextSingle() * MathF.Tau;
+                var distance = MathF.Sqrt(Random.Shared.NextSingle()) * radius;
+                var point = anchor + new Vector3(MathF.Cos(angle), 0, MathF.Sin(angle)) * distance;
+                move.Start(plan.Centre with { Position = point }, world, frame.Position, [], now, false,
+                    arrivalRadius: 1, unknownHeight: false,
+                    groundFilter: InStandbyRange);
+                if (!move.Active) { Stop(move.Status); return; }
+                walking = true;
+            }
+            move.Tick(world, frame.Position, frame.Safe, [], now);
+            if (move.Active) return;
+            walking = false;
+            if (move.TakeArrival() == null) { Stop(move.Status); return; }
+            passiveParked = true;
+        }
+
+        if (engaged.Length == 0 || engaged.Any(m => !passiveEngaged.Contains(m.Id))) passiveLastAddition = now;
+        passiveEngaged.Clear();
+        passiveEngaged.UnionWith(engaged.Select(m => m.Id));
+        var average = engaged.Length > 0 && engaged.All(m => m.MaxHp > 0)
+            ? engaged.Average(m => Math.Min(1d, (double)m.Hp / m.MaxHp)) : (double?)null;
+        Status = $"{label} · 挂机等交战 · 已交战 {engaged.Length} 只"
+            + (average is { } hp ? $" · 平均血量 {hp:P0}" : "");
+        if (combat.TriggerWarning is { } warning) Status += $" · {warning}";
+        if (average is not < .95 || now - passiveLastAddition <= TimeSpan.FromSeconds(2)) return;
+        if (!combat.TriggerControlsAvailable)
+        {
+            Status = $"{label} · 已满足接战条件，等待手动战斗";
+            if (!frame.InCombat) return;
+        }
+        else if (eligible.Length == 0 || !Riding(false, frame, now) || !StartRotation(eligible[0], true, true, eligible))
+            return;
+        passiveSawCombat = frame.InCombat;
+        SetPhase(Phase.PassiveFight, now);
+    }
+
     public void Tick(TriggerFrame frame, DateTimeOffset now)
     {
         if (!Active) return;
         try
         {
             if (now - started > TimeSpan.FromHours(2)) { Stop("自动触发达到2小时上限。"); return; }
-            if (now - phaseAt > TimeSpan.FromMinutes(5)) { Stop("当前触发阶段超过5分钟，已停止。"); return; }
+            if (phase is not (Phase.PassiveWait or Phase.PassiveFight) && now - phaseAt > TimeSpan.FromMinutes(5))
+            { Stop("当前触发阶段超过5分钟，已停止。"); return; }
             if (Transferring && frame.Loading) return;
             if (!frame.Safe || frame.World != world || frame.Level == null) { Stop("角色、地图或可操作状态变化，触发已停止。"); return; }
-            if (!mesh.Ready || rotation && (phase != Phase.Fight || frame.InCombat) && !combat.StationaryHealthy)
+            var plan = plans[0];
+            var passive = plan.PullMethod == TriggerPull.Passive;
+            var navigationReady = passive ? PassiveNavigationReady() : mesh.Ready;
+            if (!passive && !navigationReady || rotation && (phase is not (Phase.Fight or Phase.PassiveFight) || frame.InCombat) && !combat.StationaryHealthy)
             { Stop("导航或循环控制失效，已停止。"); return; }
             if (rotation && !walking && recordedMovement.Length == 0 && recoveryMovement.Length == 0
-                && mobilityUntil == default && (mesh.Busy || mesh.Route.Count > 0))
+                && mobilityUntil == default && navigationReady && (mesh.Busy || mesh.Route.Count > 0))
             { Stop("检测到其他导航任务，已释放战斗控制。"); return; }
             if (plans.Count > AutoTriggerRules.Capacity(frame.Level.Value, plans.Select(p => (int)p.Level))) { Stop("元素等级变化，选择数量超过限制。"); return; }
-            var plan = plans[0];
             if (plan.PullMethod == TriggerPull.PassBy && !AutoTriggerRules.CanPassBy(frame.Level, plan.Level))
             { Stop(AutoTriggerRules.PassByLevelWarning); return; }
             var observed = frame.Mobs.Where(m => m.FateId == plan.FateId).ToArray();
@@ -304,6 +433,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             finishPending |= appeared.Contains(plan.FateId) || kills.GetValueOrDefault(plan.FateId) >= killLimit;
             var living = observed.Where(m => !m.Dead).ToArray();
             foreach (var mob in living.Where(m => m.Aggro)) pulled.Add(mob.Id);
+            if (passive) { TickPassive(plan, frame, living, now, navigationReady); return; }
             RefreshCache(plan, living, now);
             var phaseText = phase switch { Phase.Centre => "前往FATE中心", Phase.Approach => "前往下一只触发怪", Phase.Search => "前往记录路线", Phase.Pull => "拉怪", Phase.Fight => "击杀", Phase.Return => "返回起点", _ => "等待刷新" };
             var coverage = plan.Mode == TriggerMode.Recorded ? $"沿线可拉 {cache.Count}（出发需 3 只）"

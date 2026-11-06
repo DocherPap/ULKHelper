@@ -82,9 +82,9 @@ internal sealed partial class AutomationHelpers
         wasNearPagosDragon = nearby;
     }
 
-    private void StopTasks()
+    private void StopTasks(string remoteReason = "已从游戏内停止 Discord 任务。")
     {
-        StopRemote("已从游戏内停止 Discord 任务。");
+        StopRemote(remoteReason);
         StopBunnyAutomation("已停止自动挖宝。");
         if (SurveyActive) StopSurvey("已停止元灵巡查。");
         commonJourney.Stop("已停止常用功能。");
@@ -177,10 +177,8 @@ internal sealed partial class AutomationHelpers
             case CommonAction.Fate:
                 var goal = CurrentFlag(world);
                 if (goal == null) { commonStatus = "请先在本岛地图上放置旗标。"; return; }
-                if (action == CommonAction.Fate && NavigationRules.FindFate(goal.Position, ReadFates()) == null)
-                { commonStatus = "旗标50米内没有进行中的FATE。"; return; }
                 commonUsesNavigation = true;
-                StartPointNavigation(goal, action == CommonAction.Fate);
+                StartPointNavigation(goal, action == CommonAction.Fate, requireFate: action == CommonAction.Fate);
                 break;
             case CommonAction.EatFate:
                 var eatGoal = CurrentFlag(world);

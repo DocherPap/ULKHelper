@@ -11,6 +11,7 @@ using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using ULKHelper.Fates;
 using ULKHelper.Weather;
 
 namespace ULKHelper.Automation;
@@ -44,6 +45,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     private readonly AutoTriggerHelper trigger;
     private readonly TriggerGameReader triggerReader;
     private readonly Dictionary<ushort, TriggerRouteSet> triggerRoutes = new();
+    private readonly Dictionary<ushort, Vector3> triggerStandbyPoints = new();
     private volatile AutoTriggerSnapshot triggerSnapshot = AutoTriggerSnapshot.Empty;
     private DateTimeOffset nextTrigger;
     private readonly INavigationMesh mesh;
@@ -87,12 +89,13 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         discordCredentialsPath = Path.Combine(plugin.GetPluginConfigDirectory(), "discord-credentials.dat");
         discordCredentialsSaved = File.Exists(discordCredentialsPath);
         discordPlugin = plugin;
-
         commonJourney = new(plugin, mesh, client, objects, gui, data, conditions, arrivalGame, pagosWeather, message => chat.Print(message), combat);
         commonJourney.CheckPagosRing = settings?.Get("common.checkPagosRing", false) ?? false;
         autoInvite = settings?.Get("common.autoInvite", false) ?? false;
         autoAccept = settings?.Get("common.autoAccept", false) ?? false;
         walkNearPagosDragon = settings?.Get("common.walkNearPagosDragon", false) ?? false;
+        foreach (var (id, point) in settings?.Get("trigger.standbyPoints", new Dictionary<ushort, Vector3>()) ?? new())
+            if (NavigationRules.Finite(point)) triggerStandbyPoints[id] = point;
         var savedRoutes = settings?.Get<Dictionary<ushort, TriggerRouteSet>?>("trigger.routeSets", null);
         if (savedRoutes == null)
         {
@@ -121,6 +124,17 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     public AutoTriggerSnapshot TriggerSnapshot => triggerSnapshot;
     private static bool ValidTriggerRoute(Vector3[]? points) =>
         points is { Length: > 0 and <= 128 } && points.All(NavigationRules.Finite);
+
+    public void RecordTriggerStandbyPoint(ushort fateId) => commands.Enqueue(() =>
+    {
+        if (trigger.Active || !SafeState() || objects.LocalPlayer is not { } player
+            || !triggerReader.Rules.Any(r => r.FateId == fateId && r.Territory == client.TerritoryType)
+            || !NavigationRules.Finite(player.Position)) return;
+        triggerStandbyPoints[fateId] = player.Position;
+        settings?.Put("trigger.standbyPoints", triggerStandbyPoints);
+        settings?.Flush();
+        triggerSnapshot = triggerSnapshot with { StandbyPoints = new Dictionary<ushort, Vector3>(triggerStandbyPoints) };
+    });
 
     public void RecordTriggerPoint(ushort fateId, bool newRoute = false) => commands.Enqueue(() =>
     {
@@ -185,13 +199,14 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             if (RemoteActive || BunnyAutomationActive || SurveyActive || commonJourney.Active || follow.Active || navigation.Active || combat.CleanupPending) { trigger.Stop("请先停止当前任务，等待控制恢复。"); return; }
             if (copy.Any(p => !triggerReader.Rules.Any(r => r.FateId == p.FateId && r.Territory == client.TerritoryType))) { trigger.Stop("所选FATE没有已核实的本岛击杀规则。"); return; }
             var verified = copy.Select(p => p with { Level = data.GetExcelSheet<Lumina.Excel.Sheets.Fate>()!.GetRow(p.FateId).ClassJobLevel,
-                Route = triggerRoutes.GetValueOrDefault(p.FateId)?.Current.ToArray() ?? [] }).ToArray();
+                Route = triggerRoutes.GetValueOrDefault(p.FateId)?.Current.ToArray() ?? [],
+                StandbyPoint = triggerStandbyPoints.TryGetValue(p.FateId, out var point) ? point : null }).ToArray();
             trigger.Start(verified, ReadTriggerFrame(Context()), batch, maxKills, DateTimeOffset.UtcNow, useRotation, useBmr);
         });
     }
     private TriggerFrame ReadTriggerFrame(WorldContext world) => new(world, objects.LocalPlayer?.Position ?? Vector3.Zero,
         SafeState(trigger.Interacting || trigger.Transferring), conditions[ConditionFlag.Mounted], objects.LocalPlayer?.IsCasting ?? false, conditions[ConditionFlag.InCombat],
-        TriggerGameReader.Level(), triggerReader.Read(world.Territory), fates.Where(f => f != null && f.TerritoryType.RowId == world.Territory
+        TriggerGameReader.Level(), triggerReader.Read(world.Territory, trigger.ObserveAllEngaged), fates.Where(f => f != null && f.TerritoryType.RowId == world.Territory
             && f.State is FateState.Preparing or FateState.Running or FateState.Ending).Select(f => f.FateId).ToHashSet(),
         CanMountForTravel: mounts.Selected != 0,
         Loading: conditions[ConditionFlag.BetweenAreas] || conditions[ConditionFlag.BetweenAreas51] || objects.LocalPlayer == null,
@@ -226,15 +241,27 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             StartPointNavigation(new(client.TerritoryType, client.MapId, ArrivalRules.Position(player.Position, crystal.Position, 7), "当前岛入口营地"), false, waitWithoutFate: false);
         else { usingFollow = false; navigation.Stop("请先进入优雷卡岛内。"); }
     });
-    private void StartPointNavigation(MapDestination destination, bool useNm = true, bool useCrystals = true, bool waitWithoutFate = true)
+    private void StartPointNavigation(MapDestination destination, bool useNm = true, bool useCrystals = true,
+        bool waitWithoutFate = true, bool requireFate = false)
     {
         if (RemoteActive || BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active) return;
         follow.Stop(); navigation.Stop(); arrivalGame.Reset(); usingFollow = false;
         if (!SafeState()) { navigation.Stop("当前角色状态不允许移动，请结束交互后重试。"); return; }
-        var liveFate = useNm ? NavigationRules.FindFate(destination.Position, ReadFates()) : null;
-        if (liveFate != null) destination = destination with { Position = liveFate.Position };
+        var live = useNm ? ReadFates(includePreparing: true, includeBunnies: true) : [];
+        var locations = useNm ? ReadFateLocations(live, includeBunnies: true) : [];
+        var fate = destination.FateId is { } id ? locations.FirstOrDefault(f => f.Id == id)
+            : NavigationRules.FindFate(destination.Position, locations);
+        if (fate != null)
+        {
+            usingFollow = true;
+            if (requireFate) { commonUsesFollow = true; commonUsesNavigation = false; }
+            follow.StartFateNavigation(Context(), destination, fate, DateTimeOffset.UtcNow, EnsureTravelMount(), useCrystals);
+            return;
+        }
+        if (requireFate || destination.FateId != null) { navigation.Stop("旗标 50 米内没有本岛 FATE 点位。"); return; }
         pointNm = useNm;
-        navigation.Start(destination, Context(), objects.LocalPlayer!.Position, useNm ? ReadFates() : [], DateTimeOffset.UtcNow, EnsureTravelMount(), useCrystals, waitWithoutFate, unknownHeight: liveFate == null, preferCrystals: useNm);
+        navigation.Start(destination, Context(), objects.LocalPlayer!.Position, live, DateTimeOffset.UtcNow,
+            EnsureTravelMount(), useCrystals, waitWithoutFate, preferCrystals: useNm);
     }
     public void Follow(bool enabled) => commands.Enqueue(() =>
     {
@@ -250,7 +277,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             listener.SetListening(true, shoutOnly: true);
         }
     });
-    public void Stop() => commands.Enqueue(StopTasks);
+    public void Stop() => commands.Enqueue(() => StopTasks());
     public void Navigate() => commands.Enqueue(() =>
     {
         if (RemoteActive || BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active) return;
@@ -271,11 +298,22 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         && (!conditions[ConditionFlag.OccupiedInQuestEvent] || ownCrystalMenu) && !conditions[ConditionFlag.OccupiedSummoningBell]
         && (!conditions[ConditionFlag.Occupied] || ownCrystalMenu);
 
-    private IReadOnlyList<FateEntry> ReadFates(bool includePreparing = false) => fates
+    private IReadOnlyList<FateEntry> ReadFates(bool includePreparing = false, bool includeBunnies = false) => fates
         .Where(f => f != null && (f.State == FateState.Running || includePreparing && f.State == FateState.Preparing)
             && f.TerritoryType.RowId == client.TerritoryType
-            && NavigationRules.IsEurekaNm(f.GameData.Value.EurekaFate, f.GameData.Value.Rule))
+            && (NavigationRules.IsEurekaNm(f.GameData.Value.EurekaFate, f.GameData.Value.Rule)
+                || includeBunnies && f.GameData.Value.EurekaFate == 1 && f.GameData.Value.Rule == 4))
         .Select(f => new FateEntry(f.FateId, f.Name.TextValue, f.Position, f.StartTimeEpoch)).ToArray();
+
+    private IReadOnlyList<FateEntry> ReadFateLocations(IReadOnlyList<FateEntry> live, bool includeBunnies = false)
+    {
+        var island = ElementalMaps?.Islands.FirstOrDefault(i => i.Territory == client.TerritoryType && i.MapId == client.MapId);
+        if (island == null) return live;
+        return island.Fates.Where(f => includeBunnies || !f.Seed.Bunny)
+            .Select(f => live.FirstOrDefault(entry => entry.Id == f.Seed.Id)
+                ?? new FateEntry(f.Seed.Id, f.Name, MapProjection.MapToWorld(new(f.Seed.X, f.Seed.Y), island)))
+            .ToArray();
+    }
 
     private void Update(IFramework _)
     {
@@ -338,7 +376,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                 var frame = ReadTriggerFrame(world);
                 trigger.Tick(frame, now);
                 triggerSnapshot = new(trigger.Active, trigger.Status, frame.Level, triggerReader.Areas,
-                    new Dictionary<ushort, TriggerRouteSet>(triggerRoutes));
+                    new Dictionary<ushort, TriggerRouteSet>(triggerRoutes), new Dictionary<ushort, Vector3>(triggerStandbyPoints));
             }
             if (follow.Active && now >= nextFollow)
             {
@@ -347,13 +385,17 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                 var observation = follow.Goal is { } destination && local != null
                     ? arrivalGame.ReadEncounter(destination, now, roster.OtherPlayers(new(local.Name.TextValue, local.HomeWorld.RowId), now), follow.FateId)
                     : new EncounterObservation(null);
+                var live = ReadFates(includePreparing: true, includeBunnies: follow.NavigatingFate);
                 follow.Tick(new(world, local?.Position ?? Vector3.Zero, SafeState(follow.Interacting || follow.Transferring),
                     conditions[ConditionFlag.Mounted], local?.IsCasting ?? false, conditions[ConditionFlag.InCombat], observation.Fate),
                     transferScreen && client.IsLoggedIn && local?.IsDead != true && !conditions[ConditionFlag.InCombat]
-                        && !conditions[ConditionFlag.WatchingCutscene], ReadFates(includePreparing: RemoteActive), observation, now,
+                        && !conditions[ConditionFlag.WatchingCutscene], live, observation, now,
                     userMoving: ReadFollowMovement(), temporaryBusy: !SafeState(follow.Interacting || follow.Transferring)
                         && client.IsLoggedIn && !client.IsPvP && local is { IsDead: false }
-                        && !transferScreen && !conditions[ConditionFlag.WatchingCutscene] && !conditions[ConditionFlag.OccupiedInCutSceneEvent]);
+                        && !transferScreen && !conditions[ConditionFlag.WatchingCutscene] && !conditions[ConditionFlag.OccupiedInCutSceneEvent],
+                    knownFates: ReadFateLocations(live),
+                    cleanupTarget: follow.CleaningAfterFate && conditions[ConditionFlag.InCombat] && local != null && SafeState()
+                        ? arrivalGame.ReadCleanupTarget(local.Position, targets.Target?.GameObjectId ?? 0) : 0);
             }
             else if (!follow.Active && navigation.Active)
             {
@@ -424,7 +466,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                 {
                     if (listener.Leader != identity || !follow.Following) return;
                     follow.WaitForLeader(); listener.ClearDestination(clearHistory: false);
-                    listener.RecordActivity(DateTimeOffset.UtcNow, channel, text, "战后上坐骑，原地等待新坐标10秒。");
+                    listener.RecordActivity(DateTimeOffset.UtcNow, channel, text, "前往最近未刷新的 FATE。战斗中先完成当前战斗。");
                 });
                 return;
             }

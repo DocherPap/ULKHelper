@@ -113,7 +113,7 @@ internal sealed class ItemStatisticsPage
             var state = source.ReadThisSession ? "已更新" : source.UpdatedAt != null ? "已缓存" : "未获取";
             if (ImGui.GetContentRegionAvail().X >= ImGui.CalcTextSize(state).X + ImGui.GetStyle().ItemSpacing.X)
                 ImGui.SameLine();
-            ImGui.TextColored(source.ReadThisSession ? BrightGreen : Muted, state);
+            ImGui.TextColored(source.ReadThisSession || source.UpdatedAt != null ? BrightGreen : Muted, state);
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip(source.UpdatedAt is { } time
                     ? $"最后获取：{time.ToLocalTime():yyyy-MM-dd HH:mm:ss}\n保存于当前角色的本地缓存。"

@@ -3,8 +3,8 @@
     "Author": "DocherPap",
     "Name": "优雷卡助手",
     "InternalName": "ULKHelper",
-    "AssemblyVersion": "0.3.2.0",
-    "Changelog": "0.3.2：优化水晶挂机。常用功能与跟车共用待机寻路，加载水晶后按实际位置和高度重规划，并检查路线终点和到达位置。",
+    "AssemblyVersion": "0.4.0.0",
+    "Changelog": "0.4.0：新增可调透明度、锁定大小和鼠标穿透的悬浮窗，支持常用功能、天气与地图。加入同岛 FATE 历史缓存、被动拉怪与顺便刷光，优化 FATE 寻路、战后清怪及恢复药购买确认。",
     "Description": "优雷卡装备与材料统计、四岛天气与 FATE 地图、幸福兔挖宝、文理技能、常用功能及自动化。",
     "Punchline": "优雷卡地图、装备统计与岛内便捷工具",
     "ApplicableVersion": "any",
@@ -16,11 +16,11 @@
       "eureka",
       "优雷卡"
     ],
+    "DownloadLinkInstall": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.4.0/ULKHelper-0.4.0.0.zip",
     "RepoUrl": "https://github.com/DocherPap/ULKHelper",
-    "LastUpdate": 1793909023,
-    "DownloadLinkInstall": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.3.2/ULKHelper-0.3.2.0.zip",
-    "DownloadLinkUpdate": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.3.2/ULKHelper-0.3.2.0.zip",
+    "LastUpdate": 1793951780,
     "IsTestingExclusive": false,
-    "IsHide": false
+    "IsHide": false,
+    "DownloadLinkUpdate": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.4.0/ULKHelper-0.4.0.0.zip"
   }
 ]

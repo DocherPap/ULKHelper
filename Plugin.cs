@@ -54,6 +54,7 @@ public sealed class Plugin : IDalamudPlugin
         automation.AttachBunnyTracker(bunnies);
         mainWindow = new(inventoryTracker, automation, weatherZones, fateTracker, new GameMapTextures(textures), weatherError, settings, new LogosPage(id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText(), id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>()!.GetRow(id).Name.ExtractText(), () => objects.LocalPlayer is {} player ? new LogosWorld(player.CurrentWorld.RowId,player.CurrentWorld.Value.Name.ExtractText(),player.CurrentWorld.Value.DataCenter.Value.Name.ExtractText()) : null, logos, settings,()=>logosInventory.Snapshot), new BunnyPage(bunnies,id=>dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>()!.GetRow(id).Name.ExtractText(),settings));
         windows.AddWindow(mainWindow);
+        windows.AddWindow(mainWindow.CreateFloatingWindow(settings));
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
             HelpMessage = "打开优雷卡助手；/ulk refreshplayers 刷新岛内名单；/ulk entrance 前往入口营地；/ulk stop 停止移动。",
@@ -69,7 +70,6 @@ public sealed class Plugin : IDalamudPlugin
         else if (arguments.Trim().Equals("stop", StringComparison.OrdinalIgnoreCase)) automation.Stop();
         else if (arguments.Trim().Equals("discord on", StringComparison.OrdinalIgnoreCase)) automation.EnableDiscord(true);
         else if (arguments.Trim().Equals("discord off", StringComparison.OrdinalIgnoreCase)) automation.EnableDiscord(false);
-
         else OpenMainUi();
     }
 

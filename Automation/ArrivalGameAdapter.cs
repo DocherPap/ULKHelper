@@ -16,6 +16,16 @@ internal sealed class ArrivalGameAdapter(IObjectTable objects, IPartyList party,
     private readonly Dictionary<ulong, (uint Sequence, DateTimeOffset LastAttack)> attacks = new();
     public void Reset() => attacks.Clear();
 
+    public unsafe ulong ReadCleanupTarget(Vector3 position, ulong currentTarget)
+    {
+        var enmity = TriggerGameReader.ReadEnmity();
+        if (enmity is not { Count: > 0 }) return 0;
+        return objects.OfType<IBattleNpc>().Where(n => n.Address != 0 && n.IsTargetable && !n.IsDead
+                && n.CurrentHp > 0 && enmity.Contains(n.EntityId) && ((Character*)n.Address)->FateId == 0)
+            .OrderByDescending(n => n.GameObjectId == currentTarget).ThenBy(n => Vector3.DistanceSquared(position, n.Position))
+            .FirstOrDefault()?.GameObjectId ?? 0;
+    }
+
     public unsafe ArrivalFate? Read(MapDestination destination, DateTimeOffset now, int? islandPlayers = null, ushort? boundId = null)
     {
         var fate = fates.Where(f => f != null && f.State == FateState.Running && f.TerritoryType.RowId == destination.Territory

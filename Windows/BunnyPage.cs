@@ -115,26 +115,26 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
         settings?.Put("bunny.showPoints",showPoints);settings?.Put("bunny.showExcluded",showExcluded);
     }
     // Uses the FATE map projection, clipping, zoom and pan; no second map or input surface.
-    public void DrawOverlay(IslandMap map,Vector2 pos,float side,float zoom,Vector2 uvMin,bool hover,bool dragged)
+    public void DrawOverlay(IslandMap map,Vector2 pos,float pixelsPerUv,float zoom,Vector2 uvMin,bool hover,bool dragged)
     {
         if(!showPoints)return;
         var state=tracker.Snapshot;var points=(tracker.Catalog.Count > 0 ? tracker.Catalog : all).Where(p=>p.Territory==map.Territory).ToArray();
-        Vector2 At(Vector2 p)=>pos+(MapProjection.ToUv(p,map.SizeFactor)-uvMin)*side*zoom;
+        Vector2 At(Vector2 p)=>pos+(MapProjection.ToUv(p,map.SizeFactor)-uvMin)*pixelsPerUv;
         var draw=ImGui.GetWindowDrawList();var current=map.Territory==state.Territory;
         if(current&&state.Clues.LastOrDefault() is {} clue)
         {
             var origin=At(MapProjection.WorldToMap(clue.Position,map));var range=BunnyRules.Range(clue.Distance);
-            var scale=map.SizeFactor/100f/2048*side*zoom;
-            if(float.IsFinite(range.Max))draw.AddCircle(origin,range.Max*scale,0xD0FFFF40,96,2);
-            if(range.Min>0)draw.AddCircle(origin,range.Min*scale,0xD0FFFF40,96,2);
+            var scale=map.SizeFactor/100f/2048*pixelsPerUv;
+            if(float.IsFinite(range.Max))draw.AddCircle(origin,range.Max*scale,ImGui.GetColorU32(0xD0FFFF40),96,2);
+            if(range.Min>0)draw.AddCircle(origin,range.Min*scale,ImGui.GetColorU32(0xD0FFFF40),96,2);
             if(clue.Direction is {} direction&&clue.Distance!=BunnyDistance.Here)
             {
                 var angle=(int)direction*MathF.PI/4;var length=float.IsFinite(range.Max)?range.Max:300;
                 var spread=MathF.PI/8;
-                foreach(var edge in new[]{angle-spread,angle+spread})draw.AddLine(origin,origin+new Vector2(MathF.Sin(edge),-MathF.Cos(edge))*length*scale,0xD0FFFF40,2);
-                draw.AddLine(origin,origin+new Vector2(MathF.Sin(angle),-MathF.Cos(angle))*length*scale,0xA0FFFF40,1);
+                foreach(var edge in new[]{angle-spread,angle+spread})draw.AddLine(origin,origin+new Vector2(MathF.Sin(edge),-MathF.Cos(edge))*length*scale,ImGui.GetColorU32(0xD0FFFF40),2);
+                draw.AddLine(origin,origin+new Vector2(MathF.Sin(angle),-MathF.Cos(angle))*length*scale,ImGui.GetColorU32(0xA0FFFF40),1);
             }
-            draw.AddCircleFilled(origin,4,0xFFFFFF40);
+            draw.AddCircleFilled(origin,4,ImGui.GetColorU32(0xFFFFFF40));
         }
         var highlightTreasure = current && state.Active;
         BunnyPoint? tooltip=null;
@@ -149,10 +149,10 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
             {
                 radius = unique ? 6.5f : 4.2f;
                 color = unique ? 0xFF61FF91u : 0xFF48E1FFu;
-                draw.AddCircleFilled(mark, radius + 1.5f, 0xF0202020);
+                draw.AddCircleFilled(mark, radius + 1.5f, ImGui.GetColorU32(0xF0202020));
             }
-            draw.AddCircleFilled(mark, radius, color);
-            if(candidate&&zoom>=2)draw.AddText(mark+new Vector2(7,-7),0xFFFFFFFF,(i+1).ToString());
+            draw.AddCircleFilled(mark, radius, ImGui.GetColorU32(color));
+            if(candidate&&zoom>=2)draw.AddText(mark+new Vector2(7,-7),ImGui.GetColorU32(0xFFFFFFFF),(i+1).ToString());
             if(hover&&Vector2.Distance(mark,ImGui.GetIO().MousePos)<9)tooltip=p;
         }
         if(tooltip!=null&&!dragged){ImGui.BeginTooltip();ImGui.TextUnformatted($"{(tooltip.Height.HasValue ? "已校准挖宝点" : "参考挖宝点")} ({tooltip.X:0.###}, {tooltip.Y:0.###})");ImGui.EndTooltip();}

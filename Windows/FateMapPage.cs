@@ -17,6 +17,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
     private int pullBatch = 1, abandonStep = 2;
     private bool showMobs = true;
     private bool useTriggerRotation = true, useTriggerBmr = true;
+    private bool grindLight;
     private (ushort Fate, int Route) nameDraftKey;
     private string nameDraft = "";
     private readonly Dictionary<ushort, TriggerMode> triggerModes = new();
@@ -25,8 +26,11 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
     private TriggerPull? defaultPull;
     private TriggerMode Mode(ushort id) => triggerModes.GetValueOrDefault(id, defaultRoute ?? AutoTriggerRules.DefaultMode(id));
     private TriggerPull Pull(ushort id) => triggerPulls.GetValueOrDefault(id, defaultPull ?? TriggerPlan.DefaultPull(AutoTriggerRules.DefaultMode(id)));
-    private TriggerPull EffectivePull(FateDefinition fate, int? playerLevel) =>
-        AutoTriggerRules.CanPassBy(playerLevel, fate.Level) ? Pull(fate.Seed.Id) : TriggerPull.Attack;
+    private TriggerPull EffectivePull(FateDefinition fate, int? playerLevel)
+    {
+        var pull = Pull(fate.Seed.Id);
+        return pull == TriggerPull.PassBy && !AutoTriggerRules.CanPassBy(playerLevel, fate.Level) ? TriggerPull.Attack : pull;
+    }
     private bool CanAddTrigger(FateDefinition candidate, IslandMap island)
     {
         var level = navigation?.TriggerSnapshot.Level;
@@ -45,6 +49,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         showMobs = settings.Get("trigger.showMobs", true);
         useTriggerRotation = settings.Get("trigger.useRotation", true);
         useTriggerBmr = settings.Get("trigger.useBmr", true);
+        grindLight = settings.Get("trigger.grindLight", false);
         foreach (var p in settings.Get("trigger.modes", new Dictionary<ushort, TriggerMode>()))
             if (Enum.IsDefined(p.Value)) triggerModes[p.Key] = p.Value;
         foreach (var p in settings.Get("trigger.pullMethods", triggerModes.ToDictionary(p => p.Key, p => TriggerPlan.DefaultPull(p.Value))))
@@ -63,6 +68,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         settings.Put("trigger.defaultRoute", defaultRoute);
         settings.Put("trigger.defaultPull", defaultPull);
         settings.Put("trigger.useRotation", useTriggerRotation); settings.Put("trigger.useBmr", useTriggerBmr);
+        settings.Put("trigger.grindLight", grindLight);
         settings.Put(key + ".zoom", zoom); settings.Put(key + ".centre", centre); settings.Put(key + ".search", search);
     }
     private bool showBunnies = true, showLabels = true, showElementals = true, dragged;
@@ -110,7 +116,8 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         var ids = triggerSelection.Ids.Count > 0 ? triggerSelection.Ids.ToArray()
             : routeTarget != null && CanAddTrigger(routeTarget, island) ? [routeTarget.Seed.Id] : Array.Empty<ushort>();
         var canStart = ids.Length > 0 && (triggerSelection.Ids.Count == 0 || ids.Length <= cap)
-            && ids.All(id => Mode(id) != TriggerMode.Recorded || auto.SelectedRoute(id).Length >= 2);
+            && ids.All(id => Pull(id) == TriggerPull.Passive ? auto.StandbyPoint(id) != null
+                : Mode(id) != TriggerMode.Recorded || auto.SelectedRoute(id).Length >= 2);
         ImGui.BeginDisabled(!auto.Active && (navigation == null || navigation.Snapshot.Navigating || !canStart || snapshot.CurrentTerritory != island.Territory));
         var buttonLabel = auto.Active ? "停止自动触发" : ids.Length == 1 && routeTarget?.Seed.Id == ids[0] ? $"自动触发 · {routeTarget.Seed.ShortName}" : "自动触发";
         if (ImGui.Button(buttonLabel + "###AutoTriggerStartStop", new Vector2(-1, ImGui.GetFrameHeight() * 1.6f)))
@@ -122,22 +129,30 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
                 {
                     var fate = island.Fates.First(f => f.Seed.Id == id);
                     var centre = MapProjection.MapToWorld(new(fate.Seed.X, fate.Seed.Y), island);
-                    return new TriggerPlan(id, fate.Level, new(island.Territory, island.MapId, centre, fate.Seed.ShortName), Mode(id), auto.SelectedRoute(id), EffectivePull(fate, auto.Level));
+                    return new TriggerPlan(id, fate.Level, new(island.Territory, island.MapId, centre, fate.Seed.ShortName),
+                        Mode(id), auto.SelectedRoute(id), EffectivePull(fate, auto.Level), GrindLight: grindLight);
                 }).ToArray(), pullBatch, abandonStep, useTriggerRotation, useTriggerBmr);
             }
         }
         ImGui.EndDisabled();
         ImGui.BeginDisabled(auto.Active);
-        DrawTriggerMode(routeTarget, auto.Level);
-        ImGui.BeginDisabled((routeTarget == null ? defaultRoute : Mode(routeTarget.Seed.Id)) == TriggerMode.Recorded);
+        DrawTriggerMode(routeTarget, auto.Level, snapshot.CurrentTerritory == island.Territory);
+        var passive = (routeTarget == null ? defaultPull : Pull(routeTarget.Seed.Id)) == TriggerPull.Passive;
+        if (passive || ids.Any(id => Pull(id) == TriggerPull.Passive))
+        {
+            ImGui.Checkbox("顺便刷光", ref grindLight);
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip("接战判定包括附近所有已交战敌人，随机挂机半径扩大到 10 米。");
+        }
+        ImGui.BeginDisabled(passive || (routeTarget == null ? defaultRoute : Mode(routeTarget.Seed.Id)) == TriggerMode.Recorded);
         ImGui.SetNextItemWidth((ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemSpacing.X) / 2);
         ImGui.SliderInt("##PullBatch", ref pullBatch, 1, 21, pullBatch == 21 ? "每批：无限" : "每批：%d 只");
         ImGui.EndDisabled();
         ImGui.SameLine();
         ImGui.SetNextItemWidth(-1); ImGui.SliderInt("##Abandon", ref abandonStep, 1, 7, abandonStep == 7 ? "放弃阈值：无限" : $"放弃阈值：{abandonStep * 50} 只");
-        if (routeTarget != null && Mode(routeTarget.Seed.Id) == TriggerMode.Recorded)
+        if (!passive && routeTarget != null && Mode(routeTarget.Seed.Id) == TriggerMode.Recorded)
             DrawTriggerRoutes(routeTarget.Seed.Id, auto, island, snapshot.CurrentTerritory == island.Territory);
-        else if (routeTarget == null)
+        else if (!passive && routeTarget == null)
             DrawTriggerRoutes(0, auto, island, false);
         ImGui.Checkbox("自动循环", ref useTriggerRotation);
         ImGui.SameLine();
@@ -166,8 +181,8 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
                 ImGui.TextUnformatted(point.Seed.ShortName);
                 ImGui.SameLine();
                 if (ImGui.SmallButton("移除")) triggerSelection.Remove(id);
-                DrawTriggerMode(point, navigation?.TriggerSnapshot.Level);
-                if (Mode(id) == TriggerMode.Recorded && selected != id && ImGui.SmallButton("选择路线")) selected = id;
+                DrawTriggerMode(point, navigation?.TriggerSnapshot.Level, snapshot.CurrentTerritory == island.Territory);
+                if (Pull(id) != TriggerPull.Passive && Mode(id) == TriggerMode.Recorded && selected != id && ImGui.SmallButton("选择路线")) selected = id;
                 ImGui.TextWrapped("触发：" + point.Trigger);
                 ImGui.TextDisabled(snapshot.CurrentTerritory == island.Territory
                     ? $"本地观测击杀：{kills?.FirstOrDefault(k => k.FateId == id)?.Count ?? 0}"
@@ -178,14 +193,19 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         ImGui.EndDisabled();
     }
 
-    private void DrawTriggerMode(FateDefinition? fate, int? playerLevel)
+    private void DrawTriggerMode(FateDefinition? fate, int? playerLevel, bool onIsland)
     {
         var id = fate?.Seed.Id;
         var pull = fate != null ? EffectivePull(fate, playerLevel) : defaultPull ?? TriggerPull.Attack;
         var canPassBy = fate == null || AutoTriggerRules.CanPassBy(playerLevel, fate.Level);
         var mode = (int)(id is { } target ? Mode(target) : defaultRoute ?? TriggerMode.Normal);
         ImGui.SetNextItemWidth((ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemSpacing.X) / 2);
-        var pullOpen = ImGui.BeginCombo("##TriggerPull", pull == TriggerPull.Attack ? "拉怪：攻击拉怪" : "拉怪：路过拉怪");
+        var pullOpen = ImGui.BeginCombo("##TriggerPull", pull switch
+        {
+            TriggerPull.PassBy => "拉怪：路过拉怪",
+            TriggerPull.Passive => "拉怪：被动拉怪",
+            _ => "拉怪：攻击拉怪",
+        });
         if (pullOpen)
         {
             if (ImGui.Selectable("攻击拉怪", pull == TriggerPull.Attack)) SetPull(TriggerPull.Attack);
@@ -194,11 +214,23 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             if (!canPassBy && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 ImGui.SetTooltip(AutoTriggerRules.PassByLevelWarning);
             ImGui.EndDisabled();
+            if (ImGui.Selectable("被动拉怪", pull == TriggerPull.Passive)) SetPull(TriggerPull.Passive);
             ImGui.EndCombo();
         }
         else if (!canPassBy && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip(AutoTriggerRules.PassByLevelWarning);
         ImGui.SameLine();
+        if (pull == TriggerPull.Passive)
+        {
+            var recorded = id is { } fateId && navigation?.TriggerSnapshot.StandbyPoint(fateId) != null;
+            ImGui.BeginDisabled(!onIsland || id == null || navigation == null);
+            if (ImGui.Button((recorded ? "重设挂机点位" : "设定挂机点位") + "###TriggerStandbyPoint", new Vector2(-1, 0))
+                && id is { } chosen) navigation?.RecordTriggerStandbyPoint(chosen);
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip("站到想挂机的位置，点击记录当前位置。");
+            return;
+        }
         ImGui.SetNextItemWidth(-1);
         if (ImGui.Combo("##TriggerRoute", ref mode, new[] { "路线：自动拉怪", "路线：预设路线" }, 2))
         {
@@ -208,6 +240,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
 
         void SetPull(TriggerPull value)
         {
+            pull = value;
             if (id is { } pullFate) triggerPulls[pullFate] = value;
             else defaultPull = value;
         }
@@ -317,10 +350,21 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
 
     public void Draw() => Draw(null);
 
-    public void Draw(AutomationPage? automation)
+    public void DrawCompact()
     {
         var snapshot = provider.Snapshot;
         if (provider.Islands.Count == 0) { ImGui.TextWrapped(snapshot.Status); return; }
+        RefreshIsland(snapshot);
+        var island = provider.Islands[islandIndex];
+        triggerSelection.SetIsland(island.Territory);
+        var now = DateTimeOffset.UtcNow;
+        UpdateTiming(island, snapshot, now);
+        DrawMap(island, island.Fates.Where(f => showBunnies || !f.Seed.Bunny).ToArray(),
+            snapshot, now, triggerSelection.Ids.ToHashSet(), compact: true);
+    }
+
+    private void RefreshIsland(FateMapSnapshot snapshot)
+    {
         if (bunnies?.ConsumeReset() == true) ResetView();
         var entry = (snapshot.CurrentTerritory, snapshot.EntryStartedAt);
         if (lastEntry != entry)
@@ -330,6 +374,13 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
                 .FirstOrDefault(p => p.value.Territory == snapshot.CurrentTerritory);
             if (current.value != null && islandIndex != current.index) { islandIndex = current.index; ResetView(); }
         }
+    }
+
+    public void Draw(AutomationPage? automation)
+    {
+        var snapshot = provider.Snapshot;
+        if (provider.Islands.Count == 0) { ImGui.TextWrapped(snapshot.Status); return; }
+        RefreshIsland(snapshot);
         LayoutSettings.RememberTable("##FateMapLayout");
         if (!ImGui.BeginTable("##FateMapLayout", 2, ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV)) return;
         try
@@ -444,36 +495,54 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             ImGui.TextWrapped($"{(snapshot.RoomId != 0 ? $"房间 {snapshot.RoomId} · " : "")}{snapshot.CrowdsourceStatus}");
     }
 
-    private void ResetView() { centre = new(.5f); zoom = 1; selected = 0; selectedArea = null; timing.Clear(); markerTiming.Clear(); nextTiming = default; }
-
-    private void DrawMap(IslandMap island, IReadOnlyList<FateDefinition> points, FateMapSnapshot snapshot, DateTimeOffset now, IReadOnlySet<ushort>? planned = null, bool compactLabels = false)
+    private Vector2 compactCentre = new(.5f);
+    private float compactZoom = 1;
+    private bool compactDragged;
+    private void ResetView()
     {
+        compactCentre = centre = new(.5f); compactZoom = zoom = 1;
+        selected = 0; selectedArea = null; timing.Clear(); markerTiming.Clear(); nextTiming = default;
+    }
+
+    private void DrawMap(IslandMap island, IReadOnlyList<FateDefinition> points, FateMapSnapshot snapshot, DateTimeOffset now, IReadOnlySet<ushort>? planned = null, bool compact = false)
+    {
+        ref var mapZoom = ref (compact ? ref compactZoom : ref zoom);
+        ref var mapCentre = ref (compact ? ref compactCentre : ref centre);
+        ref var mapDragged = ref (compact ? ref compactDragged : ref dragged);
         var space = ImGui.GetContentRegionAvail();
-        var side = Math.Max(100, Math.Min(space.X, space.Y - ImGui.GetTextLineHeightWithSpacing()));
-        var pos = ImGui.GetCursorScreenPos() + new Vector2(Math.Max(0, (space.X - side) / 2), 0);
+        var size = compact ? Vector2.Max(Vector2.One, space)
+            : new Vector2(Math.Max(100, Math.Min(space.X, space.Y - ImGui.GetTextLineHeightWithSpacing())));
+        var mapSize = Math.Max(size.X, size.Y);
+        var pos = ImGui.GetCursorScreenPos() + new Vector2(Math.Max(0, (space.X - size.X) / 2), 0);
+        var end = pos + size;
         ImGui.SetCursorScreenPos(pos);
-        ImGui.InvisibleButton("##MapCanvas", new(side), ImGuiButtonFlags.MouseButtonLeft);
+        ImGui.InvisibleButton("##MapCanvas", size, ImGuiButtonFlags.MouseButtonLeft);
         var hovered = ImGui.IsItemHovered();
         var io = ImGui.GetIO();
         if (hovered && io.MouseWheel != 0)
         {
-            var focus = (io.MousePos - pos) / side;
-            var previous = 1 / zoom;
-            zoom = Math.Clamp(zoom * MathF.Pow(1.25f, io.MouseWheel), 1, 4);
-            centre += (focus - new Vector2(.5f)) * (previous - 1 / zoom);
+            var focus = (io.MousePos - pos - size / 2) / mapSize;
+            var previous = 1 / mapZoom;
+            mapZoom = Math.Clamp(mapZoom * MathF.Pow(1.25f, io.MouseWheel), 1, compact ? 12 : 4);
+            mapCentre += focus * (previous - 1 / mapZoom);
         }
-        if (ImGui.IsItemActivated()) dragged = false;
+        if (ImGui.IsItemActivated()) mapDragged = false;
+        var scale = mapSize * mapZoom;
         if (ImGui.IsItemActive() && ImGui.IsMouseDragging(ImGuiMouseButton.Left))
-        { centre -= io.MouseDelta / side / zoom; dragged = true; }
-        var half = .5f / zoom;
-        centre = Vector2.Clamp(centre, new(half), new(1 - half));
-        var uvMin = centre - new Vector2(half);
+        { mapCentre -= io.MouseDelta / scale; mapDragged = true; }
+        // Crop the texture to the canvas using one scale for both axes.
+        var half = size / (2 * scale);
+        mapCentre = Vector2.Clamp(mapCentre, half, Vector2.One - half);
+        var uvMin = mapCentre - half;
+        var uvMax = mapCentre + half;
+        Vector2 AtUv(Vector2 uv) => pos + (uv - uvMin) * scale;
         var draw = ImGui.GetWindowDrawList();
-        draw.PushClipRect(pos, pos + new Vector2(side), true);
-        draw.AddRectFilled(pos, pos + new Vector2(side), 0xFF252C2D);
+        draw.PushClipRect(pos, end, true);
+        draw.AddRectFilled(pos, end, ImGui.GetColorU32(0xFF252C2D));
         var texture = textures.Get(island.TexturePath, out var error);
-        if (texture is { } handle) draw.AddImage(handle, pos, pos + new Vector2(side), uvMin, centre + new Vector2(half));
-        else draw.AddText(pos + new Vector2(8), 0xFFFFFFFF, error ?? "地图载入中…");
+        if (texture is { } handle)
+            draw.AddImage(handle, pos, end, uvMin, uvMax, ImGui.GetColorU32(0xFFFFFFFF));
+        else draw.AddText(pos + new Vector2(8), ImGui.GetColorU32(0xFFFFFFFF), error ?? "地图载入中…");
         ushort? hoveredPoint = null;
         MobArea? hoveredArea = null;
         var nearest = float.MaxValue;
@@ -483,10 +552,10 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             foreach (var area in navigation.TriggerSnapshot.Areas)
             {
                 var uv = MapProjection.ToUv(MapProjection.WorldToMap(area.Position, island), island.SizeFactor);
-                var marker = pos + (uv - uvMin) * zoom * side;
-                var extent = Math.Max(4, 10 * island.SizeFactor / 100f / 2048 * zoom * side);
+                var marker = AtUv(uv);
+                var extent = Math.Max(4, 10 * island.SizeFactor / 100f / 2048 * scale);
                 var color = ImGui.ColorConvertFloat4ToU32(new Vector4(.3f + area.FateId % 3 * .3f, .3f + area.FateId % 5 * .15f, .3f + area.FateId % 7 * .1f, .4f));
-                draw.AddRectFilled(marker - new Vector2(extent), marker + new Vector2(extent), color);
+                draw.AddRectFilled(marker - new Vector2(extent), marker + new Vector2(extent), ImGui.GetColorU32(color));
                 if (hovered && Math.Abs(io.MousePos.X - marker.X) <= extent && Math.Abs(io.MousePos.Y - marker.Y) <= extent)
                 { hoveredPoint = area.FateId; hoveredArea = area; }
             }
@@ -494,87 +563,99 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         foreach (var fate in points)
         {
             var uv = MapProjection.ToUv(new(fate.Seed.X, fate.Seed.Y), island.SizeFactor);
-            var marker = pos + (uv - uvMin) * zoom * side;
+            var marker = AtUv(uv);
             var status = timing.GetValueOrDefault(fate.Seed.Id) ?? new FateTimingResult("未知", null, FateTiming.UnknownColor);
             var radius = Math.Max(5, ImGui.GetFontSize() * .38f);
-            draw.AddCircleFilled(marker, radius, status.Color);
-            draw.AddCircle(marker, radius + (selected == fate.Seed.Id ? 3 : 1), selected == fate.Seed.Id ? 0xFFFFFFFF : 0xFF202020, 16, 2);
-            if (planned?.Contains(fate.Seed.Id) == true) draw.AddCircle(marker, radius + 5, 0xFFFFCA65, 16, 2);
+            draw.AddCircleFilled(marker, radius, ImGui.GetColorU32(status.Color));
+            draw.AddCircle(marker, radius + (selected == fate.Seed.Id ? 3 : 1), ImGui.GetColorU32(selected == fate.Seed.Id ? 0xFFFFFFFF : 0xFF202020), 16, 2);
+            if (planned?.Contains(fate.Seed.Id) == true) draw.AddCircle(marker, radius + 5, ImGui.GetColorU32(0xFFFFCA65), 16, 2);
             var markerState = markerTiming.GetValueOrDefault(fate.Seed.Id) ?? status;
             var countdown = markerState.Until is { } until ? $"{markerState.Text} {FateTiming.Countdown(until, now)}" : markerState.Text;
             if (countdown == "未知 · 未记录") countdown = "未记录";
             if (countdown == "条件可用 · 待触发") countdown = "待触发";
-            var label = compactLabels ? showLabels || selected == fate.Seed.Id ? fate.Seed.ShortName : ""
-                : showLabels || selected == fate.Seed.Id ? $"{fate.Seed.ShortName}\n{countdown}" : countdown;
-            if (label.Length > 0 && marker.X >= pos.X && marker.Y >= pos.Y && marker.X <= pos.X + side && marker.Y <= pos.Y + side)
+            var label = showLabels || selected == fate.Seed.Id ? $"{fate.Seed.ShortName}\n{countdown}" : countdown;
+            if (label.Length > 0 && marker.X >= pos.X && marker.Y >= pos.Y && marker.X <= end.X && marker.Y <= end.Y)
             {
                 var fontSize = Math.Max(12, ImGui.GetFontSize() * .8f);
-                var size = ImGui.CalcTextSize(label) * (fontSize / ImGui.GetFontSize()) + new Vector2(6, 4);
-                var labelPos = marker + new Vector2(10, -size.Y / 2);
+                var labelSize = ImGui.CalcTextSize(label) * (fontSize / ImGui.GetFontSize()) + new Vector2(6, 4);
+                var labelPos = marker + new Vector2(10, -labelSize.Y / 2);
                 for (var attempt = 0; attempt < 12; attempt++)
                 {
-                    var sideOffset = attempt % 2 == 0 ? 10 : -size.X - 10;
-                    var vertical = (attempt / 2) switch { 0 => -size.Y / 2, 1 => -size.Y - 10, 2 => 10, 3 => -size.Y * 2 - 10, 4 => size.Y + 10, _ => -size.Y / 2 };
-                    var candidate = Vector2.Clamp(marker + new Vector2(sideOffset, vertical), pos, Vector2.Max(pos, pos + new Vector2(side) - size));
+                    var sideOffset = attempt % 2 == 0 ? 10 : -labelSize.X - 10;
+                    var vertical = (attempt / 2) switch { 0 => -labelSize.Y / 2, 1 => -labelSize.Y - 10, 2 => 10, 3 => -labelSize.Y * 2 - 10, 4 => labelSize.Y + 10, _ => -labelSize.Y / 2 };
+                    var candidate = Vector2.Clamp(marker + new Vector2(sideOffset, vertical), pos, Vector2.Max(pos, end - labelSize));
                     labelPos = candidate;
-                    if (!labels.Any(r => candidate.X < r.Max.X && candidate.X + size.X > r.Min.X && candidate.Y < r.Max.Y && candidate.Y + size.Y > r.Min.Y)) break;
+                    if (!labels.Any(r => candidate.X < r.Max.X && candidate.X + labelSize.X > r.Min.X && candidate.Y < r.Max.Y && candidate.Y + labelSize.Y > r.Min.Y)) break;
                 }
-                labels.Add((labelPos, labelPos + size));
-                draw.AddLine(marker, Vector2.Clamp(marker, labelPos, labelPos + size), status.Color);
-                draw.AddRectFilled(labelPos, labelPos + size, 0xCE181818, 3);
-                draw.AddText(ImGui.GetFont(), fontSize, labelPos + new Vector2(3, 2), markerState.Color, label);
+                labels.Add((labelPos, labelPos + labelSize));
+                draw.AddLine(marker, Vector2.Clamp(marker, labelPos, labelPos + labelSize), ImGui.GetColorU32(status.Color));
+                draw.AddRectFilled(labelPos, labelPos + labelSize, ImGui.GetColorU32(0xCE181818), 3);
+                draw.AddText(ImGui.GetFont(), fontSize, labelPos + new Vector2(3, 2), ImGui.GetColorU32(markerState.Color), label);
             }
             var distance = Vector2.DistanceSquared(marker, io.MousePos);
             if (hovered && distance < Math.Max(12, radius * 2) * Math.Max(12, radius * 2) && distance < nearest)
             { nearest = distance; hoveredPoint = fate.Seed.Id; hoveredArea = null; }
         }
-        bunnies?.DrawOverlay(island,pos,side,zoom,uvMin,hovered&&hoveredPoint==null,dragged);
+        bunnies?.DrawOverlay(island,pos,scale,mapZoom,uvMin,hovered&&hoveredPoint==null,mapDragged);
         ElementalMapPoint? hoveredElemental = null;
         if (showElementals && snapshot.Elementals is { } elementals)
         {
             foreach (var elemental in elementals)
             {
                 if (elemental.Territory != island.Territory || elemental.MapId != island.MapId) continue;
-                var marker = pos + (MapProjection.ToUv(elemental.Position, island.SizeFactor) - uvMin) * side * zoom;
+                var marker = AtUv(MapProjection.ToUv(elemental.Position, island.SizeFactor));
                 var radius = elemental.Visible ? 6 : 4;
                 var top = marker - new Vector2(0, radius);
                 var right = marker + new Vector2(radius, 0);
                 var bottom = marker + new Vector2(0, radius);
                 var left = marker - new Vector2(radius, 0);
-                if (elemental.Visible) draw.AddQuadFilled(top, right, bottom, left, 0xFFEFE259);
-                else draw.AddQuad(top, right, bottom, left, 0xCCEFE259, 1.5f);
+                if (elemental.Visible) draw.AddQuadFilled(top, right, bottom, left, ImGui.GetColorU32(0xFFEFE259));
+                else draw.AddQuad(top, right, bottom, left, ImGui.GetColorU32(0xCCEFE259), 1.5f);
                 if (hovered && hoveredPoint == null && Vector2.DistanceSquared(marker, io.MousePos) <= 64)
                     hoveredElemental = elemental;
             }
         }
         if (snapshot.CurrentTerritory == island.Territory && snapshot.PlayerMapPosition is { } player)
         {
-            var p = pos + (MapProjection.ToUv(player, island.SizeFactor) - uvMin) * side * zoom;
-            draw.AddCircleFilled(p, 5, 0xFFFFD070); draw.AddCircle(p, 7, 0xFFFFFFFF, 16, 2);
+            var p = AtUv(MapProjection.ToUv(player, island.SizeFactor));
+            draw.AddCircleFilled(p, 5, ImGui.GetColorU32(0xFFFFD070)); draw.AddCircle(p, 7, ImGui.GetColorU32(0xFFFFFFFF), 16, 2);
         }
         var routePreview = nearbyRoutePreview != 0 ? nearbyRoutePreview : selected;
-        if (planned != null && navigation != null && Mode(routePreview) == TriggerMode.Recorded && island.Fates.Any(f => f.Seed.Id == routePreview))
+        if (navigation?.TriggerSnapshot.StandbyPoints is { } standbyPoints)
+            foreach (var fate in island.Fates)
+            {
+                if (Pull(fate.Seed.Id) != TriggerPull.Passive || !standbyPoints.TryGetValue(fate.Seed.Id, out var anchor)) continue;
+                var marker = AtUv(MapProjection.ToUv(MapProjection.WorldToMap(anchor, island), island.SizeFactor));
+                draw.AddCircleFilled(marker, 7, ImGui.GetColorU32(0xEE151515));
+                draw.AddCircleFilled(marker, 5, ImGui.GetColorU32(0xFFE080FF));
+                var label = $"挂机 · {fate.Seed.ShortName}";
+                var text = marker + new Vector2(8, -ImGui.GetTextLineHeight() / 2);
+                draw.AddRectFilled(text - Vector2.One, text + ImGui.CalcTextSize(label) + Vector2.One, ImGui.GetColorU32(0xCC151515), 2);
+                draw.AddText(text, ImGui.GetColorU32(0xFFFFFFFF), label);
+            }
+        if (planned != null && navigation != null && Pull(routePreview) != TriggerPull.Passive
+            && Mode(routePreview) == TriggerMode.Recorded && island.Fates.Any(f => f.Seed.Id == routePreview))
         {
             var route = navigation.TriggerSnapshot.SelectedRoute(routePreview);
-            var markers = route.Select(point => pos + (MapProjection.ToUv(MapProjection.WorldToMap(point, island),
-                island.SizeFactor) - uvMin) * zoom * side).ToArray();
+            var markers = route.Select(point => AtUv(MapProjection.ToUv(MapProjection.WorldToMap(point, island),
+                island.SizeFactor))).ToArray();
             for (var i = 1; i < markers.Length; i++)
             {
-                draw.AddLine(markers[i - 1], markers[i], 0xEE151515, 6);
-                draw.AddLine(markers[i - 1], markers[i], 0xFFFFD34D, 3);
+                draw.AddLine(markers[i - 1], markers[i], ImGui.GetColorU32(0xEE151515), 6);
+                draw.AddLine(markers[i - 1], markers[i], ImGui.GetColorU32(0xFFFFD34D), 3);
             }
             for (var i = 0; i < markers.Length; i++)
             {
-                draw.AddCircleFilled(markers[i], 6, 0xEE151515);
-                draw.AddCircleFilled(markers[i], 4, i == 0 ? 0xFF72E68A : i == markers.Length - 1 ? 0xFF6262FF : 0xFFFFD34D);
+                draw.AddCircleFilled(markers[i], 6, ImGui.GetColorU32(0xEE151515));
+                draw.AddCircleFilled(markers[i], 4, ImGui.GetColorU32(i == 0 ? 0xFF72E68A : i == markers.Length - 1 ? 0xFF6262FF : 0xFFFFD34D));
                 var label = i == 0 ? "起点" : i == markers.Length - 1 ? "终点" : (i + 1).ToString();
                 var text = markers[i] + new Vector2(7, -ImGui.GetTextLineHeight() / 2);
-                draw.AddRectFilled(text - Vector2.One, text + ImGui.CalcTextSize(label) + Vector2.One, 0xCC151515, 2);
-                draw.AddText(text, 0xFFFFFFFF, label);
+                draw.AddRectFilled(text - Vector2.One, text + ImGui.CalcTextSize(label) + Vector2.One, ImGui.GetColorU32(0xCC151515), 2);
+                draw.AddText(text, ImGui.GetColorU32(0xFFFFFFFF), label);
             }
         }
         draw.PopClipRect();
-        if (hoveredElemental is { } elementalPoint && !dragged)
+        if (hoveredElemental is { } elementalPoint && !mapDragged)
         {
             ImGui.BeginTooltip();
             ImGui.TextUnformatted(elementalPoint.Visible ? "元灵 · 当前可见" : "元灵 · 本实例已发现");
@@ -590,8 +671,9 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             ImGui.TextUnformatted($"({fate.Seed.X:0.0}, {fate.Seed.Y:0.0}) · {TimingText(id, now)}");
             ImGui.TextUnformatted(fate.Trigger);
             ImGui.EndTooltip();
-            if (ImGui.IsMouseReleased(ImGuiMouseButton.Left) && !dragged) { selected = id; selectedArea = hoveredArea; }
+            if (ImGui.IsMouseReleased(ImGuiMouseButton.Left) && !mapDragged) { selected = id; selectedArea = hoveredArea; }
         }
+        if (compact) return;
         if (ImGui.SmallButton("还原视图")) { centre = new(.5f); zoom = 1; }
         ImGui.SameLine();ImGui.TextDisabled($"缩放 {zoom:0.0}×　点位 {points.Count}　蓝色圆点：自己");
     }
@@ -616,7 +698,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             {
                 ImGui.SameLine(); ImGui.BeginDisabled(snapshot.CurrentTerritory != island.Territory || navigation.Snapshot.Navigating);
                 if (ImGui.Button("自动前往")) navigation.NavigateTo(new(island.Territory, island.MapId,
-                    MapProjection.MapToWorld(new(definition.Seed.X, definition.Seed.Y), island), definition.Seed.ShortName));
+                    MapProjection.MapToWorld(new(definition.Seed.X, definition.Seed.Y), island), definition.Seed.ShortName, definition.Seed.Id));
                 ImGui.EndDisabled();
             }
             var condition = definition.Seed.WeatherId == 0 ? "不限天气" : weather.FirstOrDefault(w => w.TerritoryId == island.Territory)?.Chances

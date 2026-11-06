@@ -15,6 +15,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
 {
     private bool reborn, rotationOwned, aiOwned;
     private bool triggerAuto;
+    private bool cleanupRotation;
     private object? crystalCombatOwner;
     private Assembly? crystalRotationProvider;
     private bool crystalRotationEnding;
@@ -31,8 +32,9 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     private ulong triggerPullTarget;
     private int triggerRestoreAttempts;
     public bool TriggerApproachAvailable => triggerUseAi && reborn;
+    public bool TriggerControlsAvailable => triggerUseRotation || triggerUseAi;
     public string? TriggerWarning { get; private set; }
-    public string? BeginTrigger(bool needsApproach, bool useRotation, bool useBmr)
+    public string? BeginTrigger(bool needsApproach, bool useRotation, bool useBmr, bool optionalControls = false)
     {
         try
         {
@@ -41,13 +43,22 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             if (CleanupPending) return "等待上次战斗控制还原。";
             if (useBmr)
             {
-                if (ResolveBossMod() is { } providerError) return providerError;
                 try
                 {
+                    if (ResolveBossMod() is { } providerError)
+                    {
+                        if (!optionalControls) return providerError;
+                        throw new InvalidOperationException(providerError);
+                    }
                     _ = Read("ForbidActions"); _ = Read("ForbidMovement");
                     if (reborn && needsApproach)
                         foreach (var (field, _) in TriggerApproachSettings) _ = Read(field);
                     if (!reborn) { _ = AIActive(); _ = ActivePreset(); _ = Read("GoalZoneFallback"); }
+                }
+                catch (Exception) when (optionalControls)
+                {
+                    useBmr = false;
+                    TriggerWarning = "BossMod AI 不可用，跳过 AI 接管。";
                 }
                 catch (IpcNotReadyError) when (!reborn)
                 {
@@ -65,11 +76,24 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             triggerRestoreAttempts = 0;
             if (triggerUseRotation)
             {
-                triggerOwner = CurrentRotationOwner();
-                if (triggerOwner == null) return "已开启自动循环，请先加载 RSR。";
-                overridesBefore = RsrStateProperty("IpcOverrides").GetValue(null);
-                targetingBefore = RsrStateProperty("TargetingTypeOverride").GetValue(null);
-                triggerModeBefore = RotationRequested() ? (ManualRequested() ? "Manual" : "Auto") : "Off";
+                try
+                {
+                    triggerOwner = CurrentRotationOwner();
+                    if (triggerOwner == null)
+                    {
+                        if (!optionalControls) return "已开启自动循环，请先加载 RSR。";
+                        throw new InvalidOperationException("RSR 尚未加载。");
+                    }
+                    overridesBefore = RsrStateProperty("IpcOverrides").GetValue(null);
+                    targetingBefore = RsrStateProperty("TargetingTypeOverride").GetValue(null);
+                    triggerModeBefore = RotationRequested() ? (ManualRequested() ? "Manual" : "Auto") : "Off";
+                }
+                catch (Exception) when (optionalControls)
+                {
+                    triggerUseRotation = false;
+                    triggerOwner = null;
+                    TriggerWarning = (TriggerWarning == null ? "" : TriggerWarning + " ") + "RSR 不可用，跳过循环接管。";
+                }
             }
             return null;
         }
@@ -370,6 +394,22 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         return manager->GetCurrentFateId() == fateId && manager->LevelSync() != null;
     }
     public bool Enable() => EnableWithAI(false);
+    public bool EnableCleanupRotation()
+    {
+        try
+        {
+            if (cleanupRotation)
+                return rotationOwned && ReferenceEquals(rotationOwner, CurrentRotationOwner())
+                    && RotationRequested() && ManualRequested() && RotationActive();
+            if (!Disable() || CurrentRotationOwner() is not { } provider || RotationRequested() || RotationActive()) return false;
+            triggerAuto = false;
+            rotationOwner = provider;
+            rotationOwned = cleanupRotation = true;
+            RotationMode("Manual");
+            return RotationRequested() && ManualRequested() && RotationActive();
+        }
+        catch (Exception ex) { Error = "战后自动循环启动失败：" + ex.GetBaseException().Message; return false; }
+    }
     public string? CheckTriggerReady()
     {
         if (CleanupPending) return "等待上次战斗控制还原。";
@@ -499,6 +539,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             }
             catch { if (!commands.Commands.ContainsKey(reborn ? "/bmrai" : "/vbm")) aiOwned = false; }
         }
+        if (!rotationOwned) cleanupRotation = false;
         if (aiOwned || rotationOwned) return false;
         foreach (var pair in settings.ToArray())
         {

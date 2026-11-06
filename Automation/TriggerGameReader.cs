@@ -1,4 +1,5 @@
 using System.Numerics;
+using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -32,25 +33,39 @@ internal sealed class TriggerGameReader(IObjectTable objects, IDataManager data)
         return enemies;
     }
 
-    public unsafe IReadOnlyList<TriggerMob> Read(uint territory)
+    public unsafe IReadOnlyList<TriggerMob> Read(uint territory, bool includeOtherEngaged = false)
     {
         var result = new List<TriggerMob>();
         var localId = objects.LocalPlayer?.GameObjectId;
         var enemies = ReadEnmity();
         foreach (var npc in objects.OfType<IBattleNpc>().Where(n => n.Address != 0 && n.MaxHp > 0))
         {
-        var elementalLevel=EurekaNpcLevel.Read(npc);
-        if(elementalLevel==null)continue;
-        foreach (var rule in Rules.Where(r => r.Territory == territory && r.Level == elementalLevel && r.NameIds.Contains(npc.NameId)))
-        {
-            var dead = npc.IsDead || npc.CurrentHp == 0;
-            var aggro = enemies?.Contains(npc.EntityId) == true || localId != null && npc.TargetObjectId == localId;
-            var engaged = ((Character*)npc.Address)->InCombat;
-            result.Add(new(npc.GameObjectId, rule.FateId, npc.Position, dead, aggro, npc.IsTargetable, engaged, npc.CurrentHp, npc.HitboxRadius));
-            // Don't turn mobs pulled after the player into false spawn distributions.
-            if (!dead && !engaged && areas.Count < 4096)
-                areas[(rule.FateId, (int)MathF.Floor(npc.Position.X / 20), (int)MathF.Floor(npc.Position.Z / 20))] = new(rule.FateId, npc.Position);
-        }
+            var elementalLevel = EurekaNpcLevel.Read(npc);
+            var matched = false;
+            if (elementalLevel != null)
+            {
+                foreach (var rule in Rules.Where(r => r.Territory == territory && r.Level == elementalLevel && r.NameIds.Contains(npc.NameId)))
+                {
+                    matched = true;
+                    var mob = ReadMob(rule.FateId);
+                    result.Add(mob);
+                    // Don't turn mobs pulled after the player into false spawn distributions.
+                    if (!mob.Dead && !mob.Engaged && areas.Count < 4096)
+                        areas[(rule.FateId, (int)MathF.Floor(mob.Position.X / 20), (int)MathF.Floor(mob.Position.Z / 20))] = new(rule.FateId, mob.Position);
+                }
+            }
+
+            if (!matched && includeOtherEngaged && npc.BattleNpcKind == BattleNpcSubKind.Combatant
+                && ((Character*)npc.Address)->InCombat)
+            {
+                var mob = ReadMob(0);
+                if (!mob.Dead) result.Add(mob);
+            }
+
+            TriggerMob ReadMob(ushort fateId) => new(npc.GameObjectId, fateId, npc.Position,
+                npc.IsDead || npc.CurrentHp == 0,
+                enemies?.Contains(npc.EntityId) == true || localId != null && npc.TargetObjectId == localId,
+                npc.IsTargetable, ((Character*)npc.Address)->InCombat, npc.CurrentHp, npc.HitboxRadius, npc.MaxHp);
         }
         return result;
     }

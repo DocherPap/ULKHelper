@@ -28,6 +28,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     private float finalArrivalRadius;
     private bool finalUnknownHeight, preferCrystals;
     private float finalNearbyGroundRadius;
+    private Func<Vector3, bool>? finalGroundFilter;
     private IReadOnlySet<uint>? surveyVisited;
     public bool SurveyExhausted { get; private set; }
     private readonly TravelMountHelper travelMount = new(mount);
@@ -39,7 +40,8 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     public string? CrystalDecision { get; private set; }
     public MapDestination? TakeArrival() { var result = arrival; arrival = null; return result; }
     public void Start(MapDestination destination, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now,
-        bool summonMount = false, bool useCrystals = true, bool waitWithoutFate = true, float arrivalRadius = 3, bool unknownHeight = true, float nearbyGroundRadius = 25, bool preferCrystals = false)
+        bool summonMount = false, bool useCrystals = true, bool waitWithoutFate = true, float arrivalRadius = 3,
+        bool unknownHeight = true, float nearbyGroundRadius = 25, bool preferCrystals = false, Func<Vector3, bool>? groundFilter = null)
     {
         if (Active) { Status = "请先停止当前导航。"; return; }
         Stop(); CrystalDecision = null; goal = destination; context = world; origin = player; started = now;
@@ -50,6 +52,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
         finalArrivalRadius = arrivalRadius;
         finalUnknownHeight = unknownHeight;
         finalNearbyGroundRadius = nearbyGroundRadius;
+        finalGroundFilter = groundFilter;
         this.preferCrystals = preferCrystals;
         Active = true;
         if (useCrystals && preferCrystals && mesh.SupportsRouteEstimates)
@@ -60,6 +63,16 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
             return;
         }
         StartPlannedJourney(player, fates, now);
+    }
+
+    public void StartUnspawnedFate(MapDestination centre, WorldContext world, Vector3 player, DateTimeOffset now,
+        bool summonMount, bool useCrystals = true)
+    {
+        const float distance = 50;
+        var stop = ArrivalRules.Position(player, centre.Position, distance);
+        Start(centre with { Position = stop }, world, player, [], now, summonMount, useCrystals,
+            waitWithoutFate: false, arrivalRadius: 1,
+            groundFilter: p => NavigationRules.Distance(p, centre.Position) >= distance - .05f);
     }
 
     private CrystalRoute? ChooseRoute(Vector3 player, IslandCrystal? source = null, IReadOnlySet<uint>? available = null)
@@ -294,7 +307,8 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     private void Final(Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now)
     {
         phase = Phase.Final;
-        walk.Start(goal!, context, player, fates, now, waitWithoutFate, finalArrivalRadius, finalUnknownHeight, nearbyGroundRadius: finalNearbyGroundRadius);
+        walk.Start(goal!, context, player, fates, now, waitWithoutFate, finalArrivalRadius, finalUnknownHeight,
+            nearbyGroundRadius: finalNearbyGroundRadius, groundFilter: finalGroundFilter);
         if (!walk.Active) Stop(walk.Status); else Status = walk.Status;
     }
     public void Stop(string reason = "已停止导航。")

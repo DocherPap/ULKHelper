@@ -10,6 +10,7 @@ namespace ULKHelper.Windows;
 
 internal sealed class MainWindow : Window
 {
+    internal static readonly Vector2 MinimumSize = new(1000, 520);
     private readonly ItemStatisticsPage itemStatistics;
     private readonly AutomationPage automation;
     private readonly WeatherPage weather;
@@ -17,9 +18,11 @@ internal sealed class MainWindow : Window
     private readonly SettingsStore? settings;
     private readonly LogosPage logos;
     private readonly CommonPage common;
+    private FloatingWindow? floating;
     private const int TabCount = 5;
     private bool firstDraw = true;
     private int selectedTab;
+    private int? requestedTab;
     private DateTimeOffset nextLayout;
 
     public MainWindow(IStatisticsProvider statistics, AutomationHelpers helpers, IReadOnlyList<WeatherZone> weatherZones,
@@ -47,33 +50,43 @@ internal sealed class MainWindow : Window
         if (settings != null) { Position = settings.Get("window.position", new Vector2(80, 80)); PositionCondition = ImGuiCond.Once; }
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(1000, 520),
+            MinimumSize = MainWindow.MinimumSize,
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
         // The page handles scrolling; the tab bar stays visible above it.
         Flags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
     }
 
+    public FloatingWindow CreateFloatingWindow(SettingsStore store) =>
+        floating = new(store, common, weather, fateMap, index =>
+        {
+            requestedTab = index;
+            IsOpen = true;
+        });
+
     public override void Draw()
     {
         if (firstDraw && settings != null) LayoutSettings.Restore(settings);
-        var restoreTab = selectedTab;
+        var restoreTab = requestedTab ?? (firstDraw ? selectedTab : -1);
+        if (requestedTab != null) ImGui.SetWindowFocus();
         var tabWidth = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * (TabCount - 1)) / TabCount;
-        // Whole pixels avoid the unassignable width remainder in cimgui 1.88.
+        // Old cimgui ShrinkWidths can loop when the previous frame's tab widths are fractional.
+        // Whole pixels keep equal-width tabs without triggering the unassignable remainder.
         tabWidth = MathF.Floor(tabWidth);
-        if (!ImGui.BeginTabBar("##MainPages", ImGuiTabBarFlags.FittingPolicyResizeDown)) return;
+        const ImGuiTabBarFlags fitting = ImGuiTabBarFlags.FittingPolicyResizeDown;
+        if (!ImGui.BeginTabBar("##MainPages", fitting)) return;
         try
         {
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("常用功能", firstDraw && restoreTab == 0 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("常用功能", restoreTab == 0 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
                 selectedTab = 0;
-                try { DrawPage(common.Draw); }
+                try { DrawPage(DrawCommonPage); }
                 finally { ImGui.EndTabItem(); }
             }
 
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("物品统计", firstDraw && restoreTab == 1 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("物品统计", restoreTab == 1 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
                 selectedTab = 1;
                 try { DrawPage(DrawItemStatisticsPage); }
@@ -81,7 +94,7 @@ internal sealed class MainWindow : Window
             }
 
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("天气预报", firstDraw && restoreTab == 2 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("天气预报", restoreTab == 2 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
                 selectedTab = 2;
                 try { DrawPage(weather.Draw); }
@@ -89,7 +102,7 @@ internal sealed class MainWindow : Window
             }
 
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("地图 / 自动化", firstDraw && restoreTab == 3 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("地图 / 自动化", restoreTab == 3 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
                 selectedTab = 3;
                 try { DrawPage(automation.Draw); }
@@ -97,7 +110,7 @@ internal sealed class MainWindow : Window
             }
 
             ImGui.SetNextItemWidth(tabWidth);
-            if (ImGui.BeginTabItem("文理技能", firstDraw && restoreTab == 4 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+            if (ImGui.BeginTabItem("文理技能", restoreTab == 4 ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
             {
                 selectedTab = 4;
                 try { DrawPage(logos.Draw); } finally { ImGui.EndTabItem(); }
@@ -107,6 +120,7 @@ internal sealed class MainWindow : Window
         {
             ImGui.EndTabBar();
             firstDraw = false;
+            requestedTab = null;
             if (settings != null)
             {
                 itemStatistics.Save(settings); weather.Save(settings); fateMap.Save(settings, "map"); automation.Save(settings);
@@ -133,4 +147,5 @@ internal sealed class MainWindow : Window
     }
 
     private void DrawItemStatisticsPage() => itemStatistics.Draw();
+    private void DrawCommonPage() => common.Draw(drawWindowSettings: floating == null ? null : floating.DrawSettings);
 }

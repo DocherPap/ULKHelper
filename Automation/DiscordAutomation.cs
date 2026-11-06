@@ -234,10 +234,14 @@ internal sealed partial class AutomationHelpers
         switch (DiscordCommandRules.Normalize(input))
         {
             case "状态": return CurrentRemoteStatus;
+            case "取消":
+            case "停":
             case "停止":
-                pendingDiscordTarget = default;
-                if (!RemoteActive) return "已清除待补充的指令。";
-                StopRemote("Discord 任务已停止。");
+            case "stop":
+            case "cancel":
+                const string stopped = "已停止插件当前的所有自动化任务，并清除待补充的 Discord 指令。";
+                StopTasks(stopped);
+                remoteStatus = stopped;
                 return remoteStatus;
         }
 
@@ -257,7 +261,7 @@ internal sealed partial class AutomationHelpers
             foreach (var alias in name switch
             {
                 "陆行鸟" => new[] { "鸟", "lxn" },
-                "莫古力" => ["莫", "mgl"],
+                "莫古力" => ["莫", "猪", "mgl"],
                 "猫小胖" => ["猫", "mxp"],
                 "豆豆柴" => ["柴", "ddc"],
                 _ => Array.Empty<string>(),

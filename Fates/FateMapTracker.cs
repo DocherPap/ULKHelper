@@ -25,6 +25,7 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
     private ulong partyPlayer, partyId;
     private bool wasInParty;
     private readonly FateLedger ledger;
+    private readonly FateHistoryCache history;
     private readonly FateNotificationHelper notifications;
     private volatile FateNotificationSettings requestedNotifications = FateNotificationSettings.Default;
     private readonly ConcurrentQueue<Action> commands = new();
@@ -34,11 +35,13 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
     private readonly EntryCrowdsourceLookup lookup;
     private DateTimeOffset enteredAt, candidateSince;
     private uint roomCandidate, roomId, roomDataCenter;
+    private int loadedHistoryCount;
     private (uint Territory, uint Map, uint Instance, ulong Player) session;
     private DateTimeOffset nextUpdate, nextError;
     private volatile FateMapSnapshot snapshot = new(0, null, new Dictionary<ushort, FateRecord>(), "尚未进入优雷卡。");
     private bool disposed;
     private readonly SettingsStore? settings;
+    private const string HistorySettingsKey = "map.fateRoomHistory.v1";
     private const string ElementalSettingsKey = "map.elementalSightings";
     private readonly List<ElementalMapPoint> elementalSightings = [];
     private DateTimeOffset nextElementalSave;
@@ -70,6 +73,8 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
             .GroupBy(p => p.Territory).SelectMany(g => g.OrderByDescending(p => p.LastSeen).Take(128))
             .Select(p => p with { Visible = false }));
         ledger = new(Islands);
+        history = new(Islands);
+        history.Load(settings?.Get<FateRoomHistory[]>(HistorySettingsKey, []) ?? [], DateTimeOffset.UtcNow);
         notifications = new(Islands);
         notifications.Configure(requestedNotifications); notifications.Reset();
         snapshot = snapshot with { Notifications = requestedNotifications, NotificationStatus = notifications.Status };
@@ -136,9 +141,11 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
             if (world != session)
             {
                 SaveElementals();
+                SaveHistory(now);
                 ledger.Reset(); session = world; nextUpdate = default;
                 notifications.Reset();
                 lookup.Reset(); enteredAt = now; roomId = roomCandidate = roomDataCenter = 0; candidateSince = now;
+                loadedHistoryCount = 0;
                 while (commands.TryDequeue(out _)) { }
             }
             ObserveParty(world.Item4);
@@ -149,7 +156,8 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
             nextUpdate = now.AddMilliseconds(500);
             var island = Islands.FirstOrDefault(i => i.Territory == client.TerritoryType);
             var observations = new List<FateObservation>();
-            if (island != null && client.IsLoggedIn)
+            if (island != null && world.Item4 != 0 && objects.LocalPlayer != null
+                && !conditions[ConditionFlag.BetweenAreas] && !conditions[ConditionFlag.BetweenAreas51])
             {
                 foreach (var fate in fates)
                 {
@@ -164,7 +172,7 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
                 ledger.Observe(observations, now);
                 notifications.Observe(island.Territory, observations, now);
                 notifications.SendNext(now, (notification, settings) => FateChatSender.Send(island, notification, settings, chat));
-                if (!lookup.Attempted && now - enteredAt >= TimeSpan.FromSeconds(2))
+                if (roomId == 0 && now - enteredAt >= TimeSpan.FromSeconds(2))
                 {
                     var candidate = roomReader.Read(now);
                     if (candidate != roomCandidate) { roomCandidate = candidate; candidateSince = now; }
@@ -173,17 +181,20 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
                     {
                         roomId = candidate;
                         roomDataCenter = dc;
+                        var cached = history.Read(new(roomId, island.Territory, roomDataCenter), now);
+                        loadedHistoryCount = cached.Count;
+                        ledger.Import(cached, island.Territory, now);
                         ConfirmElementalInstance(island.Territory);
-                        lookup.Start(new(dc, roomId, island.Territory), now);
                     }
                 }
-                if (lookup.TakeCompleted() is { } remote && remote.Scope.InstanceId == roomId && remote.Scope.TerritoryId == island.Territory)
+                if (roomId != 0 && !lookup.Attempted) lookup.Start(new(roomDataCenter, roomId, island.Territory), now);
+                if (lookup.TakeCompleted() is { } remote && remote.Scope == new CrowdScope(roomDataCenter, roomId, island.Territory))
                     ledger.Import(remote.Appearances, island.Territory, now);
             }
             var elementals = ObserveElementals(island, now);
             snapshot = new(client.TerritoryType, island != null && objects.LocalPlayer is { } player ? MapProjection.WorldToMap(player.Position, island) : null,
-                ledger.Snapshot, error ?? (island == null ? "浏览模式：进入对应岛屿后读取一次众包记录。" : "本次实例本地观察 · 每 0.5 秒刷新 · 离岛后清空"),
-                roomId, island == null ? null : lookup.Attempted ? lookup.Status : roomReader.Status, notifications.Settings, notifications.Status,
+                ledger.Snapshot, error ?? (island == null ? "浏览模式：进岛后合并本地历史与众包记录。" : "本岛 FATE 观测与近 3 小时历史 · 每 0.5 秒刷新"),
+                roomId, island == null ? null : roomId == 0 ? roomReader.Status : $"本地历史 {loadedHistoryCount} 条 · {lookup.Status}", notifications.Settings, notifications.Status,
                 elementals, island == null ? null : enteredAt);
         }
         catch (Exception ex)
@@ -193,6 +204,18 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
             nextUpdate = now.AddSeconds(1);
             if (now >= nextError) { nextError = now.AddSeconds(10); log.Warning(ex, "优雷卡地图状态更新失败"); }
         }
+    }
+
+    private void SaveHistory(DateTimeOffset now)
+    {
+        if (!Islands.Any(island => island.Territory == session.Territory)) return;
+        if (roomId != 0)
+        {
+            var entries = ledger.Snapshot.Values.Select(record => new FateHistoryEntry(record.Id, record.Appeared, record.Manual, record.Crowdsourced));
+            history.Store(new(roomId, session.Territory, roomDataCenter), entries, now);
+        }
+        settings?.Put(HistorySettingsKey, history.PruneAndSnapshot(now));
+        settings?.Flush(true);
     }
 
     private bool IsCurrentElemental(ElementalMapPoint point) =>
@@ -274,6 +297,7 @@ internal sealed class FateMapTracker : IFateMapProvider, IDisposable
         if (disposed) return;
         disposed = true; framework.Update -= Update;
         SaveElementals();
+        SaveHistory(DateTimeOffset.UtcNow);
         lookup.Dispose(); http.Dispose();
         while (commands.TryDequeue(out _)) { }
     }

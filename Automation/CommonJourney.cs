@@ -1,4 +1,6 @@
 using System.Numerics;
+using System.Text;
+using System.Text.RegularExpressions;
 using Dalamud.Game.ClientState.Conditions;
 using ObjectKind = Dalamud.Game.ClientState.Objects.Enums.ObjectKind;
 using Dalamud.Game.ClientState.Objects.Types;
@@ -498,10 +500,26 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
         if (now - stageAt >= TimeSpan.FromSeconds(15)) { Stop("未确认购买结果，请查看背包和商店。" + DialogueDetail()); return; }
         if (confirmed) return;
         var proxy = ShopEventHandler.AgentProxy.Instance();
-        if (proxy == null || proxy->AddonId != purchaseShopId || proxy->Handler == null || proxy->Handler->TransactionItemId != Potion
-            || proxy->Handler->TransactionItemCount != Quantity) return;
-        if (ConfirmPrompt(text => text.Contains("优雷卡恢复药", StringComparison.Ordinal)
-            && text.Contains("99", StringComparison.Ordinal))) confirmed = true;
+        if (proxy == null || proxy->AddonId != purchaseShopId || proxy->Handler == null) return;
+        var dialog = (AddonSelectYesno*)Addon("SelectYesno");
+        if (dialog == null || dialog->YesButton == null || !dialog->YesButton->IsEnabled
+            || dialog->YesButton->OwnerNode == null || !dialog->YesButton->OwnerNode->AtkResNode.IsVisible()) return;
+
+        var prompt = dialog->PromptText == null ? "" : SeString.Parse(dialog->PromptText->NodeText.AsSpan()).TextValue;
+        var text = (prompt + " " + string.Join(" ", VisibleText((AtkUnitBase*)dialog))).Normalize(NormalizationForm.FormKC);
+        if (!text.Contains("优雷卡恢复药", StringComparison.Ordinal)
+            || !(text.Contains("购买", StringComparison.Ordinal) || text.Contains("购入", StringComparison.Ordinal))) return;
+        var item = proxy->Handler->TransactionItemId;
+        var quantity = proxy->Handler->TransactionItemCount;
+        if (item != Potion || quantity != Quantity)
+        {
+            text = Regex.Replace(text, @"(?<=\d)[,\s](?=\d)", "");
+            if (!Regex.IsMatch(text, @"(?<!\d)99(?!\d)") || !Regex.IsMatch(text, @"(?<!\d)29700(?!\d)")) return;
+        }
+
+        // SelectYesno callback 0 is the affirmative choice. Submit only once for the verified shop transaction.
+        confirmed = true;
+        Status = Callback((AtkUnitBase*)dialog, [0]) ? "已确认购买，等待库存和金币更新。" : "确认未返回成功，等待交易结果。";
     }
 
     private void ChangeStage(Stage next, DateTimeOffset now, string status)

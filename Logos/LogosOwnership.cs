@@ -4,6 +4,38 @@ internal sealed record LogosOwnership(IReadOnlyDictionary<uint,int?> Items,strin
     public static readonly LogosOwnership Empty=new(new Dictionary<uint,int?>(),"碎晶数量：背包；记忆库存：请打开游戏文理碎晶列表获取。");
 }
 
+internal sealed class LogosStockCache(SettingsStore store, IReadOnlySet<uint> knownItems)
+{
+    private ulong character;
+    private Dictionary<uint, int> counts = new();
+    private string Key => $"character.{character:X16}";
+
+    public void Activate(ulong contentId)
+    {
+        character = contentId;
+        counts = contentId == 0 ? new() : store.Get(Key, new Dictionary<uint, int>())
+            .Where(item => knownItems.Contains(item.Key) && item.Value >= 0)
+            .ToDictionary(item => item.Key, item => item.Value);
+    }
+
+    public int? Get(uint itemId) => counts.TryGetValue(itemId, out var count) ? count : null;
+
+    public void Update(IEnumerable<KeyValuePair<uint, int>> observed)
+    {
+        if (character == 0) return;
+        var changed = false;
+        foreach (var (id, count) in observed)
+        {
+            if (!knownItems.Contains(id) || count < 0 || Get(id) == count) continue;
+            counts[id] = count;
+            changed = true;
+        }
+        if (changed) store.Put(Key, counts);
+    }
+
+    public void Flush(bool force = false) => store.Flush(force);
+}
+
 internal static class LogosStockDecoder
 {
     // EurekaLogosShardList: distinct count then 4-value entries starting at 3; item at +2, quantity at +1.

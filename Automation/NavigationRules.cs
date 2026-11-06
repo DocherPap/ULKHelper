@@ -5,7 +5,7 @@ namespace ULKHelper.Automation;
 internal sealed record PlayerIdentity(string Name, uint HomeWorld);
 internal sealed record PlayerEntry(PlayerIdentity Identity, string WorldName, Vector3 Position, float Distance, bool IsLoaded = true);
 internal sealed record MapDestination(uint Territory, uint Map, Vector3 Position, string Label, ushort? FateId = null);
-internal sealed record FateEntry(ushort Id, string Name, Vector3 Position, int StartedAt = 0);
+internal sealed record FateEntry(ushort Id, string Name, Vector3 Position, int StartedAt = 0, int? Level = null, int? PlayerLevel = null);
 internal readonly record struct WorldContext(uint Territory, uint Map, uint Instance, ulong PlayerId);
 
 internal static class NavigationRules

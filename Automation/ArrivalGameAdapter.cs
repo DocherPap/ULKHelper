@@ -78,11 +78,12 @@ internal sealed class ArrivalGameAdapter(IObjectTable objects, IPartyList party,
         foreach (var id in attacks.Keys.Where(id => !loaded.Contains(id)).ToArray()) attacks.Remove(id);
         var hud = AgentHUD.Instance();
         var manager = FateManager.Instance();
-        var sync = ArrivalRules.NeedsSync(hud != null && (hud->ExpFlags & AgentHudExpFlag.InEureka) != 0
-            ? hud->ExpContentLevel : null, fate.MaxLevel, manager != null && manager->SyncedFateId == fate.FateId);
+        int? playerLevel = hud != null && (hud->ExpFlags & AgentHudExpFlag.InEureka) != 0 ? hud->ExpContentLevel : null;
+        var sync = ArrivalRules.NeedsSync(playerLevel, fate.MaxLevel, manager != null && manager->SyncedFateId == fate.FateId);
         return new(fate.FateId, fate.StartTimeEpoch, fate.Position, fate.Radius, sync, hp, participants, islandPlayers, true,
             boss?.GameObjectId ?? 0, boss?.IsDead != true, boss?.IsTargetable == true,
-            manager != null && manager->SyncedFateId == fate.FateId, boss?.Position);
+            manager != null && manager->SyncedFateId == fate.FateId, boss?.Position,
+            FateLevel: fate.GameData.Value.ClassJobLevel, PlayerLevel: playerLevel);
     }
 
     public EncounterObservation ReadEncounter(MapDestination destination, DateTimeOffset now, int? islandPlayers, ushort? boundId)

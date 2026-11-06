@@ -37,6 +37,7 @@ internal interface IAutomationHelpers
     void SelectMount(uint id) { }
     void Follow(bool enabled) { }
     void NavigateTo(MapDestination destination) { }
+    void EatFate(MapDestination destination) { }
     void GoToEntrance() { }
     DiscordSnapshot DiscordSnapshot => DiscordSnapshot.Empty;
     void EnableDiscord(bool enabled) { }

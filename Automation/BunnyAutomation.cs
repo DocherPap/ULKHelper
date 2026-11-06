@@ -18,6 +18,8 @@ internal sealed partial class AutomationHelpers
     private const uint HappyBunny = 7248, HappyBunnyVariant = 11309;
     private ulong bunnyPullTarget;
     private Vector3? bunnyCombatDestination, bunnyFightPosition;
+    private Queue<Vector3>? bunnyFightCandidates;
+    private Func<Vector3, bool>? bunnyFightGround;
     private readonly IslandTravelHelper bunnyTravel;
     private readonly HashSet<(ushort Id, int Start)> bunnyHandled = [];
     private IBunnyTracker? bunnyTracker;
@@ -249,6 +251,8 @@ internal sealed partial class AutomationHelpers
                 bunnyPullTarget = 0;
                 nextBunnyMove = default;
                 bunnyCombatDestination = bunnyFightPosition = null;
+                bunnyFightCandidates = null;
+                bunnyFightGround = null;
                 SetBunnyPhase(BunnyPhase.Fight, now, "已到达幸福兔 FATE，正在确认同步。");
                 return;
             }
@@ -411,7 +415,7 @@ internal sealed partial class AutomationHelpers
             combat.ReleasePullAttack();
         }
 
-        if (bunnyFightPosition == null)
+        if (bunnyFightCandidates == null)
         {
             var rabbits = npcs.Where(n => n.NameId is HappyBunny or HappyBunnyVariant
                 && ((Character*)n.Address)->FateId is var id && (id == 0 || id == bunnyFate.Id)
@@ -419,27 +423,39 @@ internal sealed partial class AutomationHelpers
             if (rabbits.Length == 0) { BunnyAutomationStatus = "已拉怪，等待加载本场幸福兔坐标。"; return; }
             var centre = rabbits.Aggregate(Vector3.Zero, (sum, rabbit) => sum + rabbit.Position) / rabbits.Length;
             var startAngle = Random.Shared.NextSingle() * MathF.Tau;
+            bunnyFightGround = point => NavigationRules.Distance(point, fateCentre) <= fateRadius - 2
+                && MathF.Abs(NavigationRules.Distance(point, centre) - 25) <= 2 && Math.Abs(point.Y - centre.Y) <= 8;
+            bunnyFightCandidates = new();
             for (var i = 0; i < 8; i++)
             {
                 var angle = startAngle + i * MathF.PI / 4;
                 var point = centre + new Vector3(MathF.Cos(angle), 0, MathF.Sin(angle)) * 25;
-                if (NavigationRules.Distance(point, fateCentre) > fateRadius - 2) continue;
-                if (mesh.Ground(point, false) is not { } ground || NavigationRules.Distance(ground, fateCentre) > fateRadius - 2
-                    || MathF.Abs(NavigationRules.Distance(ground, centre) - 25) > 2) continue;
-                bunnyFightPosition = ground;
-                break;
+                if (bunnyFightGround(point)) bunnyFightCandidates.Enqueue(point);
             }
-            if (bunnyFightPosition == null)
-            { StopBunnyAutomation("幸福兔中心外 25 米处没有可用的 FATE 内站位。"); return; }
         }
 
-        var position = bunnyFightPosition.Value;
-        if (NavigationRules.Distance(player, position) > 2)
+        if (bunnyFightPosition is not { } position || Vector3.Distance(player, position) > 2)
         {
+            bunnyFightPosition = null;
             if (!PauseBunnyCombat()) return;
-            BunnyAutomationStatus = "已建立仇恨，前往幸福兔中心外 25 米的击杀点。";
-            MoveBunnyCombat(world, player, position, now, "幸福兔击杀点", 1.5f);
-            return;
+            if (!bunnyFightCandidates.TryPeek(out var candidate))
+            { StopBunnyAutomation("幸福兔中心外 25 米处没有可到达的 FATE 内站位。"); return; }
+            if (!bunnyTravel.Active)
+            {
+                if (mesh.Busy || mesh.Route.Count > 0) { BunnyAutomationStatus = "等待其他导航结束。"; return; }
+                bunnyTravel.Start(new(world.Territory, world.Map, candidate, "幸福兔击杀点"), world, player, [], now,
+                    useCrystals: false, waitWithoutFate: false, arrivalRadius: 1.5f, unknownHeight: false,
+                    groundFilter: bunnyFightGround, verifiedEndpointTolerance: 1.5f);
+            }
+            bunnyTravel.Tick(world, player, true, false, false, false, [], now, inCombat: true);
+            BunnyAutomationStatus = $"幸福兔击杀点：{bunnyTravel.Status}";
+            if (bunnyTravel.Active) return;
+            if (bunnyTravel.TakeArrival() == null)
+            {
+                bunnyFightCandidates.Dequeue();
+                return;
+            }
+            bunnyFightPosition = player;
         }
 
         bunnyTravel.Stop();

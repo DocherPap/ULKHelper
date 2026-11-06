@@ -27,6 +27,9 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
     private Func<Vector3, bool>? groundFilter;
     private readonly NavigationEndpoint endpoint = new(mesh);
     private bool relaxedArrival;
+    private float? verifiedEndpointTolerance;
+    private Vector3 progressPosition;
+    private DateTimeOffset progressAt;
     private List<Vector3> issued = [];
     private CancellationTokenSource? cancellation;
     private Task<List<Vector3>>? path;
@@ -38,7 +41,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
 
     public MapDestination? TakeArrival() { var value = arrival; arrival = null; return value; }
 
-    public void Start(MapDestination goal, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool waitWithoutFate = true, float arrivalRadius = 3, bool unknownHeight = true, bool relaxedArrival = false, float nearbyGroundRadius = 25, Func<Vector3, bool>? groundFilter = null)
+    public void Start(MapDestination goal, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool waitWithoutFate = true, float arrivalRadius = 3, bool unknownHeight = true, bool relaxedArrival = false, float nearbyGroundRadius = 25, Func<Vector3, bool>? groundFilter = null, float? verifiedEndpointTolerance = null)
     {
         if (Active) { Status = "请先停止当前导航。"; return; }
         if (goal.Territory != world.Territory || goal.Map != world.Map) { Status = "目的地不在当前地图。"; return; }
@@ -50,6 +53,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
             destination = goal; unknownDestinationHeight = unknownHeight;
             this.groundFilter = groundFilter;
             this.relaxedArrival = relaxedArrival;
+            this.verifiedEndpointTolerance = verifiedEndpointTolerance;
             this.nearbyGroundRadius = Math.Max(nearbyGroundRadius, NavigationGround.SearchRadius);
             this.arrivalRadius = relaxedArrival ? 5 : Math.Clamp(arrivalRadius, .5f, 3);
             context = world;
@@ -58,10 +62,11 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
             issued = [];
             Active = true;
             var fate = NavigationRules.FindFate(goal.Position, fates);
-            target = fate == null ? goal.Position : NavigationRules.StandOff(player, fate.Position, 25);
+            var distance = ArrivalRules.WaitDistance(25, fate?.Level, fate?.PlayerLevel);
+            target = fate == null ? goal.Position : ArrivalRules.Position(player, fate.Position, distance);
             arrival = null;
             departAt = fate == null && waitWithoutFate ? now.AddSeconds(2) : now;
-            Status = fate != null ? $"目标：{fate.Name} 中心前方 25 米。"
+            Status = fate != null ? $"目标：{fate.Name} 中心前方 {distance:0} 米。"
                 : waitWithoutFate ? "附近无 FATE，等待 2 秒后出发。" : "准备直接寻路。";
             if (fate != null) RequestPath(player, false);
         }
@@ -84,18 +89,20 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
             if (path != null)
             {
                 if (!path.IsCompleted) return;
-                endpoint.TakeDestination(out var result);
+                endpoint.TakeDestination(out var result, verifiedEndpointTolerance ?? 3);
                 path = null;
                 cancellation?.Dispose(); cancellation = null;
                 if (mesh.Busy || mesh.Route.Count > 0) { Stop("寻路期间出现其他导航任务，已停止。"); return; }
                 if (result.Count == 0 || groundFilter?.Invoke(result[^1]) == false)
-                                {
+                {
                     if (nearbyGroundRadius > 0 && TryNearbyGround(player)) return;
                     Stop(nearbyGroundRadius > 0 ? "目标附近未找到完整可达路径。" : "未找到到达终点的完整路径。");
                     return;
                 }
                 issued = result.ToList();
                 mesh.Move(result.ToList());
+                progressPosition = player;
+                progressAt = now;
                 Status = nearbyGroundRadius > 0 && NavigationRules.Distance(requestedGround, target) > 0.5f
                     ? "正在前往目标附近的可达点。" : "正在前往目的地。";
                 route = mesh.Route;
@@ -108,10 +115,11 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
                 if (fate != null)
                 {
                     StopOwnRoute();
-                    if (NavigationRules.Distance(player, fate.Position) <= 30)
-                    { Finish("已在 FATE 中心 30 米内。"); return; }
-                    target = NavigationRules.StandOff(player, fate.Position, 30);
-                    Status = $"接近目的地，改为 {fate.Name} 中心前方 30 米。";
+                    var distance = ArrivalRules.WaitDistance(30, fate.Level, fate.PlayerLevel);
+                    if (NavigationRules.Distance(player, fate.Position) <= distance)
+                    { Finish($"已在 FATE 中心 {distance:0} 米内。"); return; }
+                    target = ArrivalRules.Position(player, fate.Position, distance);
+                    Status = $"接近目的地，改为 {fate.Name} 中心前方 {distance:0} 米。";
                     RequestPath(player, false);
                     return;
                 }
@@ -124,6 +132,16 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
                 if (relaxedArrival) Finish("移动已结束，继续触发。");
                 else Stop("移动已结束，尚未到达目的地。");
                 return;
+            }
+            if (verifiedEndpointTolerance != null && issued.Count > 0)
+            {
+                if (Vector3.DistanceSquared(player, progressPosition) >= .5f * .5f)
+                {
+                    progressPosition = player;
+                    progressAt = now;
+                }
+                else if (now - progressAt >= TimeSpan.FromSeconds(3))
+                { Stop("路线连续 3 秒未取得移动进展。"); return; }
             }
             if (issued.Count == 0 && path == null) RequestPath(player, unknownDestinationHeight && destination!.Position == target);
         }
@@ -225,11 +243,11 @@ internal sealed class NavigationEndpoint(INavigationMesh mesh)
         Point = candidates.Current;
         return pending = mesh.FindPath(origin, Point, token);
     }
-    public Vector3? TakeDestination(out List<Vector3> route)
+    public Vector3? TakeDestination(out List<Vector3> route, float tolerance = 3)
     {
         var result = pending!.GetAwaiter().GetResult();
         pending = null;
-        var valid = result.Count > 0 && result.All(NavigationRules.Finite) && Vector3.Distance(result[^1], Point) <= 3;
+        var valid = result.Count > 0 && result.All(NavigationRules.Finite) && Vector3.Distance(result[^1], Point) <= tolerance;
         route = valid ? result : [];
         return valid ? Point : null;
     }

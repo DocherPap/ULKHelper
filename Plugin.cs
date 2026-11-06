@@ -46,8 +46,10 @@ public sealed class Plugin : IDalamudPlugin
             weatherError = "读取天气数据失败，请检查本机游戏数据并重新加载插件。";
             log.Error(ex, "加载优雷卡天气表失败");
         }
-        automation = new(pluginInterface, framework, clientState, objects, fates, conditions, chat, gameGui, log, party, dataManager, interop, playerState, commandManager, targets, weatherZones.SingleOrDefault(zone => zone.TerritoryId == CommonJourney.Pagos), settings);
-        logosInventory=new(framework,objects,playerState,gameGui,logos.Catalog);
+        automation = new(pluginInterface, framework, clientState, objects, fates, conditions, chat, gameGui, log, party, dataManager, interop, playerState, commandManager, targets, scanner, weatherZones.SingleOrDefault(zone => zone.TerritoryId == CommonJourney.Pagos), settings);
+        var logosStock = new SettingsStore(Path.Combine(pluginInterface.GetPluginConfigDirectory(), "logos-stock.json"),
+            ex => log.Warning(ex, "保存或读取文理库存缓存失败"));
+        logosInventory = new(framework, objects, playerState, gameGui, logos.Catalog, logosStock);
         fateTracker = new(dataManager, framework, clientState, objects, fates, gameGui, log, scanner, playerState, chat, party, conditions, settings);
         automation.ElementalMaps = fateTracker;
         bunnies=new(framework,clientState,objects,playerState,chat,fateTracker,log,settings);

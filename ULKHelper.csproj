@@ -7,9 +7,9 @@
     <PlatformTarget>x64</PlatformTarget>
     <AssemblyName>ULKHelper</AssemblyName>
     <RootNamespace>ULKHelper</RootNamespace>
-    <Version>0.4.0</Version>
-    <InformationalVersion>$(Version)+production.1</InformationalVersion>
-    <AssemblyVersion>0.4.0.0</AssemblyVersion>
+    <Version>0.4.1</Version>
+    <InformationalVersion>$(Version)+production.2</InformationalVersion>
+    <AssemblyVersion>0.4.1.0</AssemblyVersion>
     <Deterministic>true</Deterministic>
     <PathMap>$(MSBuildProjectDirectory)=/_/ULKHelper</PathMap>
     <DalamudLibPath Condition="'$(DalamudLibPath)' == ''">$(DALAMUD_HOME)</DalamudLibPath>

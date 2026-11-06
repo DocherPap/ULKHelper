@@ -1,61 +1,56 @@
+using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Event;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
+using FFXIVClientStructs.FFXIV.Client.UI;
+using FFXIVClientStructs.FFXIV.Component.Shell;
 
 namespace ULKHelper.Automation;
-// Uses documented game commands and read-only EurekaState. No guessed UI callbacks.
-internal sealed class TriggerMagia(IObjectTable objects)
+
+internal sealed class TriggerMagia(ISigScanner scanner, IDataManager data, ITargetManager targets)
 {
-    private byte[]? before, written;
-    private ulong player;
-    private DateTimeOffset next;
-    private int restoreAttempts;
-    private (bool Attack,uint Name)? selected;
-    public string? Error { get; private set; }
-    private static unsafe byte[]? Read()
+    // CN 2026.10.06: ShellCommandModule dispatches a parsed CommandContext here.
+    // The game looks up the registered handler and initializes it before calling ExecuteCommand.
+    private const string DispatchSignature =
+        "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B 59 08 49 8B F0 44 0F BF 0A 48 8B FA 48 8B CB 48 8B 43 08 80 78 19 00";
+    private const ushort AttackId = 10; // TextCommand row, checked against the locally loaded sheet.
+    private bool resolved;
+    private nint dispatch;
+
+    public unsafe string? TryAttack(IReadOnlyList<ulong> eligible)
     {
-        var framework=EventFramework.Instance();if(framework==null)return null;
-        var director=EventFramework.GetPublicContentDirectorByType(PublicContentDirectorType.Eureka);
-        if(director==null)return null;
-        var e=(PublicContentEureka*)director;
-        return [e->State.Fire,e->State.Ice,e->State.Wind,e->State.Earth,e->State.Lightning,e->State.Water];
+        if (targets.Target is not IBattleNpc { IsDead: false, IsTargetable: true } enemy || !eligible.Contains(enemy.GameObjectId))
+            return "魔素板未调整：未选中可接战的敌人。";
+        var director = EventFramework.Instance() == null ? null
+            : (PublicContentEureka*)EventFramework.GetPublicContentDirectorByType(PublicContentDirectorType.Eureka);
+        if (director == null) return "魔素板未调整：未读取到优雷卡副本。";
+        var state = director->State;
+        if (state.Fire < 5 && state.Ice < 5 && state.Wind < 5 && state.Earth < 5 && state.Lightning < 5 && state.Water < 5)
+            return "魔素板未调整：没有集中 5 颗魔晶石的属性。";
+
+        try
+        {
+            if (!resolved)
+            {
+                resolved = true;
+                if (data.GetExcelSheet<Lumina.Excel.Sheets.TextCommand>() is { } sheet
+                    && sheet.TryGetRow(AttackId, out var row) && row.Command.ExtractText() == "/magiaattack")
+                    scanner.TryScanText(DispatchSignature, out dispatch);
+            }
+            var ui = UIModule.Instance();
+            var shell = ui == null ? null : ui->GetRaptureShellModule();
+            if (dispatch == 0 || shell == null || shell->IsTextCommandUnavailable)
+                return "魔素板未调整：原生攻势接口当前不可用。";
+
+            // No explicit arguments: the native action resolves the currently selected enemy.
+            ShellCommandInterface.CommandContext context = new() { TextCommandId = AttackId };
+            var invoke = (delegate* unmanaged<ShellCommands*, ShellCommandInterface.CommandContext*, UIModule*, int>)dispatch;
+            var result = invoke(&shell->ShellCommands, &context, ui);
+            return result == 0 ? null : $"魔素板攻势请求返回 {result}。";
+        }
+        catch (Exception ex)
+        {
+            return $"魔素板未调整：{ex.GetBaseException().Message}";
+        }
     }
-    public bool Begin()
-    {
-        Error=null;restoreAttempts=0;selected=null;before=Read();written=before?.ToArray();player=objects.LocalPlayer?.GameObjectId??0;
-        if(before==null){Error="无法读取当前岛魔素板。";before=written=null;return false;}
-        return true;
-    }
-    public bool Apply(bool attack,uint name)
-    {
-        if(before==null)return false;
-        if(selected==(attack,name))return true;
-        var current=Read();if(current==null)return false;
-        if(DateTimeOffset.UtcNow<next)return true;
-        // Target must already be selected; game resolves its element for this command.
-        if(!Send(attack?"/magiaattack":"/magiadefense")){Error="魔素板指令不可用。";return false;}
-        next=DateTimeOffset.UtcNow.AddSeconds(3);
-        written=Read()??current;selected=(attack,name);
-        return true;
-    }
-    public void Restore()
-    {
-        var current=Read();
-        if(before==null)return;
-        if(objects.LocalPlayer is not {IsDead:false}){Forget();return;}
-        if(player!=objects.LocalPlayer?.GameObjectId||current==null){before=written=null;return;}
-        if(current.SequenceEqual(before)){before=written=null;return;}
-        if(DateTimeOffset.UtcNow<next)return;
-        if(restoreAttempts++>=6){before=written=null;return;}
-        Send("/magiaright");next=DateTimeOffset.UtcNow.AddSeconds(3);
-    }
-    private static unsafe bool Send(string command)
-    {
-        var module=FFXIVClientStructs.FFXIV.Client.UI.UIModule.Instance();if(module==null)return false;
-        var text=FFXIVClientStructs.FFXIV.Client.System.String.Utf8String.FromString(command);
-        if(text==null)return false;
-        try{module->ProcessChatBoxEntry(text,0,false);return true;}finally{text->Dtor(true);}
-    }
-    public bool Pending=>before!=null;
-    public void Forget(){before=written=null;restoreAttempts=0;selected=null;}
 }

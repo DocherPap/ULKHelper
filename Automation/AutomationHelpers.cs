@@ -62,7 +62,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
 
     public AutomationHelpers(IDalamudPluginInterface plugin, IFramework framework, IClientState client,
         IObjectTable objects, IFateTable fates, ICondition conditions, IChatGui chat, IGameGui gui, IPluginLog log, IPartyList party,
-        IDataManager data, IGameInteropProvider interop, IPlayerState playerState, ICommandManager commandManager, ITargetManager targets,
+        IDataManager data, IGameInteropProvider interop, IPlayerState playerState, ICommandManager commandManager, ITargetManager targets, ISigScanner scanner,
         WeatherZone? pagosWeather, SettingsStore? settings = null)
     {
         this.framework = framework; this.client = client; this.objects = objects; this.fates = fates;
@@ -83,7 +83,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         follow = new(navigation, mesh, mounts, combat);
         kills = new(objects, fates, data);
         trigger = new(mesh, mounts, combat, new IslandCrystalGameAdapter(objects, gui, data),
-            new TriggerMobility(objects, data, mesh).TryUse);
+            new TriggerMobility(objects, data, mesh).TryUse, new TriggerMagia(scanner, data, targets).TryAttack);
         triggerReader = new(objects, data);
         discordBridgeDirectory = plugin.AssemblyLocation.DirectoryName ?? "";
         discordCredentialsPath = Path.Combine(plugin.GetPluginConfigDirectory(), "discord-credentials.dat");
@@ -236,9 +236,8 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     public void NavigateTo(MapDestination destination) => commands.Enqueue(() => StartPointNavigation(destination));
     public void GoToEntrance() => commands.Enqueue(() =>
     {
-        var crystal = IslandCrystalRoutes.Entrance(client.TerritoryType);
-        if (crystal != null && objects.LocalPlayer is { } player)
-            StartPointNavigation(new(client.TerritoryType, client.MapId, ArrivalRules.Position(player.Position, crystal.Position, 7), "当前岛入口营地"), false, waitWithoutFate: false);
+        if (objects.LocalPlayer is { } player && IslandCrystalRoutes.CampDestination(Context(), player.Position) is { } camp)
+            StartPointNavigation(camp, false, waitWithoutFate: false);
         else { usingFollow = false; navigation.Stop("请先进入优雷卡岛内。"); }
     });
     private void StartPointNavigation(MapDestination destination, bool useNm = true, bool useCrystals = true,
@@ -298,12 +297,17 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         && (!conditions[ConditionFlag.OccupiedInQuestEvent] || ownCrystalMenu) && !conditions[ConditionFlag.OccupiedSummoningBell]
         && (!conditions[ConditionFlag.Occupied] || ownCrystalMenu);
 
-    private IReadOnlyList<FateEntry> ReadFates(bool includePreparing = false, bool includeBunnies = false) => fates
+    private IReadOnlyList<FateEntry> ReadFates(bool includePreparing = false, bool includeBunnies = false)
+    {
+        var playerLevel = TriggerGameReader.Level();
+        return fates
         .Where(f => f != null && (f.State == FateState.Running || includePreparing && f.State == FateState.Preparing)
             && f.TerritoryType.RowId == client.TerritoryType
             && (NavigationRules.IsEurekaNm(f.GameData.Value.EurekaFate, f.GameData.Value.Rule)
                 || includeBunnies && f.GameData.Value.EurekaFate == 1 && f.GameData.Value.Rule == 4))
-        .Select(f => new FateEntry(f.FateId, f.Name.TextValue, f.Position, f.StartTimeEpoch)).ToArray();
+        .Select(f => new FateEntry(f.FateId, f.Name.TextValue, f.Position, f.StartTimeEpoch,
+            f.GameData.Value.ClassJobLevel, playerLevel)).ToArray();
+    }
 
     private IReadOnlyList<FateEntry> ReadFateLocations(IReadOnlyList<FateEntry> live, bool includeBunnies = false)
     {
@@ -375,6 +379,16 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                 nextTrigger = now.AddMilliseconds(250);
                 var frame = ReadTriggerFrame(world);
                 trigger.Tick(frame, now);
+                if (frame.Safe && !frame.InCombat && !combat.CleanupPending && trigger.TakeAppearedFate(world) is { } appearedFate)
+                {
+                    var targetFate = ReadFates(includePreparing: true).FirstOrDefault(f => f.Id == appearedFate);
+                    if (targetFate == null) trigger.Stop("触发目标已经结束，已停止吃 FATE 行程。");
+                    else if (follow.Active || navigation.Active || RemoteActive || BunnyAutomationActive || SurveyActive || commonJourney.Active)
+                        trigger.Stop("已有其他任务，已取消自动吃 FATE。");
+                    else if (StartEatingFate(world, targetFate, now))
+                        trigger.Stop($"{targetFate.Name} 已刷新，已转入吃 FATE 流程。");
+                    else trigger.Stop(follow.Status);
+                }
                 triggerSnapshot = new(trigger.Active, trigger.Status, frame.Level, triggerReader.Areas,
                     new Dictionary<ushort, TriggerRouteSet>(triggerRoutes), new Dictionary<ushort, Vector3>(triggerStandbyPoints));
             }

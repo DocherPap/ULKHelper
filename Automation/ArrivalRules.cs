@@ -5,12 +5,21 @@ namespace ULKHelper.Automation;
 internal sealed record ArrivalParticipant(ulong Id, Vector3 Position, bool Alive, bool Party, bool Attacking);
 internal sealed record ArrivalFate(ushort Id, int StartedAt, Vector3 Centre, float Radius, bool? NeedsSync, float? HpRatio,
     IReadOnlyList<ArrivalParticipant> Participants, int? IslandPlayerCount = null, bool RequireIslandRoster = false,
-    ulong BossId = 0, bool BossAlive = true, bool BossTargetable = false, bool Synced = false, Vector3? BossPosition = null);
+    ulong BossId = 0, bool BossAlive = true, bool BossTargetable = false, bool Synced = false, Vector3? BossPosition = null,
+    int? FateLevel = null, int? PlayerLevel = null)
+{
+    public float WaitDistance => ArrivalRules.WaitDistance(30, FateLevel, PlayerLevel);
+}
 internal sealed record ArrivalFrame(WorldContext World, Vector3 Player, bool Safe, bool Mounted, bool Casting, bool InCombat, ArrivalFate? Fate);
 internal sealed record PullDecision(bool Started, int Players, int Attackers, int PartyAttackers);
 
 internal static class ArrivalRules
 {
+    public static float WaitDistance(float baseline, int? fateLevel, int? playerLevel)
+        => fateLevel is >= 1 and <= 60 && playerLevel is >= 1 and <= 60
+            ? Math.Max(5, baseline + (fateLevel.Value - playerLevel.Value) * 3)
+            : baseline;
+
     public static int? BossIndex(IReadOnlyList<(bool Alive, bool Targetable)> candidates)
     {
         var selectable = Enumerable.Range(0, candidates.Count).Where(i => candidates[i] is (true, true)).ToArray();

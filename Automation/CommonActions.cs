@@ -94,12 +94,14 @@ internal sealed partial class AutomationHelpers
         arrivalGame.Reset();
     }
 
-    public void RunCommon(CommonAction action, MapDestination? elemental = null) => commands.Enqueue(() =>
+    public void EatFate(MapDestination destination) => RunCommon(CommonAction.EatFate, destination);
+
+    public void RunCommon(CommonAction action, MapDestination? target = null) => commands.Enqueue(() =>
     {
         commonUsesNavigation = commonUsesFollow = false;
         try
         {
-            ExecuteCommon(action, elemental, DateTimeOffset.UtcNow);
+            ExecuteCommon(action, target, DateTimeOffset.UtcNow);
         }
         catch (Exception ex)
         {
@@ -108,7 +110,7 @@ internal sealed partial class AutomationHelpers
         }
     });
 
-    private void ExecuteCommon(CommonAction action, MapDestination? elemental, DateTimeOffset now)
+    private void ExecuteCommon(CommonAction action, MapDestination? target, DateTimeOffset now)
     {
         if (action == CommonAction.Emergency)
         {
@@ -136,8 +138,8 @@ internal sealed partial class AutomationHelpers
             else if (now >= nextShout)
             {
                 var sent = action == CommonAction.Rescue ? SendGameCommand("/shout <pos>999")
-                    : elemental != null && elemental.Territory == world.Territory && elemental.Map == world.Map
-                    && SendElementalFlag(elemental);
+                    : target != null && target.Territory == world.Territory && target.Map == world.Map
+                    && SendElementalFlag(target);
                 if (sent) nextShout = now.AddSeconds(3);
                 commonStatus = sent ? "已提交喊话。" : "当前地图没有已知元灵或喊话不可用。";
             }
@@ -162,11 +164,10 @@ internal sealed partial class AutomationHelpers
                 StartBunnyTreasure(world, now);
                 break;
             case CommonAction.Camp:
-                var crystal = IslandCrystalRoutes.Entrance(world.Territory);
-                if (crystal == null) { commonStatus = "没有已知水晶。"; return; }
+                if (IslandCrystalRoutes.CampDestination(world, player.Position) is not { } camp)
+                { commonStatus = "没有已知水晶。"; return; }
                 commonUsesNavigation = true;
-                StartPointNavigation(new(world.Territory, world.Map, ArrivalRules.Position(player.Position, crystal.Position, 7),
-                    "入口营地"), false, waitWithoutFate: false);
+                StartPointNavigation(camp, false, waitWithoutFate: false);
                 break;
             case CommonAction.NearestCrystal:
                 if (!EnsureTravelMount()) { commonStatus = "请先选择已解锁且可移动的坐骑。"; return; }
@@ -181,13 +182,17 @@ internal sealed partial class AutomationHelpers
                 StartPointNavigation(goal, action == CommonAction.Fate, requireFate: action == CommonAction.Fate);
                 break;
             case CommonAction.EatFate:
-                var eatGoal = CurrentFlag(world);
-                var eatFate = eatGoal == null ? null : NavigationRules.FindFate(eatGoal.Position, ReadFates());
-                if (eatGoal == null || eatFate == null) { commonStatus = "请在本岛正在进行的 FATE 上设置旗标。"; return; }
-                usingFollow = commonUsesFollow = true;
-                arrivalGame.Reset();
-                if (follow.Start(world, now, repeatFollowing: false))
-                    follow.Receive(eatGoal with { Position = eatFate.Position, Label = eatFate.Name }, eatFate);
+                var eatGoal = target ?? CurrentFlag(world);
+                var activeFates = ReadFates(includePreparing: target != null);
+                var eatFate = eatGoal == null || eatGoal.Territory != world.Territory || eatGoal.Map != world.Map ? null
+                    : eatGoal.FateId is { } id ? activeFates.FirstOrDefault(f => f.Id == id)
+                    : NavigationRules.FindFate(eatGoal.Position, activeFates);
+                if (eatFate == null)
+                {
+                    commonStatus = target == null ? "请在本岛正在进行的 FATE 上设置旗标。" : "选中的 FATE 当前不可参加。";
+                    return;
+                }
+                StartEatingFate(world, eatFate, now);
                 break;
             case CommonAction.WaitForPull:
                 var fate = ReadFates().Where(f => NavigationRules.Distance(player.Position, f.Position) <= 100)
@@ -203,6 +208,14 @@ internal sealed partial class AutomationHelpers
                 follow.StartAtBoss(world, destination, encounter, boss.Position, player.Position, now);
                 break;
         }
+    }
+
+    private bool StartEatingFate(WorldContext world, FateEntry fate, DateTimeOffset now)
+    {
+        usingFollow = commonUsesFollow = true;
+        commonUsesNavigation = false;
+        arrivalGame.Reset();
+        return follow.StartEating(world, fate, now);
     }
 
     private static bool IsEureka(uint territory) => IslandCrystalRoutes.Entrance(territory) != null;

@@ -32,7 +32,7 @@ RSR本机7.5.7.15及官方源码交叉核对：Service.Config.HostileType（AllT
 
 2026-11-03用户要求两栏。碎晶页左侧碎晶/三范围价格，右侧所选鉴定结果；技能页左侧技能/收藏，右侧所选技能全部组合，按220像素最小列宽响应为1–3列。左右栏可拖动并独立滚动。
 
-LogosInventoryReader在框架线程每秒只读四背包，碎晶名称后显示当前背包数量，不包含雇员等离线来源。记忆数量仅在EurekaMagiciteItemShardList可见时读取本机NumberArrayType.EurekaLogosShardList，读取布局参考已公开现场记录：https://github.com/Pop115/XivEureka/blob/main/XivEureka/Logos/ShardReader.cs 。复制到托管快照后显示，关闭窗口标记“本次角色缓存”；登出/换角色清除，不主动打开窗口或发送物品请求。解码验证容量、ID白名单、重复ID、数量范围，失败不覆盖缓存。合成器可见时读取已知15–20槽加入放置中未消耗的记忆，避免同一次新鲜快照漏计。该布局尚需国服实际界面验证。
+LogosInventoryReader在框架线程每秒只读四背包，碎晶名称后显示当前背包数量，不包含雇员等离线来源。记忆数量仅在EurekaMagiciteItemShardList可见时读取本机NumberArrayType.EurekaLogosShardList，读取布局参考已公开现场记录：https://github.com/Pop115/XivEureka/blob/main/XivEureka/Logos/ShardReader.cs 。复制到托管快照后显示，关闭窗口后显示本地缓存。已读取的数量保存在插件配置目录的 logos-stock.json，按角色 ContentId 隔离，重新登录同一角色时恢复。来源未加载或校验失败时保留缓存，成功读取到零时覆盖旧值。插件不主动打开窗口或发送物品请求。解码验证容量、ID白名单、重复ID、数量范围，失败不覆盖缓存。合成器可见时读取已知15–20槽加入放置中未消耗的记忆，避免同一次新鲜快照漏计。该布局尚需国服实际界面验证。
 
 拥有对应基础记忆的技能（例如斗士的记忆）显示记忆数；已合成的存储技能数量尚无本机已确认接口，不能把笔记中的解锁状态当作拥有数量。未读取为“未获取”，已加载无库存才显示0。第六页玩家报告不上传任何数量数据。
 

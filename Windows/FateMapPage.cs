@@ -38,6 +38,9 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             && triggerSelection.Ids.Count + 1 <= AutoTriggerRules.Capacity(level.Value,
                 island.Fates.Where(f => triggerSelection.Ids.Contains(f.Seed.Id)).Select(f => (int)f.Level).Append(candidate.Level));
     }
+
+    private static Vector3 TriggerCentre(FateDefinition fate, IslandMap island) => MapProjection.MapToWorld(
+        AutoTriggerRules.TriggerMapPoint(fate.Seed.Id) ?? new Vector2(fate.Seed.X, fate.Seed.Y), island);
     public void Load(SettingsStore settings, string key)
     {
         islandIndex = Math.Clamp(settings.Get(key + ".island", 0), 0, Math.Max(0, provider.Islands.Count - 1));
@@ -103,7 +106,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
                     && snapshot.Records.GetValueOrDefault(f.Seed.Id)?.Active != true)
                 .Select(f =>
                 {
-                    var distance = NavigationRules.Distance(position, MapProjection.MapToWorld(new(f.Seed.X, f.Seed.Y), island));
+                    var distance = NavigationRules.Distance(position, TriggerCentre(f, island));
                     return (Fate: f, Distance: distance);
                 })
                 .Where(entry => entry.Distance <= 150)
@@ -128,7 +131,7 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
                 navigation?.StartTrigger(ids.Select(id =>
                 {
                     var fate = island.Fates.First(f => f.Seed.Id == id);
-                    var centre = MapProjection.MapToWorld(new(fate.Seed.X, fate.Seed.Y), island);
+                    var centre = TriggerCentre(fate, island);
                     return new TriggerPlan(id, fate.Level, new(island.Territory, island.MapId, centre, fate.Seed.ShortName),
                         Mode(id), auto.SelectedRoute(id), EffectivePull(fate, auto.Level), GrindLight: grindLight);
                 }).ToArray(), pullBatch, abandonStep, useTriggerRotation, useTriggerBmr);
@@ -696,9 +699,14 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             if (ImGui.Button("在游戏地图标记")) provider.Mark(definition);
             if (navigation != null)
             {
+                var destination = new MapDestination(island.Territory, island.MapId,
+                    MapProjection.MapToWorld(new(definition.Seed.X, definition.Seed.Y), island), definition.Seed.ShortName, definition.Seed.Id);
                 ImGui.SameLine(); ImGui.BeginDisabled(snapshot.CurrentTerritory != island.Territory || navigation.Snapshot.Navigating);
-                if (ImGui.Button("自动前往")) navigation.NavigateTo(new(island.Territory, island.MapId,
-                    MapProjection.MapToWorld(new(definition.Seed.X, definition.Seed.Y), island), definition.Seed.ShortName, definition.Seed.Id));
+                if (ImGui.Button("自动前往")) navigation.NavigateTo(destination);
+                ImGui.SameLine();
+                ImGui.BeginDisabled(definition.Seed.Bunny || snapshot.Records.GetValueOrDefault(selected)?.Active != true);
+                if (ImGui.Button("吃 FATE")) navigation.EatFate(destination);
+                ImGui.EndDisabled();
                 ImGui.EndDisabled();
             }
             var condition = definition.Seed.WeatherId == 0 ? "不限天气" : weather.FirstOrDefault(w => w.TerritoryId == island.Territory)?.Chances

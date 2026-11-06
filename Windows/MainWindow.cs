@@ -45,7 +45,8 @@ internal sealed class MainWindow : Window
         if(schema<5)selectedTab=selectedTab==5?3:selectedTab==6?5:selectedTab;
         selectedTab=Math.Clamp(selectedTab,0,TabCount - 1);
         if (settings != null) { itemStatistics.Load(settings); weather.Load(settings); fateMap.Load(settings, "map"); automation.Load(settings); }
-        Size = settings?.Get("window.size", new Vector2(1280, 780)) ?? new Vector2(1280, 780);
+        var defaultSize = new Vector2(1200, 720);
+        Size = settings?.Get("window.size", defaultSize) ?? defaultSize;
         SizeCondition = ImGuiCond.Once;
         if (settings != null) { Position = settings.Get("window.position", new Vector2(80, 80)); PositionCondition = ImGuiCond.Once; }
         SizeConstraints = new WindowSizeConstraints

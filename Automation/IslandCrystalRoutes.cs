@@ -16,7 +16,12 @@ internal sealed record IslandCrystal(uint Territory, uint PlaceNameId, Vector3 P
 internal sealed record CrystalRoute(IslandCrystal Source, IslandCrystal Target, float Cost);
 internal static class IslandCrystalRoutes
 {
+    public const float MinimumWalkingSavings = 30;
     public static IslandCrystal? Entrance(uint territory) => All.FirstOrDefault(p => p.Territory == territory);
+    public static MapDestination? CampDestination(WorldContext world, Vector3 player) =>
+        Entrance(world.Territory) is { } crystal
+            ? new(world.Territory, world.Map, ArrivalRules.Position(player, crystal.Position, 7), "入口营地")
+            : null;
     public static IslandCrystal? Nearest(uint territory, Vector3 player) => NavigationRules.Finite(player)
         ? All.Where(p => p.Territory == territory).OrderBy(p => NavigationRules.Distance(player, p.Position)).ThenBy(p => p.PlaceNameId).FirstOrDefault() : null;
     // X/Z reference positions: Lifestream CustomAethernet.cs, b36320170faafc8315f7585edb45cfbcd34e7046.
@@ -26,16 +31,16 @@ internal static class IslandCrystalRoutes
         new(763,2463,new(-893.7f,0,159)), new(763,2474,new(91.1f,0,303.2f)), new(763,2472,new(-707.1f,0,-318.9f)), new(763,2473,new(346,0,-289.7f)),
         new(795,2531,new(-253.5f,0,146.8f)), new(795,2540,new(125.7f,0,795.3f)), new(795,2541,new(127.9f,0,-196.1f)), new(795,2542,new(-443.4f,0,-622.7f)),
         new(827,2876,new(-61.7f,0,-875.6f)), new(827,2891,new(-587.3f,0,-148.4f)), new(827,2892,new(781.1f,0,-417.5f)) ];
-    // Conservative heuristic in equivalent walking metres, not an exact travel-time claim.
+    // Compare only the distance travelled on foot when route measurements are unavailable.
     public static CrystalRoute? Choose(uint territory, Vector3 player, Vector3 goal, IslandCrystal? source = null,
-        IReadOnlySet<uint>? available = null, bool preferCrystals = false)
+        IReadOnlySet<uint>? available = null)
     {
         if (!NavigationRules.Finite(player) || !NavigationRules.Finite(goal)) return null;
         var direct = NavigationRules.Distance(player, goal);
         return (from a in All where a.Territory == territory && (source == null || a == source)
             from b in All where b.Territory == territory && a != b && (available == null || available.Contains(b.PlaceNameId))
-            let cost = NavigationRules.Distance(player, a.Position) + (preferCrystals ? 60 : 120) + NavigationRules.Distance(b.Position, goal)
-            where cost + (preferCrystals ? 25 : 150) < direct
+            let cost = NavigationRules.Distance(player, a.Position) + NavigationRules.Distance(b.Position, goal)
+            where direct - cost >= MinimumWalkingSavings
             orderby cost, a.PlaceNameId, b.PlaceNameId
             select new CrystalRoute(a, b, cost)).FirstOrDefault();
     }
@@ -109,8 +114,8 @@ internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, V
         var direct = lengths[new(player, destination)];
         Routes = (from a in points where sources.Contains(a.Crystal)
             from b in points where a.Crystal != b.Crystal
-            let cost = lengths[new(player, a.Ground)] + 60 + lengths[new(b.Ground, destination)]
-            where float.IsFinite(cost) && cost + 25 < direct
+            let cost = lengths[new(player, a.Ground)] + lengths[new(b.Ground, destination)]
+            where float.IsFinite(cost) && direct - cost >= IslandCrystalRoutes.MinimumWalkingSavings
             orderby cost, a.Crystal.PlaceNameId, b.Crystal.PlaceNameId
             select new CrystalRoute(a.Crystal, b.Crystal, cost)).ToArray();
         return true;

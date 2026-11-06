@@ -16,7 +16,7 @@
 
 源水晶改走面向玩家的2米接近点，并使用1米到达容差，避免普通3米到达容差使交互过早。已在源点3米内则保持当前位置交互。菜单超时、未加载/超距、目标不在可用菜单、源点不可达等回退原因写入日志；路线仍仅在有明显预计收益时使用，短途不强制传送。
 
-地图选中当前岛FATE后“自动前往”只移动，采用既有25/30米NM接近规则，不启用循环/AI；“自动前往入口营地”和 `/ulk entrance` 使用四岛入场水晶PlaceName 2415/2463/2531/2876附近7米点，非兵武塔入口，不离开副本。可选坐骑、传送规划、5分钟时限及停止/切区/死亡约束继续生效；没有选定坐骑时允许步行。`/ulk stop` 或地图停止按钮可取消，只停止本插件路线。自动化页暂时置灰时以上入口仍可使用，不需要RSR/BossMod。
+地图选中当前岛FATE后“自动前往”只移动，按事件和头目状态选择接近路线，待机距离按元素等级差调整，不启用循环/AI；“自动前往入口营地”和 `/ulk entrance` 使用四岛入场水晶PlaceName 2415/2463/2531/2876附近7米点，非兵武塔入口，不离开副本。可选坐骑、传送规划、5分钟时限及停止/切区/死亡约束继续生效；没有选定坐骑时允许步行。`/ulk stop` 或地图停止按钮可取消，只停止本插件路线。自动化页暂时置灰时以上入口仍可使用，不需要RSR/BossMod。
 
 最新模拟验证：源水晶接近容差、四岛入口映射及开怪后不追加站位寻路合计150项自动化检查通过；真实传送/对象类型/菜单交互尚未游戏内验证。
 
@@ -24,7 +24,7 @@
 
 `IslandCrystalRoutes` 保存四岛14个水晶（3/4/4/3）的真实PlaceName ID及参考世界X/Z。数据参考 [Lifestream CustomAethernet](https://github.com/NightmareXIV/Lifestream/blob/b36320170faafc8315f7585edb45cfbcd34e7046/Lifestream/Systems/Custom/CustomAethernet.cs)，14个ID均已读取本机2026.10.06游戏表核对中文名称。高度不猜测，由现有vnavmesh地面接口解析；实际对象在交互前必须已加载并在玩家5米内、参考点10米内。
 
-`Choose` 比较直走水平距离与“到源水晶+120米等效传送开销+目标水晶到目的地”的估算成本，额外节省超过150米才选择。此为保守启发式，不是精确时间或完整地形最短路；尤其恒冰悬崖/楼层需游戏内验证。实际移动仍需完整路径与正确高度校验，源水晶不可达时，在没有其他导航占用的情况下回退原目标直走。
+0.4.1 比较直走距离与两段步行距离之和，预计少走至少 30 米才选择岛内水晶。有完整 vnavmesh 路径时优先使用实测路长，其余使用平面估算。实际移动仍需完整路径与正确高度校验，源水晶不可达时，在没有其他导航占用的情况下回退原目标直走。
 
 `IslandTravelHelper` 管理源水晶→目的地菜单→确认落地→最终导航。源水晶一段不搜索附近NM，只有最后一段才使用既有25/30米导航规则，并且只有真正完成最后一段才发出到达信号，衔接开怪/15或25米站位。总时限5分钟，菜单15秒，传送落地45秒。
 
@@ -57,11 +57,11 @@
 
 协议依据：[InfoProxyContentMember](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/UI/Info/InfoProxyContentMember.cs)、[InfoProxyPageInterface](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/UI/Info/InfoProxyPageInterface.cs)、[InfoProxyInterface](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/UI/Info/InfoProxyInterface.cs)、[AddonSelectString](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/UI/AddonSelectString.cs)。实际调用以本机国服API15依赖为准。
 
-测试分支 FATE 行程：优先水晶策略使用 60 米等效传送成本和 25 米额外收益门槛，选目标时仍核对实际可用菜单。距离源水晶参考点 3 米内可直接进入交互阶段。普通坐标导航保留原估算，原版和 Reborn 使用相同水晶策略。
+FATE 行程选择目标水晶时核对实际可用菜单。距离源水晶参考点 3 米内可直接进入交互阶段。
 
 测试分支：自动行程到达源水晶后如在战斗，暂停水晶菜单并用 RSR Auto 等待脱战。已有循环交由原使用方管理；插件仅关闭本次启动且所有权仍有效的循环。脱战后重新开启水晶菜单。单次等待上限 60 秒，停止或失败释放本次循环，元灵巡查仍按原规则遇敌停止。
 
-测试分支 FATE 路线在发出移动前，用 vnavmesh 逐条规划直达、到最近两个可测源水晶，以及各候选落地后到目标的路径，以三维路径长度比较。传送仍计 60 米等效成本与 25 米收益门槛，目标需在实际菜单可用。规划最多 10 秒，无法测量时用原平面估算。接近源水晶优先使用唯一已加载水晶的实际坐标，保留原路线回退。
+FATE 路线在发出移动前可用 vnavmesh 逐条规划直达、到最近两个可测源水晶，以及各候选落地后到目标的路径，以三维路径长度比较。目标需在实际菜单可用。规划最多 10 秒，无法测量时用原平面估算。接近源水晶优先使用唯一已加载水晶的实际坐标，保留原路线回退。
 
 testing.13：活动 FATE 导航及开怪站位使用客户端 FATE / 已加载头目的实际世界 Y。已知高度同时用于 vnavmesh 水晶路长比较，避免把恒冰荷鲁斯、双牛、娄希的洞内目标投到上层。没有活动场次时的地图旗标缺少高度，无法据此确认洞层。
 

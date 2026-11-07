@@ -1,5 +1,7 @@
 # Dalamud 插件开发流程速记
 
+游戏正在从主工作区 bin/Debug 加载测试 DLL 时，main Debug 验证必须隔离输出：dotnet build -c Debug -p:OutputPath=artifacts/main-debug-validation/。不要用默认输出覆盖正在运行的测试 DLL，以免热重载中断任务和调试记录。
+
 查阅日期：2026-11-03。以下是开发要点，本项目当前运行基准为本机国服 API 15。
 
 ## 从骨架到运行

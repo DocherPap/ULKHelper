@@ -41,7 +41,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
 
     public MapDestination? TakeArrival() { var value = arrival; arrival = null; return value; }
 
-    public void Start(MapDestination goal, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool waitWithoutFate = true, float arrivalRadius = 3, bool unknownHeight = true, bool relaxedArrival = false, float nearbyGroundRadius = 25, Func<Vector3, bool>? groundFilter = null, float? verifiedEndpointTolerance = null)
+    public void Start(MapDestination goal, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool waitWithoutFate = true, float arrivalRadius = 3, bool unknownHeight = true, bool relaxedArrival = false, float nearbyGroundRadius = 25, Func<Vector3, bool>? groundFilter = null, float? verifiedEndpointTolerance = null, float? groundSearchRadius = null)
     {
         if (Active) { Status = "请先停止当前导航。"; return; }
         if (goal.Territory != world.Territory || goal.Map != world.Map) { Status = "目的地不在当前地图。"; return; }
@@ -54,7 +54,9 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
             this.groundFilter = groundFilter;
             this.relaxedArrival = relaxedArrival;
             this.verifiedEndpointTolerance = verifiedEndpointTolerance;
-            this.nearbyGroundRadius = Math.Max(nearbyGroundRadius, NavigationGround.SearchRadius);
+            this.nearbyGroundRadius = groundSearchRadius is { } radius
+                ? Math.Clamp(radius, 0, NavigationGround.SearchRadius)
+                : Math.Max(nearbyGroundRadius, NavigationGround.SearchRadius);
             this.arrivalRadius = relaxedArrival ? 5 : Math.Clamp(arrivalRadius, .5f, 3);
             context = world;
             started = now;
@@ -234,7 +236,7 @@ internal sealed class NavigationEndpoint(INavigationMesh mesh)
     public void Start(Vector3 destination, bool unknownHeight, float radius = NavigationGround.SearchRadius, Func<Vector3, bool>? filter = null)
     {
         Reset();
-        candidates = NavigationGround.Candidates(mesh, destination, unknownHeight, Math.Max(radius, NavigationGround.SearchRadius))
+        candidates = NavigationGround.Candidates(mesh, destination, unknownHeight, Math.Max(0, radius))
             .Where(p => filter?.Invoke(p) != false).GetEnumerator();
     }
     public Task<List<Vector3>>? Next(Vector3 origin, CancellationToken token)

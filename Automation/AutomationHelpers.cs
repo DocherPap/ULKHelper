@@ -401,7 +401,8 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                     : new EncounterObservation(null);
                 var live = ReadFates(includePreparing: true, includeBunnies: follow.NavigatingFate);
                 follow.Tick(new(world, local?.Position ?? Vector3.Zero, SafeState(follow.Interacting || follow.Transferring),
-                    conditions[ConditionFlag.Mounted], local?.IsCasting ?? false, conditions[ConditionFlag.InCombat], observation.Fate),
+                    conditions[ConditionFlag.Mounted], local?.IsCasting ?? false, conditions[ConditionFlag.InCombat], observation.Fate,
+                    local?.ClassJob.Value.Role),
                     transferScreen && client.IsLoggedIn && local?.IsDead != true && !conditions[ConditionFlag.InCombat]
                         && !conditions[ConditionFlag.WatchingCutscene], live, observation, now,
                     userMoving: ReadFollowMovement(), temporaryBusy: !SafeState(follow.Interacting || follow.Transferring)
@@ -409,7 +410,8 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                         && !transferScreen && !conditions[ConditionFlag.WatchingCutscene] && !conditions[ConditionFlag.OccupiedInCutSceneEvent],
                     knownFates: ReadFateLocations(live),
                     cleanupTarget: follow.CleaningAfterFate && conditions[ConditionFlag.InCombat] && local != null && SafeState()
-                        ? arrivalGame.ReadCleanupTarget(local.Position, targets.Target?.GameObjectId ?? 0) : 0);
+                        ? arrivalGame.ReadCleanupTarget(local.Position, targets.Target?.GameObjectId ?? 0) : 0,
+                    leaderPosition: players.FirstOrDefault(p => p.IsLoaded && p.Identity == listener.Leader)?.Position);
             }
             else if (!follow.Active && navigation.Active)
             {
@@ -480,7 +482,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                 {
                     if (listener.Leader != identity || !follow.Following) return;
                     follow.WaitForLeader(); listener.ClearDestination(clearHistory: false);
-                    listener.RecordActivity(DateTimeOffset.UtcNow, channel, text, "前往最近未刷新的 FATE。战斗中先完成当前战斗。");
+                    listener.RecordActivity(DateTimeOffset.UtcNow, channel, text, "靠近车头等待刷新。战斗中先完成当前战斗。");
                 });
                 return;
             }

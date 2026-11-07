@@ -245,6 +245,23 @@ internal sealed partial class AutomationHelpers
                 return remoteStatus;
         }
 
+        var weatherCommand = DiscordCommandRules.Normalize(input);
+        if (weatherCommand.StartsWith("天气", StringComparison.Ordinal))
+        {
+            var alias = weatherCommand[2..];
+            var island = DiscordCommandRules.Island(alias);
+            if (alias.Length > 0 && island == 0) return "请发送：天气、天气风、天气冰、天气火或天气水。";
+            try
+            {
+                return ULKHelper.Weather.WeatherReply.Build(ULKHelper.Weather.WeatherCatalogLoader.Load(
+                    data.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>()), DateTimeOffset.UtcNow, island);
+            }
+            catch (Exception ex)
+            {
+                log.Warning(ex, "Discord 天气查询失败");
+                return "暂时无法读取天气数据，请稍后再试。";
+            }
+        }
         var worlds = data.GetExcelSheet<Lumina.Excel.Sheets.World>().Where(w => DiscordCommandRules.ChineseWorld(w.RowId)).ToArray();
         var current = objects.LocalPlayer?.CurrentWorld.Value;
         var home = objects.LocalPlayer?.HomeWorld.Value;

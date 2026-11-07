@@ -10,10 +10,10 @@ internal sealed class DiscordCommandRules
 {
     private static readonly (uint Id, string[] Names)[] Islands =
     [
-        (732, ["风", "常风", "常风之地"]),
-        (763, ["冰", "恒冰", "恒冰之地"]),
-        (795, ["火", "涌火", "涌火之地"]),
-        (827, ["水", "丰水", "丰水之地"]),
+        (732, ["风", "风岛", "常风", "常风之地"]),
+        (763, ["冰", "冰岛", "恒冰", "恒冰之地"]),
+        (795, ["火", "火岛", "涌火", "涌火之地"]),
+        (827, ["水", "水岛", "丰水", "丰水之地"]),
     ];
     private static readonly (ushort Id, string Alias)[] Specials =
     [
@@ -71,6 +71,7 @@ internal sealed class DiscordCommandRules
         or 1180 or 1183 or 1186 or 1192 or 1200 or 1201;
 
     public static bool Special(ushort id) => Specials.Any(f => f.Id == id);
+    public static uint Island(string alias) => Islands.FirstOrDefault(i => i.Names.Contains(alias)).Id;
 
     public static CommonAction Entry(uint island) => island switch
     {

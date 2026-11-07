@@ -212,6 +212,7 @@ internal sealed partial class AutomationHelpers
 
     private bool StartEatingFate(WorldContext world, FateEntry fate, DateTimeOffset now)
     {
+        if (!EnsureTravelMount()) { commonStatus = "无法读取已解锁的可移动坐骑。"; return false; }
         usingFollow = commonUsesFollow = true;
         commonUsesNavigation = false;
         arrivalGame.Reset();

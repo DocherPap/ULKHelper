@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import os
+import re
 from collections import deque
 
 import discord
@@ -25,10 +26,27 @@ def request(command):
     with open(PIPE, "r+b", buffering=0) as pipe:
         pipe.write(payload)
         reply = pipe.readline().decode("utf-8").strip()
+        reply = re.sub(r"\\([\\n])", lambda m: "\n" if m[1] == "n" else "\\", reply)
         return reply or "插件未返回结果，可发送「状态」确认。"
 
 
 gateway_ready = False
+
+
+def reply_chunks(text, limit=1800):
+    while len(text) > limit:
+        split = text.rfind("\n", 0, limit + 1)
+        if split <= 0:
+            split = limit
+        yield text[:split]
+        text = text[split:].lstrip("\n")
+    if text:
+        yield text
+
+
+async def send_reply(channel, text):
+    for chunk in reply_chunks(text):
+        await channel.send(chunk)
 
 
 @tasks.loop(seconds=15)
@@ -41,7 +59,7 @@ async def report_bot():
             result_id, _, result = reply.partition(" ")
             if result_id.isascii() and result_id.isdigit() and result:
                 user = client.get_user(OWNER) or await client.fetch_user(OWNER)
-                await user.send(result)
+                await send_reply(user, result)
                 await asyncio.to_thread(request, f"ack {result_id}")
         except (OSError, discord.HTTPException):
             pass
@@ -91,7 +109,7 @@ async def on_message(message):
         except OSError:
             response = "无法联系插件。请确认游戏已加载插件并执行 /ulk discord on；可发送「状态」确认。"
 
-    await message.channel.send(response)
+    await send_reply(message.channel, response)
 
 
 client.run(TOKEN)

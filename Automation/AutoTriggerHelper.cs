@@ -49,6 +49,7 @@ internal interface ITriggerCombat
     bool Target(ulong id);
     bool EnableStationary();
     bool EnableTrigger(bool approach) => EnableStationary();
+    bool EnablePassiveCombat(bool enableAi, bool ignoreAggro = false) => EnableTrigger(enableAi);
     bool EnableRecordedPull() => EnableStationary();
     bool Disable();
     bool StationaryHealthy { get; }
@@ -191,7 +192,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         if (!onlyPassive && (!mesh.Ready || mesh.Busy || mesh.Route.Count > 0))
         { Status = "导航网格未就绪或正在使用。"; return false; }
         var error = combat.BeginTrigger(hasPassive || requested.Any(p => p.Mode == TriggerMode.Normal && p.PullMethod == TriggerPull.Attack),
-            useRotation, useBmr, optionalControls: onlyPassive);
+            useRotation, useBmr || onlyPassive, optionalControls: onlyPassive);
         error ??= combat.PrepareStart();
         if (error != null) { combat.EndTrigger(); Status = error; return false; }
         useApproach = useBmr && combat.TriggerApproachAvailable;
@@ -255,13 +256,15 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         var destination = new MapDestination(world.Territory, world.Map, point, "触发路线");
         if (!pulling && islandTravel != null && !frame.InCombat && (preferCrystals || IslandCrystalRoutes.Choose(world.Territory, frame.Position, point) != null))
         {
-            islandTravel.Start(destination, world, frame.Position, [], now, waitWithoutFate: false, preferCrystals: preferCrystals);
+            islandTravel.Start(destination, world, frame.Position, [], now, waitWithoutFate: false, preferCrystals: preferCrystals,
+                verifiedEndpointTolerance: 3);
             walking = islandTravel.Active;
             if (!walking) Stop(islandTravel.Status);
             return walking;
         }
         move.Start(destination, world, frame.Position, [], now, false,
-            arrivalRadius: pulling ? 2 : 1, unknownHeight: unknownHeight, relaxedArrival: !pulling && plans[0].Mode == TriggerMode.Normal);
+            arrivalRadius: pulling ? 2 : 1, unknownHeight: unknownHeight, relaxedArrival: !pulling && plans[0].Mode == TriggerMode.Normal,
+            verifiedEndpointTolerance: 3);
         walking = move.Active;
         if (!walking) Stop(move.Status);
         return walking;
@@ -274,11 +277,16 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         return Go(mob.Position, frame, now, pulling: true);
     }
     private bool StartRotation(ulong id, bool fighting, bool approach, IReadOnlyList<ulong>? eligible = null, bool recordedPull = false,
-        bool adjustPassiveMagia = false)
+        bool adjustPassiveMagia = false, bool? passiveAi = null, bool passiveIgnoreAggro = false)
     {
         if (!combat.PrepareTarget(id, fighting, eligible)) { Stop("准备攻击目标失败：" + (combat.Error ?? "目标不可用或战斗设置已变化。")); return false; }
         if (adjustPassiveMagia && eligible != null) AttemptPassiveMagia(eligible);
-        if (!rotation)
+        if (passiveAi is { } enableAi)
+        {
+            rotation = combat.EnablePassiveCombat(enableAi, passiveIgnoreAggro);
+            if (!rotation) Stop("无法开启挂机战斗控制：" + (combat.Error ?? "RSR／BossMod未确认启用。"));
+        }
+        else if (!rotation)
         {
             pullRotationOnly = !fighting && (recordedPull || !approach);
             rotation = pullRotationOnly ? combat.EnableRecordedPull() : combat.EnableTrigger(approach);
@@ -347,11 +355,13 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
     private void TickPassive(TriggerPlan plan, TriggerFrame frame, TriggerMob[] living, DateTimeOffset now, bool navigationReady)
     {
         var candidates = plan.GrindLight ? frame.Mobs : living;
-        var engaged = candidates.Where(m => !m.Dead && m.Engaged && (plan.GrindLight || m.Targetable)
+        var ignoreAggro = frame.Level is { } playerLevel && plan.Level < playerLevel;
+        var engaged = candidates.Where(m => !m.Dead && (m.Engaged || ignoreAggro && m.FateId == plan.FateId) && (plan.GrindLight || m.Targetable)
             && Math.Abs(m.Position.Y - frame.Position.Y) <= 8
             && NavigationRules.Distance(m.Position, frame.Position) <= PullRadius)
             .DistinctBy(m => m.Id).OrderByDescending(m => m.Hp).ToArray();
         var eligible = engaged.Where(m => m.Targetable).Select(m => m.Id).ToArray();
+        var enableAi = frame.Level is { } level && plan.Level >= level + 2 && engaged.Any(m => m.Aggro);
         var mode = plan.GrindLight ? "被动拉怪 / 顺便刷光" : "被动拉怪";
         var label = $"{plan.Centre.Label} · {mode} · 击杀 {kills.GetValueOrDefault(plan.FateId)}";
 
@@ -372,7 +382,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             if (passiveMagiaWarning is { } magiaWarning) Status += $" · {magiaWarning}";
             if (combat.TriggerControlsAvailable)
             {
-                if (eligible.Length > 0) StartRotation(eligible[0], true, true, eligible);
+                if (eligible.Length > 0) StartRotation(eligible[0], true, true, eligible, passiveAi: enableAi, passiveIgnoreAggro: ignoreAggro);
                 else EndRotation();
             }
             return;
@@ -440,7 +450,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             AttemptPassiveMagia(eligible);
         }
         else if (eligible.Length == 0 || !Riding(false, frame, now)
-            || !StartRotation(eligible[0], true, true, eligible, adjustPassiveMagia: true))
+            || !StartRotation(eligible[0], true, true, eligible, adjustPassiveMagia: true, passiveAi: enableAi, passiveIgnoreAggro: ignoreAggro))
             return;
         passiveSawCombat = frame.InCombat;
         passiveFightOrigin = frame.Position;
@@ -501,6 +511,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             if (phase == Phase.Pull)
             {
                 if (ResumeAfterMobility(frame, now)) return;
+                if (plan.Mode == TriggerMode.Recorded && TickRecordedStuck(frame, now)) return;
                 if (plan.Mode == TriggerMode.Normal && TickPullRecovery(plan, frame, living, now)) return;
                 if (TryPullMobility(plan, frame, now)) return;
             }
@@ -650,7 +661,10 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         if (route.Count > 0 && (move.OwnsMovement || NavigationRules.OwnsRoute(route, recordedMovement)))
         {
             nextMobility = now.AddMilliseconds(750);
-            if (!useMobility(frame, route[0], null)) return false;
+            var enemy = plan.PullMethod == TriggerPull.Attack
+                ? cache.GetValueOrDefault(target != 0 ? target : pullMoveTarget) : null;
+            var waypoint = enemy?.Position ?? route.FirstOrDefault(p => NavigationRules.Distance(p, frame.Position) >= 3, route[^1]);
+            if (!useMobility(frame, waypoint, enemy)) return false;
             mobilityGoal = move.Target;
             if (recordedMovement.Length > 0) recordedMovement = route.ToArray();
         }
@@ -662,6 +676,17 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         }
         else return false;
         mobilityUntil = now.AddMilliseconds(750);
+        return true;
+    }
+    private bool TickRecordedStuck(TriggerFrame frame, DateTimeOffset now)
+    {
+        if (frame.Casting || recordedTagUntil != default || recordedRouteInterrupted
+            || mesh.Route.Count == 0 || !NavigationRules.OwnsRoute(mesh.Route, recordedMovement))
+        { progressAt = default; return false; }
+        if (progressAt == default || NavigationRules.Distance(progressPosition, frame.Position) >= .5f)
+        { progressPosition = frame.Position; progressAt = now; return false; }
+        if (now - progressAt < TimeSpan.FromSeconds(5)) return false;
+        Stop("预设触发路线连续5秒未取得移动进展，已停止自己的路线；保留原记录点位。");
         return true;
     }
 
@@ -804,7 +829,12 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             progressAt = now;
             return false;
         }
-        if (now - progressAt < TimeSpan.FromSeconds(2) || recoveryAttempts >= 2) return false;
+        if (now - progressAt < TimeSpan.FromSeconds(2)) return false;
+        if (recoveryAttempts >= 2)
+        {
+            Stop("自动触发连续两次脱卡后仍无移动进展，已停止自己的路线和战斗控制。");
+            return true;
+        }
 
         recoveryAttempts++;
         progressAt = now;
@@ -814,7 +844,11 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         var first = RecoveryPoint(frame.Position, heading, left);
         var second = RecoveryPoint(frame.Position, heading, !left);
         var waypointCandidate = first ?? second;
-        if (waypointCandidate is not { } point) return false;
+        if (waypointCandidate is not { } point)
+        {
+            Status = "卡住检测：附近没有可达脱卡点，稍后重试。";
+            return true;
+        }
         if (movingWithMesh)
         {
             resumePullGoal = move.Target;

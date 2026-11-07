@@ -28,6 +28,10 @@ Remove-Item Env:ULK_DISCORD_TOKEN
 3. 加载 插件 DLL，游戏内登录、选好坐骑，确认本地寻路和战斗依赖可用。等常用功能显示「已收到桥接心跳」和 Bot ID，再发送 `状态` 验证真实私聊收发，再发 `进岛 你的服务器 恒冰`。四岛可用简称或完整岛名。机器人回复的是接单结果，之后可以再次发送 `状态` 查询进度。
 4. 发 `停止`、`取消`、`停`、`stop` 或 `cancel`，或在游戏内使用 `/ulk stop`，停止插件当前的自动化任务。已经提交给游戏的报名或传送可能继续完成。
 
+## 天气查询
+
+私聊发送「天气」查询四岛未来十二小时的特殊触发天气。使用「天气风」「天气冰」「天气火」「天气水」可查看单岛完整天气与特殊时段。回复标注现实时间与时区，较长内容自动分段。
+
 ## 指令与任务流程
 
 - 忽略标点、空格和数字，支持全角转半角与英文大小写。例「沃仙＋恒冰之地＋ＫＸ」。「进岛」前缀可省略。「状态」查询。四岛全称与简称、游戏表 FATE 名称、常用中文名和拼音均可使用。重名或缩写冲突需要补充岛名。
@@ -38,6 +42,6 @@ Remove-Item Env:ULK_DISCORD_TOKEN
 - 常用功能两个组队选项默认关闭。启用喊话时，锁定目标且未组队会喊一次「111」。启用自动组队时，在本单岛内复用现有邀请和接受规则。
 - 战斗流程结束后留出 8 秒收集结算，报告本机观察到的场次完成/失败及结算窗口内符合国服 LogMessage「获得了」模板、带物品链接的个人获取消息。消息与 FATE 的因果关系无法独立确认。缺失结果或奖励按未捕获报告。
 - 监听超时或结算后，用本机 API 15 的 CanLeaveCurrentContent 校验退岛条件，再调用 ContentsFinderMenu 单次离开事件。事件参数经本机 SimpleTweaksPlugin 1.15.0.8 对照，游戏实际退出待验。最多等 30 秒确认离岛，未确认时请手动退岛。结果由 Bot 主动私聊白名单账号。
-- 终止可通过 Discord 或游戏内停止。测试中应先确认 Bot 状态与同世界报名，再分别验证跨服、补充目标、两种组队选项、结算和 15 分钟超时退岛。
+- 任务可通过 Discord 停止指令或游戏内停止操作取消。
 
 [Discord Gateway 与消息权限](https://docs.discord.com/developers/events/gateway#message-content-intent) · [Lifestream IPC](https://github.com/NightmareXIV/Lifestream/blob/main/Lifestream/IPC/IPCProvider.cs) · [Simple Tweaks 命令记录](https://github.com/Caraxi/SimpleTweaksPlugin/blob/main/changelog.md)

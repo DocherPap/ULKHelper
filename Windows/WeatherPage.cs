@@ -65,7 +65,8 @@ internal sealed class WeatherPage(IReadOnlyList<WeatherZone> zones, string? erro
             if (!compact) ImGui.Separator();
             var periods = forecasts[zone.TerritoryId];
             var currentWeather = $"{zone.Name}  ·  当前：{periods[0].WeatherName}";
-            ImGui.TextUnformatted($"{currentWeather}  ·  {(compact ? "剩余" : "下段")} {remaining:mm\\:ss}");
+            ImGui.TextColored(WeatherPalette.Color(periods[0].WeatherName) ?? ImGui.GetStyle().Colors[(int)ImGuiCol.Text],
+                $"{currentWeather}  ·  {(compact ? "剩余" : "下段")} {remaining:mm\\:ss}");
             if (compact) DrawCompactPeriods(zone, periods, now, readOnly);
             else DrawPeriods(zone, periods, now);
         }
@@ -147,8 +148,11 @@ internal sealed class WeatherPage(IReadOnlyList<WeatherZone> zones, string? erro
             var special = FateSeeds.All.Where(f => f.Territory == zone.TerritoryId && f.WeatherId != 0 && f.WeatherId == period.WeatherId).ToArray();
             var pos = ImGui.GetCursorScreenPos();
             var draw = ImGui.GetWindowDrawList();
+            var tint = WeatherPalette.Color(period.WeatherName);
+            var background = tint is { } pastel ? ImGui.GetColorU32(Vector4.Lerp(new(.16f, .16f, .16f, 1), pastel, .22f))
+                : ImGui.GetColorU32(special.Length > 0 ? 0xFF324D62u : current ? 0xFF354B32u : 0xFF292929u);
             draw.AddRectFilled(pos, pos + new Vector2(cardWidth, height),
-                ImGui.GetColorU32(special.Length > 0 ? 0xFF324D62u : current ? 0xFF354B32u : 0xFF292929u), 4);
+                background, 4);
             if (special.Length > 0) draw.AddRect(pos, pos + new Vector2(cardWidth, height), ImGui.GetColorU32(0xFF57D4F0u), 4, ImDrawFlags.None, 2);
             var et = $"ET {period.Start.ToUnixTimeSeconds() / 175 % 24:00}:00";
             if (compact)
@@ -157,7 +161,7 @@ internal sealed class WeatherPage(IReadOnlyList<WeatherZone> zones, string? erro
                 var lineHeight = ImGui.GetTextLineHeight();
                 var left = ImGui.GetStyle().FramePadding.X;
                 var color = ImGui.GetColorU32(ImGuiCol.Text);
-                draw.AddText(pos + new Vector2(left, (height - lineHeight) / 2), color, period.WeatherName);
+                draw.AddText(pos + new Vector2(left, (height - lineHeight) / 2), tint is { } foreground ? ImGui.GetColorU32(foreground) : color, period.WeatherName);
                 draw.AddText(pos + new Vector2(left + timeOffset, (height - lineHeight * 2) / 2),
                     color, $"{minutesUntilStart / 60:00}:{minutesUntilStart % 60:00}\n{et}");
             }
@@ -165,7 +169,9 @@ internal sealed class WeatherPage(IReadOnlyList<WeatherZone> zones, string? erro
             {
                 ImGui.BeginGroup();
                 ImGui.Dummy(new Vector2(cardWidth, ImGui.GetStyle().FramePadding.Y));
+                if (tint is { } textColor) ImGui.PushStyleColor(ImGuiCol.Text, textColor);
                 CenterText(current ? $"{period.WeatherName} · 当前" : period.WeatherName, pos.X, cardWidth);
+                if (tint != null) ImGui.PopStyleColor();
                 CenterText($"{from:HH:mm:ss} – {to:HH:mm:ss}", pos.X, cardWidth);
                 CenterText($"{from:MM-dd}  {et}", pos.X, cardWidth);
                 ImGui.EndGroup();

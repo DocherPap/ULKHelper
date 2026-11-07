@@ -12,11 +12,25 @@ internal interface IIslandCrystalActions
     void Cancel();
 }
 
-internal sealed record IslandCrystal(uint Territory, uint PlaceNameId, Vector3 Position);
+internal sealed record IslandCrystal(uint Territory, uint PlaceNameId, Vector3 Position, float? GroundHeight = null);
 internal sealed record CrystalRoute(IslandCrystal Source, IslandCrystal Target, float Cost);
 internal static class IslandCrystalRoutes
 {
     public const float MinimumWalkingSavings = 30;
+    public const float GroundRadius = 2;
+    public static bool NearGround(Vector3 point, Vector3 anchor) =>
+        NavigationRules.Finite(point) && NavigationRules.Distance(point, anchor) <= GroundRadius && Math.Abs(point.Y - anchor.Y) <= 3;
+    public static Vector3? GroundAnchor(IslandCrystal crystal, Vector3 player, INavigationMesh mesh, Vector3? live = null)
+    {
+        if (live is { } actual && NavigationRules.Finite(actual)) return actual;
+        if (crystal.GroundHeight is { } height) return crystal.Position with { Y = height };
+        var floor = mesh.Ground(crystal.Position with { Y = player.Y }, false);
+        if (floor == null || NavigationRules.Distance(floor.Value, crystal.Position) > GroundRadius)
+            floor = mesh.Ground(crystal.Position, true);
+        return floor is { } ground && NavigationRules.Finite(ground)
+            && NavigationRules.Distance(ground, crystal.Position) <= GroundRadius
+            ? crystal.Position with { Y = ground.Y } : null;
+    }
     public static IslandCrystal? Entrance(uint territory) => All.FirstOrDefault(p => p.Territory == territory);
     public static MapDestination? CampDestination(WorldContext world, Vector3 player) =>
         Entrance(world.Territory) is { } crystal
@@ -27,7 +41,9 @@ internal static class IslandCrystalRoutes
     // X/Z reference positions: Lifestream CustomAethernet.cs, b36320170faafc8315f7585edb45cfbcd34e7046.
     // IDs are actual PlaceName rows, not Lifestream's synthetic Aetheryte IDs. Height is resolved through the mesh.
     public static readonly IReadOnlyList<IslandCrystal> All = [
-        new(732,2415,new(-138.9f,0,543.2f)), new(732,2429,new(-372.1f,0,-458.7f)), new(732,2436,new(435.5f,0,-48.1f)),
+        // Ground-height references: local continuous recording 2026-11-07 00:22:01 / 00:41:28 -07:00.
+        // These are observed walkable floor heights near the crystals, not assumed object Y coordinates.
+        new(732,2415,new(-138.9f,0,543.2f)), new(732,2429,new(-372.1f,0,-458.7f),63.81869f), new(732,2436,new(435.5f,0,-48.1f),34.78712f),
         new(763,2463,new(-893.7f,0,159)), new(763,2474,new(91.1f,0,303.2f)), new(763,2472,new(-707.1f,0,-318.9f)), new(763,2473,new(346,0,-289.7f)),
         new(795,2531,new(-253.5f,0,146.8f)), new(795,2540,new(125.7f,0,795.3f)), new(795,2541,new(127.9f,0,-196.1f)), new(795,2542,new(-443.4f,0,-622.7f)),
         new(827,2876,new(-61.7f,0,-875.6f)), new(827,2891,new(-587.3f,0,-148.4f)), new(827,2892,new(781.1f,0,-417.5f)) ];
@@ -76,8 +92,8 @@ internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, V
             if (ground is not { } floor) return true;
             destination = floor;
             points = IslandCrystalRoutes.All.Where(c => c.Territory == territory)
-                .Select(c => (Crystal: c, Ground: CrystalGround(c.Position)))
-                .Where(c => c.Ground is { } p && NavigationRules.Finite(p) && NavigationRules.Distance(p, c.Crystal.Position) <= NavigationGround.SearchRadius)
+                .Select(c => (Crystal: c, Ground: CrystalGround(c)))
+                .Where(c => c.Ground is { } p && NavigationRules.Finite(p) && NavigationRules.Distance(p, c.Crystal.Position) <= IslandCrystalRoutes.GroundRadius)
                 .Select(c => (c.Crystal, c.Ground!.Value)).ToArray();
             if (points.Length < 2) return true;
             sources = points.OrderBy(c => NavigationRules.Distance(player, c.Ground)).Take(2).Select(c => c.Crystal).ToArray();
@@ -105,7 +121,14 @@ internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, V
         if (mesh.Busy) return false;
         if (pending.TryDequeue(out current))
         {
-            endpoint.Start(current.To, unknownHeight: false);
+            var crystal = points.FirstOrDefault(p => p.Ground == current.To);
+            if (crystal.Crystal is { } reference)
+            {
+                var anchor = reference.Position with { Y = crystal.Ground.Y };
+                endpoint.Start(anchor, false, IslandCrystalRoutes.GroundRadius,
+                    p => IslandCrystalRoutes.NearGround(p, anchor));
+            }
+            else endpoint.Start(current.To, unknownHeight: false);
             path = endpoint.Next(current.From, cancel.Token);
             if (path == null) lengths[current] = float.PositiveInfinity;
             return false;
@@ -126,9 +149,11 @@ internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, V
         if (!pending.Contains(leg)) pending.Enqueue(leg);
     }
 
-    private Vector3? CrystalGround(Vector3 point)
+    private Vector3? CrystalGround(IslandCrystal crystal)
     {
-        foreach (var candidate in NavigationGround.Candidates(mesh, point, true)) return candidate;
+        if (IslandCrystalRoutes.GroundAnchor(crystal, player, mesh) is not { } anchor) return null;
+        foreach (var candidate in NavigationGround.Candidates(mesh, anchor, false, IslandCrystalRoutes.GroundRadius))
+            if (IslandCrystalRoutes.NearGround(candidate, anchor)) return candidate;
         return null;
     }
 

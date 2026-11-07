@@ -9,6 +9,7 @@ $currentBranch = & git -C $root branch --show-current
 if ($LASTEXITCODE -ne 0 -or $currentBranch -ne 'main') { throw '正式打包只允许在 main 分支运行。' }
 if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'Repository 应为 owner/repo。' }
 if (-not $SkipBuild) {
+    & (Join-Path $PSScriptRoot 'Sync-BunnyCalibrations.ps1')
     $buildArgs = @('build', (Join-Path $root 'ULKHelper.csproj'), '-c', 'Release', '--nologo')
     if ($DalamudLibPath) { $buildArgs += "-p:DalamudLibPath=$DalamudLibPath" }
     & dotnet @buildArgs

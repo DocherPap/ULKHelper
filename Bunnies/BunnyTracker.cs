@@ -45,13 +45,16 @@ internal sealed class BunnyTracker : IBunnyTracker, IDisposable
             var index = Array.FindIndex(originalPoints, p => p.Id == point.Id && p.Territory == point.Territory);
             var map = maps.Islands.FirstOrDefault(m => m.Territory == point.Territory);
             if (map == null || string.IsNullOrEmpty(point.Id)) continue;
+            // Older saved calibrations already came from a uniquely observed chest.
+            var precise = point with { Exact = true, Origin = point.Id.StartsWith("local-", StringComparison.Ordinal)
+                ? BunnyPointOrigin.LocalDiscovery : BunnyPointOrigin.Calibrated };
             if (index < 0)
             {
                 if (!point.Id.StartsWith("local-", StringComparison.Ordinal) || calibrated.ContainsKey(point.Id)) continue;
-                points = [..points, point];
+                points = [..points, precise];
             }
-            else points[index] = point;
-            calibrated[point.Id] = point;
+            else points[index] = BunnyCalibration.Prefer(points[index], precise);
+            calibrated[point.Id] = index < 0 ? precise : points[index];
         }
         catalog = points.ToArray();
         search = new(points);
@@ -142,12 +145,13 @@ internal sealed class BunnyTracker : IBunnyTracker, IDisposable
         var actual = matches[0].Position;
         var coordinate = MapProjection.WorldToMap(actual, map);
         if (coordinate.X is < 1 or > 42 || coordinate.Y is < 1 or > 42) return;
-        var corrected = BunnyCalibration.Match(map, points, actual);
+        var corrected = BunnyCalibration.Match(map, points, actual, now);
         if (corrected == null)
         {
             if (points.Any(p => p.Territory == map.Territory
                 && BunnyCalibration.Distance(map, p, coordinate) <= BunnyRules.CandidateRadius)) return;
-            corrected = new BunnyPoint(map.Territory, "local-" + Guid.NewGuid().ToString("N"), coordinate.X, coordinate.Y, actual.Y);
+            corrected = new BunnyPoint(map.Territory, "local-" + Guid.NewGuid().ToString("N"), coordinate.X, coordinate.Y, actual.Y,
+                Exact: true, Origin: BunnyPointOrigin.LocalDiscovery, ObservedAt: now);
             points = [..points, corrected];
         }
         var index = Array.FindIndex(points, p => p.Id == corrected.Id && p.Territory == corrected.Territory);

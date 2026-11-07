@@ -18,6 +18,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     private IReadOnlyList<CrystalRoute>? measuredRoutes;
     private WorldContext context;
     private Vector3 origin;
+    private Vector3? sourceAnchor;
     private DateTimeOffset started, phaseAt;
     private DateTimeOffset? crystalCombatAt;
     private enum Phase { Plan, Mount, Source, Menu, Transfer, Final }
@@ -130,9 +131,12 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
             EnterMenu(now);
             return;
         }
-        var sourceGoal = liveSource is { } actual ? ArrivalRules.Position(player, actual, 2) : NavigationRules.Distance(player, source.Position) <= 3 ? player
-            : ArrivalRules.Position(player, source.Position, 2);
-        walk.Start(goal! with { Position = sourceGoal }, context, player, [], now, false, 1, unknownHeight: liveSource == null);
+        var anchor = IslandCrystalRoutes.GroundAnchor(source, player, mesh, liveSource);
+        if (anchor == null) { Fallback(player, fates, now, "水晶2米内没有可用的地面参考。"); return; }
+        sourceAnchor = anchor;
+        walk.Start(goal! with { Position = anchor.Value }, context, player, [], now, false, 2, unknownHeight: false,
+            groundSearchRadius: IslandCrystalRoutes.GroundRadius, verifiedEndpointTolerance: .5f,
+            groundFilter: p => IslandCrystalRoutes.NearGround(p, anchor.Value));
         if (walk.Active) Status = "前往岛内水晶。";
         else if (mesh.Ready && !mesh.Busy && mesh.Route.Count == 0) Fallback(player, fates, now, walk.Status);
         else Stop(walk.Status);
@@ -208,6 +212,14 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
             }
             if (phase == Phase.Source || phase == Phase.Final)
             {
+                if (phase == Phase.Source && crystals.Locate(route!.Source) is { } observed
+                    && sourceAnchor is { } previous && Vector3.Distance(observed, previous) > 1)
+                {
+                    walk.Stop();
+                    if (mesh.Busy) { Status = "等待旧水晶路线释放后校正实际位置。"; return; }
+                    BeginSource(player, fates, now);
+                    return;
+                }
                 walk.Tick(world, player, safe, phase == Phase.Source ? [] : fates, now);
                 Status = phase == Phase.Source ? "前往岛内水晶：" + walk.Status : walk.Status;
                 if (walk.Active) return;

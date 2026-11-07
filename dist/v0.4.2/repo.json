@@ -1,0 +1,26 @@
+[
+  {
+    "Author": "DocherPap",
+    "Name": "优雷卡助手",
+    "InternalName": "ULKHelper",
+    "AssemblyVersion": "0.4.2.0",
+    "Changelog": "0.4.2：优化跟车坐标、战后等候及职业站位，改善 RSR/BossMod 控制恢复。Discord 新增十二小时天气查询和长回复分段，更新天气配色与兔箱校准点位，修复骑乘及脱卡流程。",
+    "Description": "优雷卡装备与材料统计、四岛天气与 FATE 地图、幸福兔挖宝、文理技能、常用功能及自动化。",
+    "Punchline": "优雷卡地图、装备统计与岛内便捷工具",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "Tags": [
+      "eureka",
+      "优雷卡"
+    ],
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "DownloadLinkInstall": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.4.2/ULKHelper-0.4.2.0.zip",
+    "RepoUrl": "https://github.com/DocherPap/ULKHelper",
+    "DownloadLinkUpdate": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.4.2/ULKHelper-0.4.2.0.zip",
+    "LastUpdate": 1794050133
+  }
+]

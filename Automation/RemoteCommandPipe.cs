@@ -40,7 +40,8 @@ internal sealed class RemoteCommandPipe : IDisposable
                     if (end < 0) continue;
                     var response = await dispatch(Encoding.UTF8.GetString(buffer, 0, end), timeout.Token)
                         .WaitAsync(timeout.Token).ConfigureAwait(false);
-                    await pipe.WriteAsync(Encoding.UTF8.GetBytes(response + "\n"), timeout.Token).ConfigureAwait(false);
+                    // Keep one pipe line per reply while preserving multi-line weather reports.
+                    await pipe.WriteAsync(Encoding.UTF8.GetBytes(response.Replace("\\", "\\\\").Replace("\r", "").Replace("\n", "\\n") + "\n"), timeout.Token).ConfigureAwait(false);
                 }
                 catch (IOException) { }
                 catch (OperationCanceledException) { }

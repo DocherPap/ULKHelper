@@ -3,7 +3,9 @@ using System.Text.Json;
 using ULKHelper.Fates;
 
 namespace ULKHelper.Bunnies;
-internal sealed record BunnyPoint(uint Territory,string Id,float X,float Y,float? Height = null);
+internal enum BunnyPointOrigin { Bundled, Calibrated, LocalDiscovery }
+internal sealed record BunnyPoint(uint Territory,string Id,float X,float Y,float? Height = null,
+    bool Exact = false, BunnyPointOrigin Origin = BunnyPointOrigin.Bundled, DateTimeOffset? ObservedAt = null);
 internal enum BunnyDirection { North, NorthEast, East, SouthEast, South, SouthWest, West, NorthWest }
 internal enum BunnyDistance { FarAway, Far, Near, VeryNear, Here }
 internal sealed record BunnyClue(Vector3 Position,BunnyDistance Distance,string Text,DateTimeOffset Time,BunnyDirection? Direction=null);
@@ -25,7 +27,7 @@ internal static class BunnyCatalog
 }
 internal static class BunnyCalibration
 {
-    public static BunnyPoint? Match(IslandMap map, IReadOnlyList<BunnyPoint> original, Vector3 actual)
+    public static BunnyPoint? Match(IslandMap map, IReadOnlyList<BunnyPoint> original, Vector3 actual, DateTimeOffset? observedAt = null)
     {
         if (!float.IsFinite(actual.X) || !float.IsFinite(actual.Y) || !float.IsFinite(actual.Z)) return null;
         var position = MapProjection.WorldToMap(actual, map);
@@ -36,7 +38,16 @@ internal static class BunnyCalibration
             .OrderBy(p => p.Distance).Take(2).ToArray();
         if (nearby.Length == 0 || nearby[0].Distance > BunnyRules.CandidateRadius
             || nearby.Length == 2 && nearby[1].Distance - nearby[0].Distance < 1) return null;
-        return nearby[0].Point with { X = position.X, Y = position.Y, Height = actual.Y };
+        return nearby[0].Point with { X = position.X, Y = position.Y, Height = actual.Y, Exact = true,
+            Origin = nearby[0].Point.Id.StartsWith("local-", StringComparison.Ordinal) ? BunnyPointOrigin.LocalDiscovery : BunnyPointOrigin.Calibrated,
+            ObservedAt = observedAt ?? DateTimeOffset.UtcNow };
+    }
+
+    public static BunnyPoint Prefer(BunnyPoint bundled, BunnyPoint local)
+    {
+        if (bundled.Exact && !local.Exact) return bundled;
+        if (bundled.Exact && local.Exact && bundled.ObservedAt > local.ObservedAt) return bundled;
+        return local;
     }
 
     public static float Distance(IslandMap map, BunnyPoint point, Vector2 other)

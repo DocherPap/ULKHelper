@@ -83,7 +83,7 @@ internal sealed class ArrivalGameAdapter(IObjectTable objects, IPartyList party,
         return new(fate.FateId, fate.StartTimeEpoch, fate.Position, fate.Radius, sync, hp, participants, islandPlayers, true,
             boss?.GameObjectId ?? 0, boss?.IsDead != true, boss?.IsTargetable == true,
             manager != null && manager->SyncedFateId == fate.FateId, boss?.Position,
-            FateLevel: fate.GameData.Value.ClassJobLevel, PlayerLevel: playerLevel);
+            FateLevel: fate.GameData.Value.ClassJobLevel, PlayerLevel: playerLevel, BossHitboxRadius: boss?.HitboxRadius ?? 0);
     }
 
     public EncounterObservation ReadEncounter(MapDestination destination, DateTimeOffset now, int? islandPlayers, ushort? boundId)

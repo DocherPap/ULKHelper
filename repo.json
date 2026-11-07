@@ -3,8 +3,8 @@
     "Author": "DocherPap",
     "Name": "优雷卡助手",
     "InternalName": "ULKHelper",
-    "AssemblyVersion": "0.4.1.0",
-    "Changelog": "0.4.1：地图详情新增吃 FATE，自动触发成功后可接续参战，打完就近选择下一场，无目标时返回营地。优化被动挂机、魔素板攻势、FATE 待机距离和岛内水晶路线。文理碎晶和记忆数量支持按角色保留本地缓存。",
+    "AssemblyVersion": "0.4.2.0",
+    "Changelog": "0.4.2：优化跟车坐标、战后等候及职业站位，改善 RSR/BossMod 控制恢复。Discord 新增十二小时天气查询和长回复分段，更新天气配色与兔箱校准点位，修复骑乘及脱卡流程。",
     "Description": "优雷卡装备与材料统计、四岛天气与 FATE 地图、幸福兔挖宝、文理技能、常用功能及自动化。",
     "Punchline": "优雷卡地图、装备统计与岛内便捷工具",
     "ApplicableVersion": "any",
@@ -16,11 +16,11 @@
       "eureka",
       "优雷卡"
     ],
-    "RepoUrl": "https://github.com/DocherPap/ULKHelper",
+    "IsHide": false,
     "IsTestingExclusive": false,
-    "DownloadLinkUpdate": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.4.1/ULKHelper-0.4.1.0.zip",
-    "LastUpdate": 1793997185,
-    "DownloadLinkInstall": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.4.1/ULKHelper-0.4.1.0.zip",
-    "IsHide": false
+    "DownloadLinkInstall": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.4.2/ULKHelper-0.4.2.0.zip",
+    "RepoUrl": "https://github.com/DocherPap/ULKHelper",
+    "DownloadLinkUpdate": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.4.2/ULKHelper-0.4.2.0.zip",
+    "LastUpdate": 1794050133
   }
 ]

@@ -856,5 +856,14 @@
     "Id": "hydatos-chest-8.2-19.3",
     "X": 8.2,
     "Y": 19.3
+  },
+  {
+    "Territory": 827,
+    "Id": "local-1028bef84686452984a112bb5e8ef5bc",
+    "X": 24.310694,
+    "Y": 31.259192,
+    "Height": 496.0556,
+    "Exact": true,
+    "Origin": 0
   }
 ]

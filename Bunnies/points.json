@@ -865,5 +865,25 @@
     "Height": 496.0556,
     "Exact": true,
     "Origin": 0
+  },
+  {
+    "Territory": 827,
+    "Id": "local-e30f822bc11e4b5cbd6237cee78c4e24",
+    "X": 28.880491,
+    "Y": 22.987164,
+    "Height": 505.93613,
+    "Exact": true,
+    "Origin": 0,
+    "ObservedAt": "2026-11-08T00:55:39.057962-07:00"
+  },
+  {
+    "Territory": 827,
+    "Id": "local-9803372e3c694b2485137471d07e0e50",
+    "X": 18.315653,
+    "Y": 30.120083,
+    "Height": 495.79736,
+    "Exact": true,
+    "Origin": 0,
+    "ObservedAt": "2026-11-08T23:25:10.0745937-07:00"
   }
 ]

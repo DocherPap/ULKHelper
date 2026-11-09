@@ -269,7 +269,7 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
                         // Keep the leader's original coordinate; the known centre only identifies the NM.
                         phase = Phase.UnspawnedTravel;
                         travel.Start(goal!, context, frame.Player, [], now, summonMount: true, waitWithoutFate: false,
-                            unknownHeight: true);
+                            unknownHeight: true, preferCrystals: true);
                     }
                     else
                     {
@@ -460,7 +460,7 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
                 if (range == null) { Stop("无法确认职业的战斗距离。"); return; }
                 var boss = fate.BossPosition ?? fate.Centre;
                 var distance = NavigationRules.Distance(frame.Player, boss);
-                if (distance >= range.Value.Min && distance <= range.Value.Max && Math.Abs(frame.Player.Y - boss.Y) <= 5)
+                if (distance <= range.Value.Max && Math.Abs(frame.Player.Y - boss.Y) <= 5)
                 {
                     approach.Stop();
                     if (!combat.SetApproachMovement(false)) { Stop(combat.Error ?? "无法恢复BossMod移动。"); return; }
@@ -495,7 +495,7 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
                 if (!combat.Enable()) { Stop(combat.Error ?? "自动循环或BossMod未能开启。"); return; }
                 var boss = fate.BossPosition ?? fate.Centre;
                 var distance = NavigationRules.Distance(frame.Player, boss);
-                if (distance < range.Value.Min || distance > range.Value.Max || Math.Abs(frame.Player.Y - boss.Y) > 5)
+                if (distance > range.Value.Max || Math.Abs(frame.Player.Y - boss.Y) > 5)
                 {
                     if (!combat.SetApproachMovement(true)) { Stop(combat.Error ?? "无法协调BossMod与接近导航。"); return; }
                     approach.Start(goal! with { Position = ArrivalRules.Position(frame.Player, boss, range.Value.Target) }, context,
@@ -569,7 +569,7 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
         phase = Phase.Travel;
         travel.Start(goal!, context, frame.Player, navigationOnly && live != null ? [live] : [], now,
             !navigationOnly || navigationMount, !navigationOnly || navigationCrystals,
-            waitWithoutFate: false, unknownHeight: live == null, preferCrystals: live != null);
+            waitWithoutFate: false, unknownHeight: live == null, preferCrystals: true);
     }
 
     private void ApproachBoss(ArrivalFrame frame, Vector3 boss, float distance, DateTimeOffset now)
@@ -601,7 +601,7 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
             var distance = fate.WaitDistance;
             travel.Start(goal! with { Position = ArrivalRules.Position(frame.Player, boss, distance) },
                 context, frame.Player, [], now, summonMount: true, waitWithoutFate: false, unknownHeight: false,
-                groundFilter: p => NavigationRules.Distance(p, boss) >= distance - 1);
+                preferCrystals: true, groundFilter: p => NavigationRules.Distance(p, boss) >= distance - 1);
             if (!travel.Active) { RetryFollowing(travel.Status, now); return; }
             phase = Phase.BossTravel; phaseAt = now;
             Status = "已加载头目，使用共用坐骑行程前往等待位置。";
@@ -636,7 +636,7 @@ internal sealed class FellingFollowHelper(IslandTravelHelper travel, INavigation
         if (IslandCrystalRoutes.CampDestination(context, frame.Player) is not { } camp)
         { Stop("未找到当前岛的入口营地。"); return; }
         goal = null; goalFate = null; encounter = null;
-        travel.Start(camp, context, frame.Player, [], now, waitWithoutFate: false);
+        travel.Start(camp, context, frame.Player, [], now, summonMount: true, waitWithoutFate: false, preferCrystals: true);
         if (!travel.Active) { Stop($"返回营地失败：{travel.Status}"); return; }
         phase = Phase.ReturnCamp;
         Status = "本岛暂无其他活动 FATE，返回营地。";

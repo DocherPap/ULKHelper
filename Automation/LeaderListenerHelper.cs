@@ -6,6 +6,8 @@ internal sealed record LeaderMessage(DateTimeOffset Time, string Channel, string
 
 internal sealed class LeaderListenerHelper
 {
+    public static bool IsWaitDirective(string text) => text.Contains("原地", StringComparison.Ordinal)
+        || text.Contains("等待", StringComparison.Ordinal) || text.Contains("等等", StringComparison.Ordinal);
     private readonly Queue<LeaderMessage> history = new();
     public PlayerIdentity? Leader { get; private set; }
     public bool Listening { get; private set; }

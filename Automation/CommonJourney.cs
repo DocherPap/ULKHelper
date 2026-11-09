@@ -20,7 +20,8 @@ namespace ULKHelper.Automation;
 
 internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavigationMesh mesh,
     IClientState client, IObjectTable objects, IGameGui gui, IDataManager data, ICondition conditions,
-    IArrivalActions mounts, WeatherZone? pagosWeather, Action<string> notify, ICrystalCombat? combat = null) : IDisposable
+    IArrivalActions mounts, WeatherZone? pagosWeather, Action<string> notify, ICrystalCombat? combat = null,
+    Func<bool>? ensureTravelMount = null) : IDisposable
 {
     internal const uint Pagos = 763;
     private const uint Blitzring = 36121, Fog = 4;
@@ -255,7 +256,8 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
         if (purchase)
         {
             islandWalk.Start(destination, world, player.Position, [], now,
-                waitWithoutFate: false, arrivalRadius: 1.5f, unknownHeight: npc == null);
+                summonMount: ensureTravelMount?.Invoke() == true, waitWithoutFate: false, arrivalRadius: 1.5f,
+                unknownHeight: npc == null, preferCrystals: true);
             if (!islandWalk.Active) { Stop(islandWalk.Status); return; }
         }
         else

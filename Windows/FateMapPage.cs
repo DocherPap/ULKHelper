@@ -13,6 +13,7 @@ internal interface IMapTextures
 
 internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textures, IReadOnlyList<WeatherZone> weather, IAutomationHelpers? navigation = null, BunnyPage? bunnies = null)
 {
+    internal const float PointScale = 2f / 3f;
     private int islandIndex;
     private int pullBatch = 1, abandonStep = 2;
     private bool showMobs = true;
@@ -569,9 +570,11 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             var marker = AtUv(uv);
             var status = timing.GetValueOrDefault(fate.Seed.Id) ?? new FateTimingResult("未知", null, FateTiming.UnknownColor);
             var radius = Math.Max(5, ImGui.GetFontSize() * .38f);
-            draw.AddCircleFilled(marker, radius, ImGui.GetColorU32(status.Color));
-            draw.AddCircle(marker, radius + (selected == fate.Seed.Id ? 3 : 1), ImGui.GetColorU32(selected == fate.Seed.Id ? 0xFFFFFFFF : 0xFF202020), 16, 2);
-            if (planned?.Contains(fate.Seed.Id) == true) draw.AddCircle(marker, radius + 5, ImGui.GetColorU32(0xFFFFCA65), 16, 2);
+            draw.AddCircleFilled(marker, radius * PointScale, ImGui.GetColorU32(status.Color));
+            draw.AddCircle(marker, (radius + (selected == fate.Seed.Id ? 3 : 1)) * PointScale,
+                ImGui.GetColorU32(selected == fate.Seed.Id ? 0xFFFFFFFF : 0xFF202020), 16, 2 * PointScale);
+            if (planned?.Contains(fate.Seed.Id) == true)
+                draw.AddCircle(marker, (radius + 5) * PointScale, ImGui.GetColorU32(0xFFFFCA65), 16, 2 * PointScale);
             var markerState = markerTiming.GetValueOrDefault(fate.Seed.Id) ?? status;
             var countdown = markerState.Until is { } until ? $"{markerState.Text} {FateTiming.Countdown(until, now)}" : markerState.Text;
             if (countdown == "未知 · 未记录") countdown = "未记录";
@@ -607,13 +610,13 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             {
                 if (elemental.Territory != island.Territory || elemental.MapId != island.MapId) continue;
                 var marker = AtUv(MapProjection.ToUv(elemental.Position, island.SizeFactor));
-                var radius = elemental.Visible ? 6 : 4;
+                var radius = (elemental.Visible ? 6 : 4) * PointScale;
                 var top = marker - new Vector2(0, radius);
                 var right = marker + new Vector2(radius, 0);
                 var bottom = marker + new Vector2(0, radius);
                 var left = marker - new Vector2(radius, 0);
-                if (elemental.Visible) draw.AddQuadFilled(top, right, bottom, left, ImGui.GetColorU32(0xFFEFE259));
-                else draw.AddQuad(top, right, bottom, left, ImGui.GetColorU32(0xCCEFE259), 1.5f);
+                if (elemental.Visible) draw.AddQuadFilled(top, right, bottom, left, ImGui.GetColorU32(0xFFFFF37C));
+                else draw.AddQuad(top, right, bottom, left, ImGui.GetColorU32(0xE6FFF37C), 1.5f * PointScale);
                 if (hovered && hoveredPoint == null && Vector2.DistanceSquared(marker, io.MousePos) <= 64)
                     hoveredElemental = elemental;
             }
@@ -621,7 +624,8 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
         if (snapshot.CurrentTerritory == island.Territory && snapshot.PlayerMapPosition is { } player)
         {
             var p = AtUv(MapProjection.ToUv(player, island.SizeFactor));
-            draw.AddCircleFilled(p, 5, ImGui.GetColorU32(0xFFFFD070)); draw.AddCircle(p, 7, ImGui.GetColorU32(0xFFFFFFFF), 16, 2);
+            draw.AddCircleFilled(p, 5 * PointScale, ImGui.GetColorU32(0xFFFFD070));
+            draw.AddCircle(p, 7 * PointScale, ImGui.GetColorU32(0xFFFFFFFF), 16, 2 * PointScale);
         }
         var routePreview = nearbyRoutePreview != 0 ? nearbyRoutePreview : selected;
         if (navigation?.TriggerSnapshot.StandbyPoints is { } standbyPoints)
@@ -629,8 +633,8 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             {
                 if (Pull(fate.Seed.Id) != TriggerPull.Passive || !standbyPoints.TryGetValue(fate.Seed.Id, out var anchor)) continue;
                 var marker = AtUv(MapProjection.ToUv(MapProjection.WorldToMap(anchor, island), island.SizeFactor));
-                draw.AddCircleFilled(marker, 7, ImGui.GetColorU32(0xEE151515));
-                draw.AddCircleFilled(marker, 5, ImGui.GetColorU32(0xFFE080FF));
+                draw.AddCircleFilled(marker, 7 * PointScale, ImGui.GetColorU32(0xEE151515));
+                draw.AddCircleFilled(marker, 5 * PointScale, ImGui.GetColorU32(0xFFE080FF));
                 var label = $"挂机 · {fate.Seed.ShortName}";
                 var text = marker + new Vector2(8, -ImGui.GetTextLineHeight() / 2);
                 draw.AddRectFilled(text - Vector2.One, text + ImGui.CalcTextSize(label) + Vector2.One, ImGui.GetColorU32(0xCC151515), 2);
@@ -649,8 +653,8 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             }
             for (var i = 0; i < markers.Length; i++)
             {
-                draw.AddCircleFilled(markers[i], 6, ImGui.GetColorU32(0xEE151515));
-                draw.AddCircleFilled(markers[i], 4, ImGui.GetColorU32(i == 0 ? 0xFF72E68A : i == markers.Length - 1 ? 0xFF6262FF : 0xFFFFD34D));
+                draw.AddCircleFilled(markers[i], 6 * PointScale, ImGui.GetColorU32(0xEE151515));
+                draw.AddCircleFilled(markers[i], 4 * PointScale, ImGui.GetColorU32(i == 0 ? 0xFF72E68A : i == markers.Length - 1 ? 0xFF6262FF : 0xFFFFD34D));
                 var label = i == 0 ? "起点" : i == markers.Length - 1 ? "终点" : (i + 1).ToString();
                 var text = markers[i] + new Vector2(7, -ImGui.GetTextLineHeight() / 2);
                 draw.AddRectFilled(text - Vector2.One, text + ImGui.CalcTextSize(label) + Vector2.One, ImGui.GetColorU32(0xCC151515), 2);

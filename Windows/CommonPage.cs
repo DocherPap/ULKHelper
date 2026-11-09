@@ -42,7 +42,7 @@ internal sealed class CommonPage(AutomationHelpers helpers, IFateMapProvider map
         var walkNearDragon = helpers.WalkNearPagosDragon;
         if (ImGui.Checkbox(compact ? "冰龙旁走路" : "恒冰之地靠近冰雪龙时自动切换走路", ref walkNearDragon)) helpers.SetWalkNearPagosDragon(walkNearDragon);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("靠近虚无冰雪龙 15 米范围时进入走路状态");
+            ImGui.SetTooltip($"靠近虚无冰雪龙 {AutomationHelpers.PagosDragonWalkRange} 米范围时进入走路状态");
         if (compact) ImGui.SameLine();
         var survey = helpers.QuickElementalSurvey;
         if (ImGui.Checkbox("快速检查元灵", ref survey)) helpers.SetQuickElementalSurvey(survey);

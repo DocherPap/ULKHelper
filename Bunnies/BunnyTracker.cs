@@ -20,8 +20,9 @@ internal sealed class BunnyTracker : IBunnyTracker, IDisposable
     private volatile IReadOnlyList<BunnyPoint> catalog = [];
     private readonly Dictionary<string, BunnyPoint> calibrated = new(StringComparer.Ordinal);
     private const string CalibrationKey = "bunny.calibratedPoints";
-    private readonly Dictionary<ulong, (Vector3 Position, DateTimeOffset FirstSeen)> chests = [];
+    private readonly Dictionary<ulong, BunnyChestSighting> chests = [];
     private BunnyClue? discoveredChest;
+    private BunnyChestSighting? treasureChest;
     private readonly BunnySearch search;
     private readonly ConcurrentQueue<(Frame Frame,BunnyClue Clue)> incoming=new();
     private readonly ConcurrentQueue<Action> commands=new();
@@ -82,18 +83,26 @@ internal sealed class BunnyTracker : IBunnyTracker, IDisposable
             var now=DateTimeOffset.UtcNow;var local=objects.LocalPlayer;
             var world=(client.TerritoryType,client.MapId,client.Instance,client.IsLoggedIn?player.ContentId:0,maps.Snapshot.RoomId);
             if(world!=context)
-            {generation++;context=world;search.Clear();wasBuff=false;buffSeen=default;lastFrame=null;lastTreasureAt=null;discoveredChest=null;chests.Clear();while(incoming.TryDequeue(out _)){}while(commands.TryDequeue(out _)){};}
+            {generation++;context=world;search.Clear();wasBuff=false;buffSeen=default;lastFrame=null;lastTreasureAt=null;discoveredChest=null;treasureChest=null;chests.Clear();while(incoming.TryDequeue(out _)){}while(commands.TryDequeue(out _)){};}
             var map=maps.Islands.FirstOrDefault(m=>m.Territory==client.TerritoryType);
             var buff=client.IsLoggedIn&&player.ContentId!=0&&local is {IsDead:false}&&map!=null&&map.Territory is 763 or 795 or 827&&local.StatusList.Any(s=>s.StatusId==1531);
             currentBuff=buff;
             // End before consuming queued clues/setting flags: delayed hints belong to the finished hunt.
             var startingHunt = buff && !wasBuff;
-            if (startingHunt) { Begin(map!); chests.Clear(); discoveredChest = null; }
+            if (startingHunt)
+            {
+                Begin(map!);
+                chests.Clear();
+                discoveredChest = null;
+                treasureChest = null;
+                lastTreasureAt = null;
+            }
             if(buff)buffSeen=now;
             while(commands.TryDequeue(out var action))action();
             while(incoming.TryDequeue(out var hint))
                 if(hint.Frame.Generation==generation&&hint.Frame.Territory==client.TerritoryType&&hint.Frame.Character==player.ContentId&&(buff||now-buffSeen<TimeSpan.FromSeconds(1))&&now-hint.Clue.Time<TimeSpan.FromSeconds(2)){
-                    if (hint.Clue.Distance == BunnyDistance.Here && hint.Clue.Text.Contains("发现了财宝", StringComparison.Ordinal))
+                    if (lastTreasureAt == null && hint.Clue.Distance == BunnyDistance.Here
+                        && hint.Clue.Text.Contains("发现了财宝", StringComparison.Ordinal))
                     {
                         lastTreasureAt = hint.Clue.Time;
                         discoveredChest ??= hint.Clue;
@@ -115,26 +124,27 @@ internal sealed class BunnyTracker : IBunnyTracker, IDisposable
                 if(flagAttempts>=3&&search.Flagged!=unique.Id)search.FlagFailed();
             }
             wasBuff=buff;
-            snapshot=new(client.TerritoryType,search.Active,local?.Position,points.Where(p=>p.Territory==client.TerritoryType).ToArray(),search.Candidates,search.Clues,search.Status,search.Conflict,search.Flagged,resetVersion,lastTreasureAt);
+            snapshot=new(client.TerritoryType,search.Active,local?.Position,points.Where(p=>p.Territory==client.TerritoryType).ToArray(),search.Candidates,search.Clues,search.Status,search.Conflict,search.Flagged,resetVersion,lastTreasureAt,treasureChest);
         }
         catch(Exception ex){search.Clear("读取兔子状态失败，已清空本轮推断。");lastFrame=null;log.Warning(ex,"兔子挖宝状态更新失败");}
     }
     private void ObserveChest(IslandMap map, DateTimeOffset now, bool startingHunt)
     {
-        // CN EObjName 2009530–2009532: gold, silver and bronze treasure coffers.
         foreach (var obj in objects)
         {
             if (obj.ObjectKind is not (ObjectKind.EventObj or ObjectKind.Treasure)
-                || obj.BaseId is not (2009530 or 2009531 or 2009532) || !obj.IsTargetable) continue;
+                || !BunnyRules.IsChestBaseId(obj.BaseId) || !obj.IsTargetable) continue;
             var position = obj.Position;
             if (float.IsFinite(position.X) && float.IsFinite(position.Y) && float.IsFinite(position.Z))
-                chests.TryAdd(obj.GameObjectId, (position, startingHunt ? DateTimeOffset.MinValue : now));
+                chests.TryAdd(obj.GameObjectId, new(obj.GameObjectId, position, startingHunt ? DateTimeOffset.MinValue : now));
         }
 
-        if (discoveredChest is not { } clue || now - clue.Time < TimeSpan.FromMilliseconds(750)) return;
-        var matches = chests.Values.Where(c => c.FirstSeen >= clue.Time.AddSeconds(-1)
-            && c.FirstSeen <= clue.Time.AddSeconds(2)
-            && Vector2.Distance(new(c.Position.X, c.Position.Z), new(clue.Position.X, clue.Position.Z)) <= 8).Take(2).ToArray();
+        if (discoveredChest is not { } clue) return;
+        var matches = chests.Values.Where(chest => BunnyRules.MatchesDiscoveredChest(chest, clue)).Take(2).ToArray();
+        // Publish the exact object as soon as it is identified. Keep its recorded position
+        // for calibration even if the automation opens it before the observation window ends.
+        treasureChest = matches.Length == 1 ? matches[0] : null;
+        if (now - clue.Time < TimeSpan.FromMilliseconds(750)) return;
         if (matches.Length == 0 && now - clue.Time < TimeSpan.FromSeconds(2)) return;
         discoveredChest = null;
         if (matches.Length != 1)

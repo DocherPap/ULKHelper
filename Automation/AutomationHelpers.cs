@@ -74,6 +74,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         mesh = new VnavmeshAdapter(plugin);
         this.data = data;
         mounts = new(objects, data);
+        bunnySearchMount = new(mounts);
         arrivalGame = new(objects, party, fates, mounts);
         combat = new(plugin, commandManager, objects, targets);
         navigation = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame, combat);
@@ -89,7 +90,8 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         discordCredentialsPath = Path.Combine(plugin.GetPluginConfigDirectory(), "discord-credentials.dat");
         discordCredentialsSaved = File.Exists(discordCredentialsPath);
         discordPlugin = plugin;
-        commonJourney = new(plugin, mesh, client, objects, gui, data, conditions, arrivalGame, pagosWeather, message => chat.Print(message), combat);
+        commonJourney = new(plugin, mesh, client, objects, gui, data, conditions, arrivalGame, pagosWeather, message => chat.Print(message), combat,
+            EnsureTravelMount);
         commonJourney.CheckPagosRing = settings?.Get("common.checkPagosRing", false) ?? false;
         autoInvite = settings?.Get("common.autoInvite", false) ?? false;
         autoAccept = settings?.Get("common.autoAccept", false) ?? false;
@@ -201,6 +203,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             var verified = copy.Select(p => p with { Level = data.GetExcelSheet<Lumina.Excel.Sheets.Fate>()!.GetRow(p.FateId).ClassJobLevel,
                 Route = triggerRoutes.GetValueOrDefault(p.FateId)?.Current.ToArray() ?? [],
                 StandbyPoint = triggerStandbyPoints.TryGetValue(p.FateId, out var point) ? point : null }).ToArray();
+            EnsureTravelMount();
             trigger.Start(verified, ReadTriggerFrame(Context()), batch, maxKills, DateTimeOffset.UtcNow, useRotation, useBmr);
         });
     }
@@ -260,7 +263,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         if (requireFate || destination.FateId != null) { navigation.Stop("旗标 50 米内没有本岛 FATE 点位。"); return; }
         pointNm = useNm;
         navigation.Start(destination, Context(), objects.LocalPlayer!.Position, live, DateTimeOffset.UtcNow,
-            EnsureTravelMount(), useCrystals, waitWithoutFate, preferCrystals: useNm);
+            EnsureTravelMount(), useCrystals, waitWithoutFate, preferCrystals: true);
     }
     public void Follow(bool enabled) => commands.Enqueue(() =>
     {
@@ -357,7 +360,8 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             TickBunnyAutomation(world, transferScreen, now);
             TickPagosDragon(world, transferScreen, now);
             TickCommonParty(now);
-            if (!trigger.Active && !follow.Active && !bunnyCombatOwned && combat.CleanupPending && now >= nextCleanup)
+            if (!trigger.Active && !follow.Active && !bunnyCombatOwned && !bunnySearchCombatOwned
+                && combat.CleanupPending && now >= nextCleanup)
             { nextCleanup = now.AddSeconds(1); combat.Disable(); }
             if (SafeState() && playerState.ContentId != 0 && now >= nextMounts)
             { mounts.EnsureTravelMount(settings?.Get("mount", 0u) ?? 0, refresh: true); if (mounts.Selected != 0) settings?.Put("mount", mounts.Selected); nextMounts = now.AddSeconds(30); }
@@ -476,7 +480,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             if (identity != current.Leader) return;
             var text = content.TextValue;
             var channel = message.LogKind.ToString();
-            if (current.Following && (text.Contains("原地", StringComparison.Ordinal) || text.Contains("等待", StringComparison.Ordinal)))
+            if (current.Following && LeaderListenerHelper.IsWaitDirective(text))
             {
                 commands.Enqueue(() =>
                 {

@@ -168,6 +168,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
     }
     public bool Transferring => islandTravel?.Transferring == true;
     public bool Interacting => islandTravel?.Interacting == true;
+    public string? CrystalDecision => islandTravel?.CrystalDecision;
     public string Status { get; private set; } = "尚未开始自动触发。";
     public bool Start(IReadOnlyList<TriggerPlan> requested, TriggerFrame frame, int batch, int maxKills, DateTimeOffset now,
         bool useRotation = true, bool useBmr = true)
@@ -251,23 +252,52 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         attempts++;
         actionAt = now.AddSeconds(3); if (desired) mounts.Mount(); else mounts.Dismount(); return false;
     }
-    private bool Go(Vector3 point, TriggerFrame frame, DateTimeOffset now, bool unknownHeight = false, bool pulling = false, bool preferCrystals = false)
+    private bool Go(Vector3 point, TriggerFrame frame, DateTimeOffset now, bool unknownHeight = false, bool pulling = false)
     {
         var destination = new MapDestination(world.Territory, world.Map, point, "触发路线");
-        if (!pulling && islandTravel != null && !frame.InCombat && (preferCrystals || IslandCrystalRoutes.Choose(world.Territory, frame.Position, point) != null))
+        if (StartTravel(destination, frame, now, journey: !pulling, arrivalRadius: pulling ? 2 : 1,
+            unknownHeight, endpointTolerance: 3, relaxedArrival: !pulling && plans[0].Mode == TriggerMode.Normal,
+            status: out var status)) return true;
+        Stop(status);
+        return false;
+    }
+
+    private bool StartTravel(MapDestination destination, TriggerFrame frame, DateTimeOffset now, bool journey,
+        float arrivalRadius, bool unknownHeight, float endpointTolerance, bool relaxedArrival, out string status,
+        Func<Vector3, bool>? groundFilter = null)
+    {
+        if (journey && islandTravel != null)
         {
-            islandTravel.Start(destination, world, frame.Position, [], now, waitWithoutFate: false, preferCrystals: preferCrystals,
-                verifiedEndpointTolerance: 3);
+            islandTravel.Start(destination, world, frame.Position, [], now,
+                summonMount: frame.CanMountForTravel, waitWithoutFate: false, arrivalRadius: arrivalRadius,
+                unknownHeight: unknownHeight, preferCrystals: true, groundFilter: groundFilter,
+                verifiedEndpointTolerance: endpointTolerance);
             walking = islandTravel.Active;
-            if (!walking) Stop(islandTravel.Status);
+            status = islandTravel.Status;
             return walking;
         }
         move.Start(destination, world, frame.Position, [], now, false,
-            arrivalRadius: pulling ? 2 : 1, unknownHeight: unknownHeight, relaxedArrival: !pulling && plans[0].Mode == TriggerMode.Normal,
-            verifiedEndpointTolerance: 3);
+            arrivalRadius: arrivalRadius, unknownHeight: unknownHeight, relaxedArrival: relaxedArrival,
+            groundFilter: groundFilter, verifiedEndpointTolerance: endpointTolerance);
         walking = move.Active;
-        if (!walking) Stop(move.Status);
+        status = move.Status;
         return walking;
+    }
+
+    // Null means the trip is still active. A completed trip reports whether it reached its destination.
+    private bool? TickTravel(TriggerFrame frame, DateTimeOffset now, out string status)
+    {
+        if (islandTravel?.Active == true)
+        {
+            islandTravel.Tick(world, frame.Position, frame.Safe, frame.Loading, frame.Mounted, frame.Casting, [], now, frame.InCombat);
+            walking = islandTravel.Active;
+            status = islandTravel.Status;
+            return walking ? null : islandTravel.TakeArrival() != null;
+        }
+        move.Tick(world, frame.Position, frame.Safe, [], now);
+        walking = move.Active;
+        status = move.Status;
+        return walking ? null : move.TakeArrival() != null;
     }
     private bool GoToPullMob(TriggerMob mob, TriggerFrame frame, DateTimeOffset now)
     {
@@ -388,14 +418,14 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             return;
         }
 
-        if (finishPending && !frame.InCombat) { Advance(frame, now); return; }
+        if (finishPending && !frame.InCombat && !Transferring) { Advance(frame, now); return; }
         var anchor = plan.StandbyPoint!.Value;
         var radius = plan.GrindLight ? AutoTriggerRules.LightStandbyRadius : AutoTriggerRules.PassiveStandbyRadius;
         bool InStandbyRange(Vector3 point) => NavigationRules.Distance(point, anchor) <= radius
             && Math.Abs(point.Y - anchor.Y) <= 3;
-        if (!navigationReady)
+        if (!navigationReady && !Transferring)
         {
-            if (walking) { move.Stop(); walking = false; }
+            if (walking) { StopTravel(); walking = false; }
             passiveParked = InStandbyRange(frame.Position);
             if (!passiveParked)
             {
@@ -412,25 +442,23 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
                 if (mesh.Busy || mesh.Route.Count > 0) { Status = $"{label} · 等待其他导航结束"; return; }
                 if (passiveStandbyAttempts >= 3)
                 {
-                    if (!InStandbyRange(frame.Position)) { Stop($"未找到可到达的挂机点：{move.Status}"); return; }
+                    if (!InStandbyRange(frame.Position)) { Stop($"未找到可到达的挂机点：{islandTravel?.Status ?? move.Status}"); return; }
                     passiveParked = true;
                     return;
                 }
-                if (!Riding(false, frame, now)) return;
+                if (frame.InCombat) { Status = $"{label} · 等待脱战后前往挂机点"; return; }
                 passiveStandbyAttempts++;
                 var angle = Random.Shared.NextSingle() * MathF.Tau;
                 var distance = MathF.Sqrt(Random.Shared.NextSingle()) * radius;
                 var point = anchor + new Vector3(MathF.Cos(angle), 0, MathF.Sin(angle)) * distance;
-                move.Start(plan.Centre with { Position = point }, world, frame.Position, [], now, false,
-                    arrivalRadius: 1, unknownHeight: false,
-                    groundFilter: InStandbyRange, verifiedEndpointTolerance: .1f);
-                if (!move.Active) { Status = move.Status; return; }
-                walking = true;
+                if (!StartTravel(plan.Centre with { Position = point }, frame, now, journey: true,
+                    arrivalRadius: 1, unknownHeight: false, endpointTolerance: .1f, relaxedArrival: false,
+                    status: out var startStatus, groundFilter: InStandbyRange))
+                { Status = $"{label} · {startStatus}"; return; }
             }
-            move.Tick(world, frame.Position, frame.Safe, [], now);
-            if (move.Active) return;
-            walking = false;
-            if (move.TakeArrival() == null) { Status = move.Status; return; }
+            var arrived = TickTravel(frame, now, out var travelStatus);
+            Status = $"{label} · {travelStatus}";
+            if (arrived != true) return;
             passiveParked = true;
         }
 
@@ -532,23 +560,13 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
                     combat.ReleasePullAttack();
                     target = 0;
                 }
-                else if (islandTravel?.Active == true)
-                {
-                    islandTravel.Tick(world, frame.Position, frame.Safe, frame.Loading, frame.Mounted, frame.Casting, [], now, frame.InCombat);
-                    if (islandTravel.Active) return;
-                    walking = false;
-                    if (islandTravel.TakeArrival() == null) { Stop(islandTravel.Status); return; }
-                    if (phase is Phase.Centre or Phase.Approach) { ResetCoverage(frame.Position); SetPhase(Phase.Pull, now); }
-                }
                 else
                 {
-                    move.Tick(world, frame.Position, frame.Safe, [], now);
-                    if (!move.Active)
-                    {
-                        walking = false;
-                        if (move.TakeArrival() == null) { Stop(move.Status); return; }
-                        if (phase is Phase.Centre or Phase.Approach) { ResetCoverage(frame.Position); SetPhase(Phase.Pull, now); }
-                    }
+                    var arrived = TickTravel(frame, now, out var travelStatus);
+                    if (arrived == null && islandTravel?.Active == true) { Status += $" · {travelStatus}"; return; }
+                    if (arrived == false) { Stop(travelStatus); return; }
+                    if (arrived == true && phase is (Phase.Centre or Phase.Approach))
+                    { ResetCoverage(frame.Position); SetPhase(Phase.Pull, now); }
                 }
             }
             if (phase == Phase.Fight)
@@ -575,7 +593,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             }
             if (phase == Phase.Return)
             {
-                if (!TravelRiding(plan, frame, now)) return;
+                if (islandTravel == null && !TravelRiding(plan, frame, now)) return;
                 if (returnHome) { returnHome = false; Go(plan.Route[0], frame, now); return; }
                 if (!walking)
                 {
@@ -592,7 +610,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
                 {
                     if (Vector3.Distance(frame.Position, plan.Route[0]) > 2)
                     {
-                        if (!walking && TravelRiding(plan, frame, now)) Go(plan.Route[0], frame, now);
+                        if (!walking && (islandTravel != null || TravelRiding(plan, frame, now))) Go(plan.Route[0], frame, now);
                         return;
                     }
                     if (walking) return;
@@ -934,9 +952,9 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
         if (phase == Phase.Centre)
         {
             if (walking) return;
-            if (!frame.InCombat && frame.CanMountForTravel && NavigationRules.Distance(frame.Position, plan.Centre.Position) > 5
+            if (islandTravel == null && !frame.InCombat && frame.CanMountForTravel && NavigationRules.Distance(frame.Position, plan.Centre.Position) > 5
                 && !Riding(true, frame, now, optional: true)) return;
-            Go(plan.Centre.Position, frame, now, true, preferCrystals: true);
+            Go(plan.Centre.Position, frame, now, true);
             return;
         }
         if (phase == Phase.Approach)
@@ -946,7 +964,7 @@ internal sealed class AutoTriggerHelper(INavigationMesh mesh, IArrivalActions mo
             var next = living.Where(m => IsPullTarget(m, plan, now))
                 .MinBy(m => NavigationRules.Distance(frame.Position, m.Position));
             if (next == null) SetPhase(Phase.Wait, now);
-            else if (!frame.CanMountForTravel || Riding(true, frame, now, optional: true))
+            else if (islandTravel != null || !frame.CanMountForTravel || Riding(true, frame, now, optional: true))
                 Go(next.Position, frame, now);
             return;
         }

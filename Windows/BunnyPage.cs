@@ -134,7 +134,7 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
                 foreach(var edge in new[]{angle-spread,angle+spread})draw.AddLine(origin,origin+new Vector2(MathF.Sin(edge),-MathF.Cos(edge))*length*scale,ImGui.GetColorU32(0xD0FFFF40),2);
                 draw.AddLine(origin,origin+new Vector2(MathF.Sin(angle),-MathF.Cos(angle))*length*scale,ImGui.GetColorU32(0xA0FFFF40),1);
             }
-            draw.AddCircleFilled(origin,4,ImGui.GetColorU32(0xFFFFFF40));
+            draw.AddCircleFilled(origin,4 * FateMapPage.PointScale,ImGui.GetColorU32(0xFFFFFF40));
         }
         var highlightTreasure = current && state.Active;
         BunnyPoint? tooltip=null;
@@ -149,9 +149,9 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
             {
                 radius = unique ? 6.5f : 4.2f;
                 color = unique ? 0xFF61FF91u : 0xFF48E1FFu;
-                draw.AddCircleFilled(mark, radius + 1.5f, ImGui.GetColorU32(0xF0202020));
+                draw.AddCircleFilled(mark, (radius + 1.5f) * FateMapPage.PointScale, ImGui.GetColorU32(0xF0202020));
             }
-            draw.AddCircleFilled(mark, radius, ImGui.GetColorU32(color));
+            draw.AddCircleFilled(mark, radius * FateMapPage.PointScale, ImGui.GetColorU32(color));
             if(candidate&&zoom>=2)draw.AddText(mark+new Vector2(7,-7),ImGui.GetColorU32(0xFFFFFFFF),(i+1).ToString());
             if(hover&&Vector2.Distance(mark,ImGui.GetIO().MousePos)<9)tooltip=p;
         }

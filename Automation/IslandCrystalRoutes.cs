@@ -63,7 +63,8 @@ internal static class IslandCrystalRoutes
 }
 
 internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, Vector3 player, Vector3 goal,
-    DateTimeOffset started, float nearbyGroundRadius, bool knownHeight = false) : IDisposable
+    DateTimeOffset started, float nearbyGroundRadius, bool knownHeight = false, Func<Vector3, bool>? destinationFilter = null,
+    float? endpointTolerance = null) : IDisposable
 {
     private readonly record struct Leg(Vector3 From, Vector3 To);
     private readonly Dictionary<Leg, float> lengths = new();
@@ -77,6 +78,7 @@ internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, V
     private readonly NavigationEndpoint endpoint = new(mesh);
     private bool initialized;
     public IReadOnlyList<CrystalRoute>? Routes { get; private set; }
+    public bool DestinationHasNoGround { get; private set; }
 
     // Null routes mean measurement was unavailable. An empty list means walking won the comparison.
     public bool Tick(DateTimeOffset now)
@@ -88,8 +90,8 @@ internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, V
             initialized = true;
             var samples = NavigationGround.Candidates(mesh, goal, !knownHeight,
                 nearbyGroundRadius > 0 ? nearbyGroundRadius : NavigationGround.SearchRadius);
-            Vector3? ground = samples.Select(p => (Vector3?)p).FirstOrDefault();
-            if (ground is not { } floor) return true;
+            Vector3? ground = samples.Where(p => destinationFilter?.Invoke(p) != false).Select(p => (Vector3?)p).FirstOrDefault();
+            if (ground is not { } floor) { DestinationHasNoGround = true; return true; }
             destination = floor;
             points = IslandCrystalRoutes.All.Where(c => c.Territory == territory)
                 .Select(c => (Crystal: c, Ground: CrystalGround(c)))
@@ -108,7 +110,10 @@ internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, V
         if (path != null)
         {
             if (!path.IsCompleted) return false;
-            endpoint.TakeDestination(out var result);
+            var isDestination = current.To == destination;
+            endpoint.TakeDestination(out var result, isDestination ? endpointTolerance ?? 3 : .5f);
+            if (isDestination && result.Count > 0 && destinationFilter?.Invoke(result[^1]) == false)
+                result = [];
             if (result.Count == 0)
             {
                 path = endpoint.Next(current.From, cancel.Token);
@@ -128,7 +133,8 @@ internal sealed class CrystalPathPlanner(INavigationMesh mesh, uint territory, V
                 endpoint.Start(anchor, false, IslandCrystalRoutes.GroundRadius,
                     p => IslandCrystalRoutes.NearGround(p, anchor));
             }
-            else endpoint.Start(current.To, unknownHeight: false);
+            else endpoint.Start(goal, unknownHeight: !knownHeight,
+                nearbyGroundRadius > 0 ? nearbyGroundRadius : NavigationGround.SearchRadius, destinationFilter);
             path = endpoint.Next(current.From, cancel.Token);
             if (path == null) lengths[current] = float.PositiveInfinity;
             return false;

@@ -118,7 +118,8 @@ internal sealed partial class AutomationHelpers
         surveyStarted = now;
         surveyStatus = SurveyResult + " 正在返回营地。";
         var goal = ArrivalRules.Position(player, camp.Position, 7);
-        surveyTravel.Start(new(world.Territory, world.Map, goal, "营地"), world, player, [], now, waitWithoutFate: false);
+        surveyTravel.Start(new(world.Territory, world.Map, goal, "营地"), world, player, [], now,
+            summonMount: EnsureTravelMount(), waitWithoutFate: false, preferCrystals: true);
         if (!surveyTravel.Active) CompleteSurvey($"返回营地失败：{surveyTravel.Status}");
     }
 

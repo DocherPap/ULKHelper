@@ -28,6 +28,7 @@ internal sealed partial class AutomationHelpers
     private DateTimeOffset nextDragonCheck;
     // Local CN BNpcName sheet: 虚无冰雪龙.
     private const uint PagosDragonNameId = 7473;
+    internal const int PagosDragonWalkRange = 20;
     private string commonStatus = "请选择常用功能。";
     private bool commonUsesNavigation, commonUsesFollow;
     private DateTimeOffset nextInvite, nextAccept, nextShout;
@@ -72,7 +73,7 @@ internal sealed partial class AutomationHelpers
         if (loading || !SafeState() || now < nextDragonCheck || objects.LocalPlayer is not { } player) return;
         nextDragonCheck = now.AddMilliseconds(100);
         var nearby = objects.OfType<IBattleNpc>().Any(npc => npc.NameId == PagosDragonNameId && !npc.IsDead
-            && Vector3.DistanceSquared(player.Position, npc.Position) <= 15 * 15);
+            && Vector3.DistanceSquared(player.Position, npc.Position) <= PagosDragonWalkRange * PagosDragonWalkRange);
         if (nearby && !wasNearPagosDragon)
         {
             var control = Control.Instance();

@@ -1,10 +1,14 @@
 using System.Numerics;
 using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.ClientState.Objects.Enums;
+using Dalamud.Game.ClientState.Objects.SubKinds;
 using FateState = Dalamud.Game.ClientState.Fates.FateState;
 using Dalamud.Game.ClientState.Objects.Types;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using FFXIVClientStructs.FFXIV.Client.Game.Fate;
+using GameObject = FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject;
 using ULKHelper.Bunnies;
 using ULKHelper.Fates;
 
@@ -21,21 +25,30 @@ internal sealed partial class AutomationHelpers
     private Queue<Vector3>? bunnyFightCandidates;
     private Func<Vector3, bool>? bunnyFightGround;
     private readonly IslandTravelHelper bunnyTravel;
+    private readonly TravelMountHelper bunnySearchMount;
     private readonly HashSet<(ushort Id, int Start)> bunnyHandled = [];
     private IBunnyTracker? bunnyTracker;
     private WorldContext? bunnyWorld;
     private HashSet<ushort> bunnySelected = [];
     private (ushort Id, int Start) bunnyFate;
-    private enum BunnyPhase { Waiting, Travel, Fight, Reward, Search, Chest }
+    private enum BunnyPhase { Waiting, Travel, Fight, Reward, Search, SearchFight, SearchRemount, Chest }
     private BunnyPhase bunnyPhase;
     private DateTimeOffset bunnyStarted, bunnyPhaseAt, nextBunnyTick, nextBunnyCarrot, lastBunnyClue, nextBunnySync, nextBunnyMove;
     private Vector3? bunnyGoal, lastFailedClueOrigin;
     private bool bunnyCombatOwned, bunnyCombatEnabled, bunnyDirectionOnly;
-    private int bunnySyncAttempts, bunnyCarrotFailures;
+    private int bunnySyncAttempts, bunnyCarrotFailures, bunnyVeryNearClues;
     private int bunnyLimit;
     private int bunnyMinimumSeconds;
     private bool bunnyTreasureCounted, bunnySearchOnly, bunnyStandbyIssued, bunnyStandbyArrived;
     private DateTimeOffset bunnyHuntStarted;
+    private BunnyChestSighting? bunnyChestTarget;
+    private DateTimeOffset nextBunnyChestAction;
+    private int bunnyChestDismounts, bunnyChestInteractions;
+    private bool bunnyChestApproachStarted;
+    private bool bunnySearchCombatPending, bunnySearchCombatOwned, bunnySearchAtGoal;
+    private ulong bunnySearchCombatTarget;
+    private int bunnySearchDismounts;
+    private DateTimeOffset nextBunnySearchDismount;
     public int BunnyFoundCount { get; private set; }
     public bool BunnyAutomationActive => bunnyWorld.HasValue;
     public string BunnyAutomationStatus { get; private set; } = "尚未开始自动挖宝。";
@@ -122,6 +135,8 @@ internal sealed partial class AutomationHelpers
         bunnyWorld = null;
         bunnyTravel.Stop();
         StopBunnyCombat();
+        ReleaseBunnySearchCombat();
+        bunnySearchCombatOwned = false;
         BunnyAutomationStatus = status;
         if (bunnySearchOnly) commonStatus = status;
         bunnySearchOnly = false;
@@ -131,9 +146,11 @@ internal sealed partial class AutomationHelpers
     {
         bunnyGoal = lastFailedClueOrigin = null;
         bunnyDirectionOnly = false;
+        bunnySearchCombatPending = bunnySearchAtGoal = false;
         bunnyTreasureCounted = false;
         bunnyHuntStarted = now;
         bunnyCarrotFailures = 0;
+        bunnyVeryNearClues = 0;
         lastBunnyClue = default;
         nextBunnyCarrot = now;
         SetBunnyPhase(BunnyPhase.Search, now, "已获得指引财宝，等待幸运胡萝卜线索。");
@@ -145,9 +162,19 @@ internal sealed partial class AutomationHelpers
         nextBunnyTick = now.AddMilliseconds(250);
         if (world != bunnyWorld || !client.IsLoggedIn || now - bunnyStarted >= TimeSpan.FromHours(2))
         { StopBunnyAutomation("已离开副本或达到两小时上限。"); return; }
-        var phaseLimit = bunnyPhase is BunnyPhase.Search or BunnyPhase.Chest or BunnyPhase.Fight ? 15 : 5;
-        if (bunnyPhase != BunnyPhase.Waiting && now - bunnyPhaseAt >= TimeSpan.FromMinutes(phaseLimit))
-        { StopBunnyAutomation("自动挖宝当前阶段已超时。"); return; }
+        var phaseLimit = bunnyPhase switch
+        {
+            BunnyPhase.Chest => TimeSpan.FromSeconds(12),
+            BunnyPhase.Search or BunnyPhase.Fight or BunnyPhase.SearchFight => TimeSpan.FromMinutes(15),
+            BunnyPhase.SearchRemount => TimeSpan.FromSeconds(15),
+            _ => TimeSpan.FromMinutes(5),
+        };
+        if (bunnyPhase != BunnyPhase.Waiting && now - bunnyPhaseAt >= phaseLimit)
+        {
+            StopBunnyAutomation(bunnyPhase == BunnyPhase.Chest ? "未能确认本轮宝箱已打开，自动寻宝已停止。"
+                : "自动挖宝当前阶段已超时。");
+            return;
+        }
         if (loading && bunnyTravel.Transferring) return;
         if (loading || objects.LocalPlayer is not { IsDead: false } player)
         { StopBunnyAutomation("角色状态变化，已停止自动挖宝。"); return; }
@@ -162,17 +189,48 @@ internal sealed partial class AutomationHelpers
         var inCombat = conditions[ConditionFlag.InCombat];
         var snapshot = bunnyTracker!.Snapshot;
         var hasBuff = player.StatusList.Any(s => s.StatusId == 1531);
+        if (bunnyPhase == BunnyPhase.Search && bunnyTravel.Active && (inCombat || bunnySearchCombatPending))
+        {
+            bunnySearchCombatPending = true;
+            bunnyTravel.Tick(world, player.Position, safe, loading, mounted, player.IsCasting, [], now, inCombat);
+            if (bunnyTravel.Active)
+            {
+                BunnyAutomationStatus = $"途中交战，先到当前线索终点 · {bunnyTravel.Status}";
+                return;
+            }
+            bunnySearchCombatPending = false;
+            if (bunnyTravel.TakeArrival() == null)
+            { StopBunnyAutomation($"无法到达线索终点：{bunnyTravel.Status}"); return; }
+            bunnySearchAtGoal = true;
+            if (inCombat) BeginBunnySearchFight(now);
+            else BeginBunnySearchRemount(now);
+        }
+        if (bunnyPhase == BunnyPhase.Search && bunnySearchAtGoal && inCombat)
+            BeginBunnySearchFight(now);
+        if (bunnyPhase == BunnyPhase.SearchFight)
+        {
+            TickBunnySearchFight(player, mounted, inCombat, now);
+            return;
+        }
+        if (bunnyPhase == BunnyPhase.SearchRemount)
+        {
+            if (inCombat) { BeginBunnySearchFight(now); return; }
+            if (!mounted && !EnsureTravelMount())
+            { StopBunnyAutomation("脱战后找不到可用的坐骑。"); return; }
+            var mount = bunnySearchMount.Tick(mounted, player.IsCasting, false, now);
+            if (mount == TravelMountResult.Failed) { StopBunnyAutomation("脱战后无法上坐骑。"); return; }
+            if (mount != TravelMountResult.Mounted) return;
+            if (snapshot.Clues.LastOrDefault() is { } oldClue && oldClue.Time > lastBunnyClue)
+                lastBunnyClue = oldClue.Time;
+            nextBunnyCarrot = now;
+            SetBunnyPhase(BunnyPhase.Search, now, "已脱战并上坐骑，继续检查指引财宝。");
+        }
         if ((bunnyPhase is BunnyPhase.Search or BunnyPhase.Chest) && !bunnyTreasureCounted
             && snapshot.Territory == world.Territory && snapshot.LastTreasureAt is { } found && found >= bunnyHuntStarted)
         {
             bunnyTreasureCounted = true;
             BunnyFoundCount++;
-            bunnyTravel.Stop();
-            if (bunnyLimit > 0 && BunnyFoundCount >= bunnyLimit)
-                StopBunnyAutomation($"已挖出 {BunnyFoundCount} 个宝箱，达到目标。请手动打开宝箱。");
-            else if (bunnyPhase != BunnyPhase.Chest)
-                SetBunnyPhase(BunnyPhase.Chest, now, $"已挖出 {BunnyFoundCount} 个宝箱，请手动打开。");
-            return;
+            BeginBunnyChest(now, "已发现财宝，正在识别本轮宝箱。");
         }
         if (hasBuff && bunnyPhase is BunnyPhase.Waiting or BunnyPhase.Travel or BunnyPhase.Fight or BunnyPhase.Reward)
         {
@@ -290,45 +348,35 @@ internal sealed partial class AutomationHelpers
                 SetBunnyPhase(BunnyPhase.Waiting, now, "未获得指引财宝，等待下一场幸福兔 FATE。");
             return;
         }
-        if (bunnyPhase == BunnyPhase.Chest)
+        if (bunnyPhase == BunnyPhase.Chest || !hasBuff)
         {
-            if (bunnySearchOnly)
-            {
-                if (!hasBuff && now - bunnyPhaseAt >= TimeSpan.FromSeconds(1))
-                    StopBunnyAutomation("指引财宝已结束，自动寻找宝藏已停止。");
-                return;
-            }
-            if (!hasBuff && now - bunnyPhaseAt >= TimeSpan.FromSeconds(10))
-                SetBunnyPhase(BunnyPhase.Waiting, now, "本轮寻宝结束，等待下一场幸福兔 FATE。");
-            return;
-        }
-        if (!hasBuff)
-        {
-
-            bunnyTravel.Stop();
-            SetBunnyPhase(BunnyPhase.Chest, now, "指引财宝已结束，请确认附近是否有待打开的宝箱。");
+            if (bunnyPhase != BunnyPhase.Chest)
+                BeginBunnyChest(now, "指引财宝已结束，正在确认本轮发现结果。");
+            TickBunnyChest(world, player, snapshot, mounted, inCombat, now);
             return;
         }
         if (bunnyTravel.Active)
         {
             bunnyTravel.Tick(world, player.Position, safe, false, mounted, player.IsCasting, [], now, inCombat);
             if (bunnyTravel.Active) BunnyAutomationStatus = bunnyTravel.Status;
-            else if (bunnyTravel.TakeArrival() == null)
-                BunnyAutomationStatus = $"前往线索失败，等待下次提示：{bunnyTravel.Status}";
+            else
+            {
+                bunnySearchAtGoal = bunnyTravel.TakeArrival() != null;
+                if (!bunnySearchAtGoal) BunnyAutomationStatus = $"前往线索失败，等待下次提示：{bunnyTravel.Status}";
+            }
         }
         if (bunnyTravel.Transferring) return;
         var clue = snapshot.Active && snapshot.Territory == world.Territory ? snapshot.Clues.LastOrDefault() : null;
         if (clue != null && clue.Time > lastBunnyClue)
         {
             lastBunnyClue = clue.Time;
+            if (clue.Distance == BunnyDistance.VeryNear) bunnyVeryNearClues++;
             if (clue.Distance == BunnyDistance.Here)
             {
                 bunnyTravel.Stop();
-                if (bunnySearchOnly) StopBunnyAutomation("已到宝藏附近，请手动打开宝箱。");
-                else SetBunnyPhase(BunnyPhase.Chest, now, "已找到宝箱，请手动打开。");
-                return;
+                BunnyAutomationStatus = "已到财宝附近，继续探测宝箱。";
             }
-            UpdateBunnyGoal(world, player.Position, snapshot, clue, now);
+            else UpdateBunnyGoal(world, player.Position, snapshot, clue, now);
         }
         if (bunnyTravel.Active || now < nextBunnyCarrot || player.IsCasting || inCombat || combat.CleanupPending) return;
         nextBunnyCarrot = now.AddSeconds(10);
@@ -341,6 +389,147 @@ internal sealed partial class AutomationHelpers
         }
         else if (++bunnyCarrotFailures >= 3)
             StopBunnyAutomation("连续三次无法使用幸运胡萝卜，已停止。");
+    }
+
+    private void BeginBunnySearchFight(DateTimeOffset now)
+    {
+        bunnySearchDismounts = 0;
+        nextBunnySearchDismount = now;
+        SetBunnyPhase(BunnyPhase.SearchFight, now, "已到线索终点，准备下坐骑清怪。");
+    }
+
+    private void BeginBunnySearchRemount(DateTimeOffset now)
+    {
+        bunnySearchMount.Reset();
+        SetBunnyPhase(BunnyPhase.SearchRemount, now, "已脱战，正在召唤坐骑。");
+    }
+
+    private bool ReleaseBunnySearchCombat()
+    {
+        if (!bunnySearchCombatOwned) return true;
+        if (!combat.Disable()) return false;
+        bunnySearchCombatOwned = false;
+        bunnySearchCombatTarget = 0;
+        return true;
+    }
+
+    private void TickBunnySearchFight(IPlayerCharacter player, bool mounted, bool inCombat, DateTimeOffset now)
+    {
+        if (!inCombat)
+        {
+            if (!ReleaseBunnySearchCombat())
+            { BunnyAutomationStatus = "已脱战，正在还原寻宝战斗控制。"; return; }
+            BeginBunnySearchRemount(now);
+            return;
+        }
+        if (player.IsCasting) return;
+        if (mounted)
+        {
+            if (now < nextBunnySearchDismount) return;
+            if (bunnySearchDismounts >= 3) { StopBunnyAutomation("到达线索终点后无法下坐骑。"); return; }
+            bunnySearchDismounts++;
+            nextBunnySearchDismount = now.AddSeconds(1);
+            mounts.Dismount();
+            return;
+        }
+        var target = arrivalGame.ReadCleanupTarget(player.Position, targets.Target?.GameObjectId ?? 0, includeFateMobs: true);
+        if (target == 0)
+        {
+            if (bunnySearchCombatOwned && targets.Target?.GameObjectId == bunnySearchCombatTarget)
+                targets.Target = null;
+            BunnyAutomationStatus = "已到线索终点，等待读取交战目标。";
+            return;
+        }
+        if (!bunnySearchCombatOwned)
+        {
+            if (combat.CleanupPending) return;
+            if (combat.PrepareStart() is { } error) { StopBunnyAutomation(error); return; }
+            bunnySearchCombatOwned = true;
+        }
+        if (!combat.Target(target)) return;
+        bunnySearchCombatTarget = target;
+        if (!combat.Healthy && !combat.Enable())
+        { StopBunnyAutomation(combat.Error ?? "无法开启寻宝战斗的 RSR 和 BossMod。"); return; }
+        BunnyAutomationStatus = "已到线索终点，正在清怪并躲避机制。";
+    }
+
+    private void BeginBunnyChest(DateTimeOffset now, string status)
+    {
+        bunnyTravel.Stop();
+        bunnyChestTarget = null;
+        bunnyChestDismounts = bunnyChestInteractions = 0;
+        bunnyChestApproachStarted = false;
+        nextBunnyChestAction = now;
+        SetBunnyPhase(BunnyPhase.Chest, now, status);
+    }
+
+    private unsafe void TickBunnyChest(WorldContext world, IPlayerCharacter player, BunnySnapshot snapshot,
+        bool mounted, bool inCombat, DateTimeOffset now)
+    {
+        if (!bunnyTreasureCounted)
+        {
+            // The system discovery message can arrive just after the treasure buff disappears.
+            if (now - bunnyPhaseAt < TimeSpan.FromSeconds(2)) return;
+            if (bunnySearchOnly) StopBunnyAutomation("指引财宝已结束，未收到发现财宝的提示。");
+            else SetBunnyPhase(BunnyPhase.Waiting, now, "本轮未发现财宝，等待下一场幸福兔 FATE。");
+            return;
+        }
+
+        if (bunnyChestInteractions == 0) bunnyChestTarget = snapshot.TreasureChest;
+        if (bunnyChestTarget is not { } sighting) { bunnyTravel.Stop(); return; }
+        var chest = objects.FirstOrDefault(obj => obj.GameObjectId == sighting.Id
+            && (obj.ObjectKind is ObjectKind.EventObj or ObjectKind.Treasure) && BunnyRules.IsChestBaseId(obj.BaseId));
+        if (chest is not { IsTargetable: true, Address: not 0 })
+        {
+            if (bunnyChestInteractions > 0 && Vector3.DistanceSquared(player.Position, sighting.Position) <= 16)
+            {
+                if (bunnySearchOnly || bunnyLimit > 0 && BunnyFoundCount >= bunnyLimit)
+                    StopBunnyAutomation($"已打开宝箱，本次挖出 {BunnyFoundCount} 个。");
+                else SetBunnyPhase(BunnyPhase.Waiting, now, "已打开宝箱，等待下一场幸福兔 FATE。");
+            }
+            return;
+        }
+        if (player.IsCasting || inCombat) return;
+
+        var position = chest.Position;
+        if (!NavigationRules.Finite(position)) return;
+        if (Vector3.DistanceSquared(player.Position, position) > 9)
+        {
+            if (!bunnyChestApproachStarted)
+            {
+                bunnyChestApproachStarted = true;
+                bunnyTravel.Start(new(world.Territory, world.Map, position, "幸福兔宝箱"),
+                    world, player.Position, [], now, useCrystals: false, waitWithoutFate: false,
+                    arrivalRadius: .75f, unknownHeight: false,
+                    groundFilter: p => Vector3.DistanceSquared(p, position) <= 4);
+            }
+            if (bunnyTravel.Active) bunnyTravel.Tick(world, player.Position, true, false, mounted, false, [], now);
+            if (!bunnyTravel.Active && bunnyTravel.TakeArrival() == null)
+                StopBunnyAutomation($"无法靠近宝箱：{bunnyTravel.Status}");
+            else BunnyAutomationStatus = "正在靠近宝箱，进入交互范围后自动打开。";
+            return;
+        }
+        if (bunnyTravel.Active) bunnyTravel.Stop();
+        if (mounted)
+        {
+            if (now < nextBunnyChestAction) return;
+            if (bunnyChestDismounts >= 3) { StopBunnyAutomation("无法下坐骑打开宝箱。"); return; }
+            bunnyChestDismounts++;
+            nextBunnyChestAction = now.AddSeconds(1);
+            mounts.Dismount();
+            BunnyAutomationStatus = "已到宝箱旁，正在下坐骑开箱。";
+            return;
+        }
+        if (bunnyChestInteractions >= 3 || bunnyChestInteractions > 0 && now < nextBunnyChestAction) return;
+        var targetSystem = TargetSystem.Instance();
+        if (targetSystem == null) return;
+        targetSystem->SetHardTarget((GameObject*)chest.Address);
+        if ((ulong)targetSystem->GetTargetObjectId() != sighting.Id)
+        { StopBunnyAutomation("无法选中本轮宝箱，自动寻宝已停止。"); return; }
+        targetSystem->InteractWithObject((GameObject*)chest.Address);
+        bunnyChestInteractions++;
+        nextBunnyChestAction = now.AddSeconds(1);
+        BunnyAutomationStatus = "已交互宝箱，正在确认开箱结果。";
     }
 
     private unsafe void TickBunnyFight(WorldContext world, Vector3 player, Vector3 fateCentre, float fateRadius, DateTimeOffset now)
@@ -511,6 +700,7 @@ internal sealed partial class AutomationHelpers
         var island = ElementalMaps?.Islands.FirstOrDefault(i => i.Territory == world.Territory && i.MapId == world.Map);
         if (island == null) return;
         Vector3 goal;
+        var movementLimit = BunnyRules.MovementLimit(clue.Distance, bunnyVeryNearClues);
         var unknownHeight = true;
         var unique = snapshot.Candidates.Count == 1 ? snapshot.Points.FirstOrDefault(p => snapshot.Candidates.Contains(p.Id)) : null;
         var refineNearby = unique != null && clue.Direction != null && !bunnyTravel.Active && bunnyGoal is { } previousGoal
@@ -529,19 +719,28 @@ internal sealed partial class AutomationHelpers
         {
             var (min, max) = BunnyRules.Range(clue.Distance);
             var distance = float.IsFinite(max) ? (min + max) / 2 : 200;
+            if (float.IsFinite(movementLimit)) distance = movementLimit;
             var angle = (int)direction * MathF.PI / 4;
             goal = clue.Position + new Vector3(MathF.Sin(angle) * distance, 0, -MathF.Cos(angle) * distance);
             var uv = MapProjection.ToUv(MapProjection.WorldToMap(goal, island), island.SizeFactor);
             goal = MapProjection.MapToWorld(MapProjection.ToMap(Vector2.Clamp(uv, new(.01f), new(.99f)), island.SizeFactor), island);
         }
         else return;
-        if (bunnyTravel.Active && bunnyGoal is { } old && NavigationRules.Distance(old, goal) <= 5) return;
+        var limited = BunnyRules.LimitMovement(player, goal, movementLimit);
+        if (limited != goal) unknownHeight = true;
+        goal = limited;
+        var arrivalRadius = float.IsFinite(movementLimit) ? .5f : 3;
+        if (bunnyTravel.Active && bunnyGoal is { } old && NavigationRules.Distance(old, goal) <= arrivalRadius) return;
         bunnyTravel.Stop();
         bunnyGoal = goal;
-        if (NavigationRules.Distance(player, goal) <= 3) return;
+        bunnySearchAtGoal = NavigationRules.Distance(player, goal) <= arrivalRadius;
+        if (bunnySearchAtGoal) return;
         bunnyTravel.Start(new(world.Territory, world.Map, goal, "幸福兔宝箱线索"), world, player, [], now,
-            summonMount: EnsureTravelMount(), waitWithoutFate: false, unknownHeight: unknownHeight,
-            nearbyGroundRadius: NavigationRules.BunnyNearbyGroundRadius);
+            summonMount: EnsureTravelMount(), useCrystals: !float.IsFinite(movementLimit),
+            waitWithoutFate: false, unknownHeight: unknownHeight, preferCrystals: true,
+            arrivalRadius: arrivalRadius, nearbyGroundRadius: NavigationRules.BunnyNearbyGroundRadius,
+            groundFilter: float.IsFinite(movementLimit) ? p => NavigationRules.Distance(player, p) <= movementLimit + .1f : null,
+            verifiedEndpointTolerance: float.IsFinite(movementLimit) ? .5f : null, bypassCrystalsInCombat: true);
         BunnyAutomationStatus = bunnyTravel.Active ? "正在前往宝箱线索。" : bunnyTravel.Status;
     }
 }

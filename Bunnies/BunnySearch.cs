@@ -9,8 +9,10 @@ internal sealed record BunnyPoint(uint Territory,string Id,float X,float Y,float
 internal enum BunnyDirection { North, NorthEast, East, SouthEast, South, SouthWest, West, NorthWest }
 internal enum BunnyDistance { FarAway, Far, Near, VeryNear, Here }
 internal sealed record BunnyClue(Vector3 Position,BunnyDistance Distance,string Text,DateTimeOffset Time,BunnyDirection? Direction=null);
+internal sealed record BunnyChestSighting(ulong Id, Vector3 Position, DateTimeOffset FirstSeen);
 internal sealed record BunnySnapshot(uint Territory,bool Active,Vector3? Player,IReadOnlyList<BunnyPoint> Points,IReadOnlySet<string> Candidates,
-    IReadOnlyList<BunnyClue> Clues,string Status,bool Conflict=false,string? Flagged=null,long ResetVersion=0,DateTimeOffset? LastTreasureAt=null);
+    IReadOnlyList<BunnyClue> Clues,string Status,bool Conflict=false,string? Flagged=null,long ResetVersion=0,DateTimeOffset? LastTreasureAt=null,
+    BunnyChestSighting? TreasureChest = null);
 internal interface IBunnyTracker
 {
     BunnySnapshot Snapshot{get;}
@@ -57,7 +59,30 @@ internal static class BunnyCalibration
 internal static class BunnyRules
 {
     public static bool CanRecordHint(bool buff,int channel,TimeSpan frameAge) => buff&&channel==57&&frameAge>=TimeSpan.Zero&&frameAge<=TimeSpan.FromMilliseconds(500);
+    // Local CN EObjName rows for the three Happy Bunny treasure coffers.
+    public static bool IsChestBaseId(uint id) => id is 2009530 or 2009531 or 2009532;
+
+    public static bool MatchesDiscoveredChest(BunnyChestSighting chest, BunnyClue clue) =>
+        chest.FirstSeen >= clue.Time.AddSeconds(-1) && chest.FirstSeen <= clue.Time.AddSeconds(2)
+        && Vector3.DistanceSquared(chest.Position, clue.Position) <= 64
+        && MathF.Abs(chest.Position.Y - clue.Position.Y) <= 3;
     public const float CandidateRadius = 5;
+    public static float MovementLimit(BunnyDistance distance, int veryNearCount) => distance switch
+    {
+        BunnyDistance.Far => 25,
+        BunnyDistance.VeryNear => veryNearCount > 3 ? 2.5f : 5,
+        _ => float.PositiveInfinity,
+    };
+
+    public static Vector3 LimitMovement(Vector3 origin, Vector3 goal, float limit)
+    {
+        var delta = new Vector2(goal.X - origin.X, goal.Z - origin.Z);
+        var length = delta.Length();
+        if (length <= limit || length == 0) return goal;
+        var step = delta * (limit / length);
+        // An intermediate point does not inherit the final chest's floor height.
+        return new(origin.X + step.X, origin.Y, origin.Z + step.Y);
+    }
     public static (float Min,float Max) Range(BunnyDistance d)=>d switch
     {
         BunnyDistance.FarAway=>(150,float.PositiveInfinity),BunnyDistance.Far=>(80,150),

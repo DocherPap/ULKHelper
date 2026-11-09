@@ -21,11 +21,12 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     private Vector3? sourceAnchor;
     private DateTimeOffset started, phaseAt;
     private DateTimeOffset? crystalCombatAt;
-    private enum Phase { Plan, Mount, Source, Menu, Transfer, Final }
+    private enum Phase { Plan, Mount, Source, Menu, Transfer, Direct, Final }
     private Phase phase;
     private int dismounts;
     private DateTimeOffset nextDismount;
     private bool requireMount, resumeFinal, useCrystals, waitWithoutFate;
+    private bool bypassCrystalsInCombat;
     private float finalArrivalRadius;
     private bool finalUnknownHeight, preferCrystals;
     private float? verifiedFinalEndpointTolerance;
@@ -44,13 +45,14 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     public void Start(MapDestination destination, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now,
         bool summonMount = false, bool useCrystals = true, bool waitWithoutFate = true, float arrivalRadius = 3,
         bool unknownHeight = true, float nearbyGroundRadius = 25, bool preferCrystals = false, Func<Vector3, bool>? groundFilter = null,
-        float? verifiedEndpointTolerance = null)
+        float? verifiedEndpointTolerance = null, bool bypassCrystalsInCombat = false)
     {
         if (Active) { Status = "请先停止当前导航。"; return; }
         Stop(); CrystalDecision = null; goal = destination; context = world; origin = player; started = now;
         if (destination.Territory != world.Territory || destination.Map != world.Map || !NavigationRules.Finite(player))
         { Stop("目的地范围无效。"); return; }
         requireMount = summonMount; this.useCrystals = useCrystals; resumeFinal = false; travelMount.Reset();
+        this.bypassCrystalsInCombat = bypassCrystalsInCombat;
         this.waitWithoutFate = waitWithoutFate;
         finalArrivalRadius = arrivalRadius;
         finalUnknownHeight = unknownHeight;
@@ -61,7 +63,8 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
         Active = true;
         if (useCrystals && preferCrystals && mesh.SupportsRouteEstimates)
         {
-            planner = new(mesh, world.Territory, player, destination.Position, now, nearbyGroundRadius, knownHeight: !unknownHeight);
+            planner = new(mesh, world.Territory, player, destination.Position, now, nearbyGroundRadius,
+                knownHeight: !unknownHeight, destinationFilter: groundFilter, endpointTolerance: verifiedEndpointTolerance);
             phase = Phase.Plan;
             Status = "正在用 vnavmesh 比较直达与水晶路线。";
             return;
@@ -149,6 +152,28 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
         {
             if (world != context || !safe && !(Transferring && transferScreen)) { Stop("角色或地图状态变化，已停止导航。"); return; }
             if (now - started >= TimeSpan.FromMinutes(5)) { Stop("导航超过5分钟，已停止。"); return; }
+            if (inCombat && bypassCrystalsInCombat && phase is (Phase.Plan or Phase.Mount or Phase.Source or Phase.Menu))
+            {
+                planner?.Dispose();
+                planner = null;
+                walk.Stop();
+                if (phase == Phase.Menu) crystals.Cancel();
+                useCrystals = false;
+                CrystalDecision = "途中交战，直达当前线索终点。";
+                phase = Phase.Direct;
+                phaseAt = now;
+            }
+            if (phase == Phase.Direct)
+            {
+                if (mesh.Busy)
+                {
+                    Status = "等待旧路线释放，随后直达线索终点。";
+                    if (now - phaseAt >= TimeSpan.FromSeconds(2)) Stop("旧路线仍在规划，无法继续前往线索终点。");
+                    return;
+                }
+                Final(player, fates, now);
+                return;
+            }
             if (phase == Phase.Plan)
             {
                 if (planner != null)
@@ -156,6 +181,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
                     try
                     {
                         if (!planner.Tick(now)) return;
+                        if (planner.DestinationHasNoGround) { Stop("目的地附近没有符合条件的可站立地面。"); return; }
                         measuredRoutes = planner.Routes;
                     }
                     catch (Exception)

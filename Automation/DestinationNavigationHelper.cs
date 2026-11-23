@@ -10,6 +10,7 @@ internal interface INavigationMesh
     IReadOnlyList<Vector3> Route { get; }
     Vector3? Ground(Vector3 position, bool unknownHeight);
     Task<List<Vector3>> FindPath(Vector3 from, Vector3 to, CancellationToken cancellation);
+    bool? ClearCliffDrop(CliffDrop drop) => null;
     void Move(List<Vector3> route);
     void Stop();
 }
@@ -28,6 +29,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
     private readonly NavigationEndpoint endpoint = new(mesh);
     private bool relaxedArrival;
     private float? verifiedEndpointTolerance;
+    private bool expandGroundSearch;
     private Vector3 progressPosition;
     private DateTimeOffset progressAt;
     private List<Vector3> issued = [];
@@ -41,7 +43,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
 
     public MapDestination? TakeArrival() { var value = arrival; arrival = null; return value; }
 
-    public void Start(MapDestination goal, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool waitWithoutFate = true, float arrivalRadius = 3, bool unknownHeight = true, bool relaxedArrival = false, float nearbyGroundRadius = 25, Func<Vector3, bool>? groundFilter = null, float? verifiedEndpointTolerance = null, float? groundSearchRadius = null)
+    public void Start(MapDestination goal, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now, bool waitWithoutFate = true, float arrivalRadius = 3, bool unknownHeight = true, bool relaxedArrival = false, float nearbyGroundRadius = 25, Func<Vector3, bool>? groundFilter = null, float? verifiedEndpointTolerance = null, float? groundSearchRadius = null, bool expandGroundSearch = false)
     {
         if (Active) { Status = "请先停止当前导航。"; return; }
         if (goal.Territory != world.Territory || goal.Map != world.Map) { Status = "目的地不在当前地图。"; return; }
@@ -52,6 +54,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
             if (mesh.Busy || mesh.Route.Count > 0) { Status = "vnavmesh 正被其他任务使用。"; return; }
             destination = goal; unknownDestinationHeight = unknownHeight;
             this.groundFilter = groundFilter;
+            this.expandGroundSearch = expandGroundSearch;
             this.relaxedArrival = relaxedArrival;
             this.verifiedEndpointTolerance = verifiedEndpointTolerance;
             this.nearbyGroundRadius = groundSearchRadius is { } radius
@@ -154,7 +157,7 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
     {
         if (mesh.Busy || mesh.Route.Count > 0) { Stop("vnavmesh 正被其他任务使用。"); return; }
         requestedGround = target;
-        endpoint.Start(target, unknownHeight, nearbyGroundRadius, groundFilter);
+        endpoint.Start(target, unknownHeight, nearbyGroundRadius, groundFilter, expandGroundSearch);
         if (!TryNearbyGround(player)) Stop($"目标及周围 {nearbyGroundRadius:0.#} 米内未找到可行走地面。");
     }
 
@@ -202,7 +205,16 @@ internal sealed class DestinationNavigationHelper(INavigationMesh mesh) : IDispo
 internal static class NavigationGround
 {
     public const float SearchRadius = 25;
-    public static IEnumerable<Vector3> Candidates(INavigationMesh mesh, Vector3 target, bool unknownHeight, float radius = SearchRadius)
+    public static IEnumerable<Vector3> Candidates(INavigationMesh mesh, Vector3 target, bool unknownHeight, float radius = SearchRadius, bool expandOnce = false)
+    {
+        var seen = new HashSet<Vector3>();
+        foreach (var point in CandidatesWithin(mesh, target, unknownHeight, radius))
+            if (seen.Add(point)) yield return point;
+        if (expandOnce && radius > 0)
+            foreach (var point in CandidatesWithin(mesh, target, unknownHeight, radius * 1.5f))
+                if (seen.Add(point)) yield return point;
+    }
+    private static IEnumerable<Vector3> CandidatesWithin(INavigationMesh mesh, Vector3 target, bool unknownHeight, float radius)
     {
         var centre = mesh.Ground(target, unknownHeight);
         if (centre is { } exact && Valid(exact) && NavigationRules.Distance(exact, target) < .1f)
@@ -233,10 +245,10 @@ internal sealed class NavigationEndpoint(INavigationMesh mesh)
     private IEnumerator<Vector3>? candidates;
     private Task<List<Vector3>>? pending;
     public Vector3 Point { get; private set; }
-    public void Start(Vector3 destination, bool unknownHeight, float radius = NavigationGround.SearchRadius, Func<Vector3, bool>? filter = null)
+    public void Start(Vector3 destination, bool unknownHeight, float radius = NavigationGround.SearchRadius, Func<Vector3, bool>? filter = null, bool expandOnce = false)
     {
         Reset();
-        candidates = NavigationGround.Candidates(mesh, destination, unknownHeight, Math.Max(0, radius))
+        candidates = NavigationGround.Candidates(mesh, destination, unknownHeight, Math.Max(0, radius), expandOnce)
             .Where(p => filter?.Invoke(p) != false).GetEnumerator();
     }
     public Task<List<Vector3>>? Next(Vector3 origin, CancellationToken token)

@@ -9,3 +9,7 @@
 /artifacts/ui/
 /artifacts/diagnostics/
 /artifacts/main-debug-validation/
+/artifacts/navigation-audit-*/
+/artifacts/cliff-audit-*/
+/artifacts/wind-camp-floor-checks.txt
+/temp/

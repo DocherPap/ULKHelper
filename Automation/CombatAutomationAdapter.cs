@@ -16,9 +16,14 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     private bool reborn, rotationOwned, aiOwned;
     private bool triggerAuto;
     private bool cleanupRotation;
+    private byte? followCombatRole;
+    private float? followMinimumDistance;
     private object? crystalCombatOwner;
     private Assembly? crystalRotationProvider;
     private bool crystalRotationEnding;
+    private string? cliffModeBefore;
+    private object? cliffOverridesBefore, cliffOverridesWritten, cliffBossOwner;
+    private string? cliffMovementBefore;
     private bool triggerSession, triggerUseRotation, triggerUseAi;
     private bool recordedPullOnly;
     private bool passiveCombat, passiveAiWanted;
@@ -239,6 +244,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
     public bool EndCrystalCombat(object owner)
     {
         if (!ReferenceEquals(crystalCombatOwner, owner)) return true;
+        if (cliffModeBefore != null) return EndCliffCombat();
         try
         {
             if (ReferenceEquals(crystalRotationProvider, CurrentRotationOwner()) && RotationRequested() && !ManualRequested())
@@ -253,13 +259,89 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         crystalRotationEnding = false;
         return true;
     }
+    public string? BeginCliffCombat(object owner)
+    {
+        try
+        {
+            if (crystalCombatOwner != null) return "其他行程正在处理战斗。";
+            var provider = CurrentRotationOwner();
+            if (provider == null) return "崖边战斗需要RSR，未继续落崖。";
+            var modeBefore = RotationRequested() ? (ManualRequested() ? "Manual" : "Auto") : "Off";
+            var property = RsrStateProperty("IpcOverrides");
+            var before = property.GetValue(null);
+            crystalCombatOwner = owner; crystalRotationProvider = provider;
+            cliffModeBefore = modeBefore;
+            cliffOverridesBefore = before;
+            if (commands.Commands.ContainsKey("/bmrai") || commands.Commands.ContainsKey("/vbm"))
+            {
+                if (ResolveBossMod() is { } error) return error;
+                cliffBossOwner = CurrentBossOwner();
+                cliffMovementBefore = Read("ForbidMovement");
+                // Hold existing AI movement; never enable AI or its action controller.
+                if (Config("AIConfig", "ForbidMovement", "true").Count != 0) return "崖边无法暂停已有BM/BMR移动。";
+            }
+            var hostile = property.PropertyType.GetProperty("HostileType")!;
+            var range = Enum.Parse(Nullable.GetUnderlyingType(hostile.PropertyType) ?? hostile.PropertyType, "TargetsHaveTarget");
+            var constructor = property.PropertyType.GetConstructor([hostile.PropertyType, typeof(bool?), typeof(bool?), typeof(bool?)])
+                ?? throw new InvalidOperationException("RSR临时目标范围接口不可用。");
+            RotationMode("Auto");
+            cliffOverridesWritten = constructor.Invoke([range, null, false, null]);
+            property.SetValue(null, cliffOverridesWritten);
+            return CliffCombatHealthy(owner) ? null : "崖边RSR自动循环未能开启。";
+        }
+        catch (Exception ex) { return "崖边自动循环不可用：" + ex.GetBaseException().Message; }
+    }
+    public bool CliffCombatHealthy(object owner)
+    {
+        try
+        {
+            return ReferenceEquals(crystalCombatOwner, owner) && ReferenceEquals(crystalRotationProvider, CurrentRotationOwner())
+                && RotationRequested() && !ManualRequested()
+                && Equals(RsrStateProperty("IpcOverrides").GetValue(null), cliffOverridesWritten)
+                && (cliffBossOwner == null || ReferenceEquals(cliffBossOwner, CurrentBossOwner())
+                    && Read("ForbidMovement").Equals("true", StringComparison.OrdinalIgnoreCase));
+        }
+        catch { return false; }
+    }
+    private bool EndCliffCombat()
+    {
+        try
+        {
+            if (ReferenceEquals(crystalRotationProvider, CurrentRotationOwner()))
+            {
+                var property = RsrStateProperty("IpcOverrides");
+                var restoreOverrides = cliffOverridesWritten != null && Equals(property.GetValue(null), cliffOverridesWritten);
+                if (RotationRequested() && !ManualRequested() && cliffModeBefore != "Auto") RotationMode(cliffModeBefore!);
+                if (restoreOverrides) property.SetValue(null, cliffOverridesBefore);
+            }
+            if (cliffMovementBefore != null && ReferenceEquals(cliffBossOwner, CurrentBossOwner())
+                && Read("ForbidMovement").Equals("true", StringComparison.OrdinalIgnoreCase)
+                && Config("AIConfig", "ForbidMovement", cliffMovementBefore).Count != 0)
+            { crystalRotationEnding = true; return false; }
+        }
+        catch { crystalRotationEnding = true; return false; }
+        crystalCombatOwner = null; crystalRotationProvider = null; crystalRotationEnding = false;
+        cliffModeBefore = cliffMovementBefore = null;
+        cliffOverridesBefore = cliffOverridesWritten = cliffBossOwner = null;
+        return true;
+    }
     private bool RotationActive() => plugin.GetIpcSubscriber<bool>("RotationSolverReborn.AutorotationActive").InvokeFunc();
     private Assembly? CurrentRotationOwner() => commands.Commands.TryGetValue("/rotation", out var c) ? c.Handler.Method.DeclaringType?.Assembly : null;
     private object? CurrentBossOwner() => commands.Commands.TryGetValue(reborn ? "/bmrai" : "/vbm", out var c)
         ? c.Handler.Target ?? (object?)c.Handler.Method.DeclaringType?.Assembly : null;
-    private Type RotationType(string name) => commands.Commands.TryGetValue("/rotation", out var command)
-        ? command.Handler.Method.DeclaringType?.Assembly.GetType(name, false) ?? throw new InvalidOperationException("自动循环状态接口不兼容。")
-        : throw new InvalidOperationException("自动循环未加载。");
+    private Type RotationType(string name)
+    {
+        var provider = CurrentRotationOwner() ?? throw new InvalidOperationException("自动循环未加载。");
+        // RSR 7.5.8.7 moved state and command types into Engine; keep older providers supported.
+        var currentName = name switch
+        {
+            "RotationSolver.Basic.DataCenter" => "RotationSolver.Engine.State.DataCenter",
+            "RotationSolver.Basic.Data.StateCommandType" => "RotationSolver.Engine.Data.StateCommandType",
+            _ => name,
+        };
+        return provider.GetType(currentName, false) ?? provider.GetType(name, false)
+            ?? throw new InvalidOperationException($"自动循环状态接口不兼容：{currentName}（RSR {provider.GetName().Version}）。");
+    }
     private bool RotationRequested()
     {
         // The public active IPC returns false while the player is unavailable even if the switch is still on.
@@ -402,6 +484,12 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         return manager->GetCurrentFateId() == fateId && manager->LevelSync() != null;
     }
     public bool Enable() => triggerSession ? EnableWithAI(false) : EnableFollow();
+    public bool Enable(byte? role)
+    {
+        if (followCombatRole != role) followMinimumDistance = null;
+        followCombatRole = role;
+        return Enable();
+    }
     public bool PrepareTravel()
     {
         try
@@ -450,6 +538,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
                 // A user-created AI instance is borrowed, never switched off on release.
                 followAiBorrowed = true;
             }
+            ConfigureFollowDistance();
             if (!AIActive())
             {
                 followAiBorrowed = false;
@@ -465,6 +554,32 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
             return Healthy;
         }
         catch (Exception ex) { Error = "跟车战斗控制调整失败：" + ex.GetBaseException().Message; Disable(); return false; }
+    }
+    private void ConfigureFollowDistance()
+    {
+        if (ArrivalRules.CombatDistance(followCombatRole, 0) is not { } range) return;
+        if (!reborn)
+        {
+            // Our navigation supplies the class-specific approach; keep BM's avoidance without its target fallback.
+            Set("GoalZoneFallback", "false");
+            return;
+        }
+        if (followMinimumDistance == null)
+        {
+            var current = objects.LocalPlayer is { } player && targets.Target is { } target
+                ? Math.Max(0, NavigationRules.Distance(player.Position, target.Position) - ArrivalRules.HitboxRadius(target.HitboxRadius))
+                : range.Min;
+            // Preserve a closer starting position: enabling combat must not force an outward reposition.
+            followMinimumDistance = Math.Min(range.Min, current);
+        }
+        var splitField = followCombatRole is 1 or 2 ? "MaxDistanceToTargetMelee" : "MaxDistanceToTargetRanged";
+        var config = commands.Commands.TryGetValue("/bmrai", out var command)
+            ? command.Handler.Method.DeclaringType?.Assembly.GetType("BossMod.AI.AIConfig", false) : null;
+        var maxField = config?.GetField(splitField) != null ? splitField : "MaxDistanceToTarget";
+        Set(maxField, range.Max.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Set("MinDistance", followMinimumDistance.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Set("DesiredPositional", "Any");
+        Set("FollowRSRDesiredPositional", "false");
     }
     public bool SetApproachMovement(bool navigating)
     {
@@ -671,6 +786,7 @@ internal sealed class CombatAutomationAdapter(IDalamudPluginInterface plugin, IC
         {
             bossOwner = null; rotationOwner = null; aiBehaviour = null;
             followRotationBefore = null; followAiBorrowed = false; followTravelMovement = false; passiveIgnoreAggro = false;
+            followCombatRole = null; followMinimumDistance = null;
             if (triggerEnding) RestoreTrigger();
         }
         return !OwnedCleanupPending && !crystalRotationEnding;

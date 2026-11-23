@@ -262,7 +262,7 @@ internal sealed unsafe class CommonJourney(IDalamudPluginInterface plugin, INavi
         }
         else
         {
-            walk.Start(destination, world, player.Position, [], now, false, arrivalRadius: 1.5f, unknownHeight: false);
+            walk.Start(destination, world, player.Position, [], now, false, arrivalRadius: 1.5f, unknownHeight: false, expandGroundSearch: true);
             if (!walk.Active) { Stop(walk.Status); return; }
         }
         ChangeStage(Stage.Walk, now, purchase ? "前往补给负责人。" : "前往罗德尼。");

@@ -221,10 +221,10 @@ internal sealed unsafe class InventoryTracker : IStatisticsProvider, IDisposable
     private void ReadCabinet()
     {
         var ui = UIState.Instance();
-        if (ui == null || !ui->Cabinet.IsCabinetLoaded()) return;
-        var items = new Dictionary<uint, int>();
-        foreach (var (row, item) in cabinetItems)
-            if (ui->Cabinet.IsItemInCabinet(row)) items[item] = 1;
+        var loaded = ui != null && ui->Cabinet.IsCabinetLoaded();
+        var items = CabinetSnapshot.Read(loaded,
+            loaded ? ui->Cabinet.UnlockedItems.AsSpan() : ReadOnlySpan<byte>.Empty, cabinetItems);
+        if (items == null) { ledger.MarkSourceCached("cabinet"); return; }
         ledger.Replace("cabinet", "收藏柜", items);
     }
 

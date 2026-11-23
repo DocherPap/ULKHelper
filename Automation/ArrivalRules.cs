@@ -8,18 +8,20 @@ internal sealed record ArrivalFate(ushort Id, int StartedAt, Vector3 Centre, flo
     ulong BossId = 0, bool BossAlive = true, bool BossTargetable = false, bool Synced = false, Vector3? BossPosition = null,
     int? FateLevel = null, int? PlayerLevel = null, float BossHitboxRadius = 0)
 {
-    public float WaitDistance => ArrivalRules.WaitDistance(25, FateLevel, PlayerLevel);
+    public float WaitDistance => ArrivalRules.WaitDistance(25, FateLevel, PlayerLevel)
+        + ArrivalRules.HitboxRadius(BossHitboxRadius);
 }
 internal sealed record ArrivalFrame(WorldContext World, Vector3 Player, bool Safe, bool Mounted, bool Casting, bool InCombat, ArrivalFate? Fate, byte? CombatRole = null);
 internal sealed record PullDecision(bool Started, int Players, int Attackers, int PartyAttackers);
 
 internal static class ArrivalRules
 {
+    public static float HitboxRadius(float radius) => float.IsFinite(radius) ? Math.Max(0, radius) : 0;
     // ClassJob.Role from the local game sheet: tank/melee=1/2, ranged/healer=3/4.
     // Distances are measured from the boss hitbox edge.
     public static (float Min, float Max, float Target)? CombatDistance(byte? role, float hitboxRadius)
     {
-        var radius = float.IsFinite(hitboxRadius) ? Math.Max(0, hitboxRadius) : 0;
+        var radius = HitboxRadius(hitboxRadius);
         return role switch
         {
             1 or 2 => (radius + 1, radius + 3, radius + 2),

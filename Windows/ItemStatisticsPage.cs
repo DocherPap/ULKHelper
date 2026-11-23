@@ -43,11 +43,36 @@ internal sealed class ItemStatisticsPage
 
     public void Draw()
     {
+        RefreshStatistics();
+        DrawFullLayout();
+    }
+
+    public void DrawCompact()
+    {
+        RefreshStatistics();
+        ImGui.PushID("CompactStatistics");
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(4, 2));
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(4, 3));
+        try
+        {
+            DrawOptions(compact: true);
+            ImGui.Separator();
+            DrawMaterials(compact: true);
+        }
+        finally { ImGui.PopStyleVar(2); ImGui.PopID(); }
+    }
+
+    private void RefreshStatistics()
+    {
         if (inventoryRevision != statistics.Revision)
         {
             inventoryRevision = statistics.Revision;
             RebuildStatistics();
         }
+    }
+
+    private void DrawFullLayout()
+    {
         // Initial weights; ImGui retains widths adjusted by dragging the column borders.
         LayoutSettings.RememberTable("##StatisticsLayoutWideMaterials");
         if (!ImGui.BeginTable("##StatisticsLayoutWideMaterials", 3,
@@ -59,11 +84,11 @@ internal sealed class ItemStatisticsPage
             ImGui.TableSetupColumn("材料统计", ImGuiTableColumnFlags.WidthStretch, 28);
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
-            DrawPane("##Options", DrawOptions);
+            DrawPane("##Options", () => DrawOptions());
             ImGui.TableSetColumnIndex(1);
             DrawPane("##Equipment", DrawEquipment);
             ImGui.TableSetColumnIndex(2);
-            DrawPane("##Materials", DrawMaterials);
+            DrawPane("##Materials", () => DrawMaterials());
         }
         finally { ImGui.EndTable(); }
     }
@@ -75,14 +100,50 @@ internal sealed class ItemStatisticsPage
         finally { ImGui.EndChild(); }
     }
 
-    private void DrawOptions()
+    private void DrawOptions(bool compact = false)
     {
         SectionHeader("选项");
         var changed = false;
         if (ImGui.RadioButton("按物品分类", !byJob)) { byJob = false; changed = true; }
+        if (compact) ImGui.SameLine();
         if (ImGui.RadioButton("按职业分类", byJob)) { byJob = true; changed = true; }
+        if (compact)
+        {
+            ImGui.SameLine();
+            var progressWidth = ImGui.CalcTextSize("按目前进度").X + ImGui.CalcTextSize("按总体进度").X
+                + (ImGui.GetFrameHeight() + ImGui.GetStyle().ItemInnerSpacing.X) * 2 + ImGui.GetStyle().ItemSpacing.X;
+            DrawProgressOptions(inline: true, abbreviated: ImGui.GetContentRegionAvail().X < progressWidth);
+        }
         ImGui.Spacing();
-        SectionHeader(byJob ? "物品分类" : "职业筛选");
+        var filterTitle = byJob ? "物品分类" : "职业筛选";
+        if (!compact) SectionHeader(filterTitle);
+        if (!compact || ImGui.CollapsingHeader(filterTitle + "###SecondaryFilters")) changed |= DrawFilters(compact);
+
+        ImGui.Spacing();
+        if (!compact)
+        {
+            SectionHeader("拥有物品更新状态");
+            foreach (var source in MergeRetainerStatuses(statistics.Sources))
+            {
+                ImGui.TextWrapped(source.Label);
+                var state = source.ReadThisSession ? "已更新" : source.UpdatedAt != null ? "已缓存" : "未获取";
+                if (ImGui.GetContentRegionAvail().X >= ImGui.CalcTextSize(state).X + ImGui.GetStyle().ItemSpacing.X)
+                    ImGui.SameLine();
+                ImGui.TextColored(source.ReadThisSession || source.UpdatedAt != null ? BrightGreen : Muted, state);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(source.UpdatedAt is { } time
+                        ? $"最后获取：{time.ToLocalTime():yyyy-MM-dd HH:mm:ss}\n保存于当前角色的本地缓存。"
+                        : "请刷新获取库存。");
+            }
+            ImGui.Spacing();
+            ImGui.TextWrapped("库存自动更新；缓存来源保留上次获取的结果。");
+        }
+        if (changed) RebuildStatistics();
+    }
+
+    private bool DrawFilters(bool compact)
+    {
+        var changed = false;
         if (byJob)
         {
             for (var i = 0; i < selectedCategories.Length; i++)
@@ -90,7 +151,8 @@ internal sealed class ItemStatisticsPage
         }
         else
         {
-            var columns = ImGui.GetContentRegionAvail().X >= ImGui.GetFontSize() * 13 ? 2 : 1;
+            var columns = compact ? Math.Clamp((int)(ImGui.GetContentRegionAvail().X / (ImGui.GetFontSize() * 4.5f)), 1, 5)
+                : ImGui.GetContentRegionAvail().X >= ImGui.GetFontSize() * 13 ? 2 : 1;
             if (ImGui.BeginTable("##JobFilters", columns, ImGuiTableFlags.SizingStretchSame))
             {
                 try
@@ -104,24 +166,7 @@ internal sealed class ItemStatisticsPage
                 finally { ImGui.EndTable(); }
             }
         }
-
-        ImGui.Spacing();
-        SectionHeader("拥有物品更新状态");
-        foreach (var source in MergeRetainerStatuses(statistics.Sources))
-        {
-            ImGui.TextWrapped(source.Label);
-            var state = source.ReadThisSession ? "已更新" : source.UpdatedAt != null ? "已缓存" : "未获取";
-            if (ImGui.GetContentRegionAvail().X >= ImGui.CalcTextSize(state).X + ImGui.GetStyle().ItemSpacing.X)
-                ImGui.SameLine();
-            ImGui.TextColored(source.ReadThisSession || source.UpdatedAt != null ? BrightGreen : Muted, state);
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip(source.UpdatedAt is { } time
-                    ? $"最后获取：{time.ToLocalTime():yyyy-MM-dd HH:mm:ss}\n保存于当前角色的本地缓存。"
-                    : "请刷新获取库存。");
-        }
-        ImGui.Spacing();
-        ImGui.TextWrapped("库存自动更新；缓存来源保留上次获取的结果。");
-        if (changed) RebuildStatistics();
+        return changed;
     }
 
     private static IEnumerable<SourceSnapshot> MergeRetainerStatuses(IReadOnlyList<SourceSnapshot> sources)
@@ -303,43 +348,88 @@ internal sealed class ItemStatisticsPage
         finally { ImGui.EndTooltip(); }
     }
 
-    private void DrawMaterials()
+    private void DrawMaterials(bool compact = false)
     {
+        if (compact) { DrawCompactMaterialGroups(); return; }
         SectionHeader("材料统计");
-        ImGui.RadioButton("按目前进度", ref overall, false);
-        ImGui.RadioButton("按总体进度", ref overall, true);
-        ImGui.TextWrapped(overall ? "持有 + 已投入 / 全部所需" : "目前持有 / 后续所需（未扣持有）");
+        DrawProgressOptions();
         ImGui.Separator();
-        DrawPane("##MaterialScroll", () =>
-        {
-            if (materials.Length == 0)
-            {
-                ImGui.TextDisabled("没有需要统计的材料。");
-                return;
-            }
-            foreach (var group in StatisticsCatalog.MaterialRows)
-            {
-                var row = group.Materials.Select(name => materials.FirstOrDefault(m => m.Material.Name == name))
-                    .OfType<MaterialPreview>().ToArray();
-                if (row.Length == 0) continue;
-                SectionHeader(group.Title);
-                DrawMaterialRow(group.Title, row);
-                ImGui.Spacing();
-            }
-            ImGui.Spacing();
-            ImGui.TextDisabled("可兑换材料：悬停查看换算");
-            ImGui.TextWrapped("爆炎乱属性水晶：每次调属性消耗 2 个，按需使用，不计入固定总量。");
-        });
+        DrawPane("##MaterialScroll", DrawMaterialGroups);
     }
 
-    private void DrawMaterialRow(string id, MaterialPreview[] row)
+    private void DrawProgressOptions(bool inline = false, bool abbreviated = false)
+    {
+        ImGui.RadioButton((abbreviated ? "目前" : "按目前进度") + "###MaterialProgressCurrent", ref overall, false);
+        if (abbreviated && ImGui.IsItemHovered()) ImGui.SetTooltip("按目前进度");
+        if (inline) ImGui.SameLine();
+        ImGui.RadioButton((abbreviated ? "总体" : "按总体进度") + "###MaterialProgressOverall", ref overall, true);
+        if (abbreviated && ImGui.IsItemHovered()) ImGui.SetTooltip("按总体进度");
+    }
+
+    private void DrawMaterialGroups()
+    {
+        if (materials.Length == 0)
+        {
+            ImGui.TextDisabled("没有需要统计的材料。");
+            return;
+        }
+        foreach (var group in StatisticsCatalog.MaterialRows)
+        {
+            var row = group.Materials.Select(name => materials.FirstOrDefault(m => m.Material.Name == name))
+                .OfType<MaterialPreview>().ToArray();
+            if (row.Length == 0) continue;
+            SectionHeader(group.Title);
+            DrawMaterialRow(group.Title, row);
+            ImGui.Spacing();
+        }
+        ImGui.Spacing();
+        ImGui.TextDisabled("可兑换材料：悬停查看换算");
+    }
+
+    private void DrawCompactMaterialGroups()
+    {
+        if (materials.Length == 0) { ImGui.TextDisabled("没有需要统计的材料。"); return; }
+        for (var pair = 0; pair < 4; pair += 2)
+        {
+            var groups = StatisticsCatalog.MaterialRows.Skip(pair).Take(2).ToArray();
+            var rows = groups.Select(group => group.Materials.Select(name => materials.FirstOrDefault(m => m.Material.Name == name))
+                .OfType<MaterialPreview>().ToArray()).ToArray();
+            if (rows.All(row => row.Length == 0)) continue;
+            if (!ImGui.BeginTable($"##CompactIslandPair-{pair}", 2, ImGuiTableFlags.SizingStretchSame)) continue;
+            try
+            {
+                for (var island = 0; island < groups.Length; island++)
+                {
+                    ImGui.TableNextColumn();
+                    if (rows[island].Length == 0) continue;
+                    SectionHeader(groups[island].Title);
+                    // Three slots per island keep water aligned even though fire has two fixed materials.
+                    DrawMaterialRow(groups[island].Title, rows[island], columns: 3);
+                }
+            }
+            finally { ImGui.EndTable(); }
+            ImGui.Spacing();
+        }
+        foreach (var group in StatisticsCatalog.MaterialRows.Skip(4))
+        {
+            var row = group.Materials.Select(name => materials.FirstOrDefault(m => m.Material.Name == name))
+                .OfType<MaterialPreview>().ToArray();
+            if (row.Length == 0) continue;
+            SectionHeader(group.Title);
+            DrawMaterialRow(group.Title, row);
+        }
+        ImGui.TextDisabled("可兑换材料：悬停查看换算");
+    }
+
+    private void DrawMaterialRow(string id, MaterialPreview[] row, int columns = 0)
     {
         var startX = ImGui.GetCursorPosX();
         var availableWidth = ImGui.GetContentRegionAvail().X;
         var targetSide = 90 * ImGui.GetFontSize() / 17;
-        var gridWidth = Math.Max(1, Math.Min(availableWidth, row.Length * (targetSide + ImGui.GetStyle().CellPadding.X * 2)));
+        columns = Math.Max(columns, row.Length);
+        var gridWidth = Math.Max(1, Math.Min(availableWidth, columns * (targetSide + ImGui.GetStyle().CellPadding.X * 2)));
         ImGui.SetCursorPosX(startX + Math.Max(0, (availableWidth - gridWidth) / 2));
-        if (!ImGui.BeginTable($"##Materials-{id}", row.Length, ImGuiTableFlags.SizingStretchSame, new Vector2(gridWidth, 0)))
+        if (!ImGui.BeginTable($"##Materials-{id}", columns, ImGuiTableFlags.SizingStretchSame, new Vector2(gridWidth, 0)))
         {
             ImGui.SetCursorPosX(startX);
             return;
@@ -362,38 +452,57 @@ internal sealed class ItemStatisticsPage
     private void DrawMaterialCard(MaterialPreview value)
     {
         var side = Math.Max(1, ImGui.GetContentRegionAvail().X);
-        var height = Math.Max(ImGui.GetFontSize() * 4.35f, side * .8f);
+        var palette = StatisticsPalette.Material(value.Material.Name);
+        var numerator = overall ? value.Owned + value.Spent : value.Owned;
+        var denominator = overall ? value.Total : value.Remaining;
+        var fraction = !HasOwnership ? 0 : denominator == 0 ? 1 : Math.Clamp((float)numerator / denominator, 0, 1);
+        var name = value.Material.Name;
+        var split = (name.Length + 1) / 2;
+        var caption = name[..split] + "\n" + name[split..];
+        var percentage = HasOwnership ? $"{fraction * 100:0.#}%" : "—";
+        var ownedText = HasOwnership ? $"{numerator:N0}" : "—";
+        var numbers = $"{ownedText}\n/ {denominator:N0}";
+        var textWidth = Math.Max(1, side - 8);
+        var requestedScale = Math.Min(1, side / (90 * ImGui.GetFontSize() / 17)) * 1.12f;
+        var nameScale = FitMaterialTextScale(caption, textWidth, requestedScale);
+        var percentScale = FitMaterialTextScale(percentage, textWidth, requestedScale);
+        var numberScale = FitMaterialTextScale(numbers, textWidth, requestedScale);
+        var lineHeight = ImGui.GetTextLineHeight() * 1.05f;
+        var padding = Math.Max(4, ImGui.GetFontSize() * .25f);
+        var gap = ImGui.GetFontSize() * .18f;
+        var nameHeight = lineHeight * nameScale * 2;
+        var percentHeight = lineHeight * percentScale;
+        var numberHeight = lineHeight * numberScale * 2;
+        var height = padding * 2 + nameHeight + percentHeight + numberHeight + gap * 3 + 3;
         var size = new Vector2(side, height);
         var origin = ImGui.GetCursorScreenPos();
         ImGui.InvisibleButton(value.Material.Name, size);
         var hovered = ImGui.IsItemHovered();
         DrawCardBackground(origin, size, hovered);
-        var palette = StatisticsPalette.Material(value.Material.Name);
-        var numerator = overall ? value.Owned + value.Spent : value.Owned;
-        var denominator = overall ? value.Total : value.Remaining;
-        var fraction = !HasOwnership ? 0 : denominator == 0 ? 1 : Math.Clamp((float)numerator / denominator, 0, 1);
         var draw = ImGui.GetWindowDrawList();
         draw.PushClipRect(origin, origin + size, true);
         try
         {
-            var cardScale = Math.Min(1, side / (110 * ImGui.GetFontSize() / 17));
-            var font = ImGui.GetFontSize() * cardScale;
-            DrawCenteredText(value.Material.Name, origin + new Vector2(6, 3),
-                new Vector2(side - 12, height * .47f - 3), ImGui.GetStyle().Colors[(int)ImGuiCol.Text], 1.15f * cardScale);
-            var ownedText = HasOwnership ? $"{numerator:N0}" : "—";
-            var numbers = $"{ownedText} / {denominator:N0}";
-            if (ImGui.CalcTextSize(numbers).X * cardScale > side - 10)
-                numbers = $"{ownedText} /\n{denominator:N0}";
-            DrawCenteredText(numbers, origin + new Vector2(5, height * .47f + 2),
-                new Vector2(side - 10, height * .53f - font * .65f - 2), palette.Pale, cardScale);
-            var barStart = origin + new Vector2(7, height - font * .45f);
-            var barEnd = origin + new Vector2(side - 7, height - font * .20f);
+            DrawCenteredText(caption, origin + new Vector2(4, padding),
+                new Vector2(textWidth, nameHeight), ImGui.GetStyle().Colors[(int)ImGuiCol.Text], nameScale);
+            DrawCenteredText(percentage, origin + new Vector2(4, padding + nameHeight + gap),
+                new Vector2(textWidth, percentHeight), palette.Bright, percentScale);
+            DrawCenteredText(numbers, origin + new Vector2(4, padding + nameHeight + gap + percentHeight + gap),
+                new Vector2(textWidth, numberHeight), palette.Pale, numberScale);
+            var barStart = origin + new Vector2(7, height - padding - 3);
+            var barEnd = origin + new Vector2(side - 7, height - padding);
             draw.AddRectFilled(barStart, barEnd, Color(palette.Pale with { W = .30f }), 3);
             if (fraction > 0)
                 draw.AddRectFilled(barStart, new Vector2(barStart.X + (barEnd.X - barStart.X) * fraction, barEnd.Y), Color(palette.Bright), 3);
         }
         finally { draw.PopClipRect(); }
         if (hovered) DrawMaterialTooltip(value);
+    }
+
+    private static float FitMaterialTextScale(string text, float width, float requested)
+    {
+        var widest = text.Split('\n').Max(line => ImGui.CalcTextSize(line).X);
+        return Math.Min(requested, width / Math.Max(1, widest)) * .99f;
     }
 
     private void DrawMaterialTooltip(MaterialPreview value)

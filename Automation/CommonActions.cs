@@ -165,10 +165,8 @@ internal sealed partial class AutomationHelpers
                 StartBunnyTreasure(world, now);
                 break;
             case CommonAction.Camp:
-                if (IslandCrystalRoutes.CampDestination(world, player.Position) is not { } camp)
-                { commonStatus = "没有已知水晶。"; return; }
                 commonUsesNavigation = true;
-                StartPointNavigation(camp, false, waitWithoutFate: false);
+                StartCampNavigation();
                 break;
             case CommonAction.NearestCrystal:
                 if (!EnsureTravelMount()) { commonStatus = "请先选择已解锁且可移动的坐骑。"; return; }

@@ -59,14 +59,15 @@ internal sealed class MainWindow : Window
     }
 
     public FloatingWindow CreateFloatingWindow(SettingsStore store) =>
-        floating = new(store, common, weather, fateMap, index =>
+        floating = new(store, common, weather, fateMap, automation, itemStatistics, index =>
         {
             requestedTab = index;
             IsOpen = true;
-        });
+        }, () => IsOpen = false);
 
     public override void Draw()
     {
+        if (floating?.IsOpen == true) { floating.IsOpen = false; settings?.Put("floating.visible", false); }
         if (firstDraw && settings != null) LayoutSettings.Restore(settings);
         var restoreTab = requestedTab ?? (firstDraw ? selectedTab : -1);
         if (requestedTab != null) ImGui.SetWindowFocus();

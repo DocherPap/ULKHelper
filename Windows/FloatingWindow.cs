@@ -15,20 +15,26 @@ internal sealed class FloatingWindow : Window
     private readonly CommonPage common;
     private readonly WeatherPage weather;
     private readonly FateMapPage map;
+    private readonly AutomationPage automation;
+    private readonly ItemStatisticsPage statistics;
     private readonly Action<int> expand;
+    private readonly Action showCompact;
     private bool sizeLocked, clickThrough, drawn;
     private int transparency, tab;
     private Vector2 lockPosition, lockSize;
     private enum TitleIcon { Lock, Unlock, Expand, Close }
 
     public FloatingWindow(SettingsStore settings, CommonPage common, WeatherPage weather,
-        FateMapPage map, Action<int> expand) : base(Title + "###ULKHelper.Floating")
+        FateMapPage map, AutomationPage automation, ItemStatisticsPage statistics, Action<int> expand, Action showCompact) : base(Title + "###ULKHelper.Floating")
     {
         this.settings = settings;
         this.common = common;
         this.weather = weather;
         this.map = map;
+        this.automation = automation;
+        this.statistics = statistics;
         this.expand = expand;
+        this.showCompact = showCompact;
         Size = settings.Get("floating.size", MainWindow.MinimumSize / 2);
         Position = settings.Get("floating.position", new Vector2(100, 100));
         SizeCondition = PositionCondition = ImGuiCond.Once;
@@ -43,9 +49,8 @@ internal sealed class FloatingWindow : Window
 
     public void DrawSettings()
     {
-        var visible = IsOpen;
-        var changed = ImGui.Checkbox("小窗显示", ref visible);
-        if (changed) IsOpen = visible;
+        var changed = ImGui.Button("切换至悬浮窗");
+        if (changed) { IsOpen = true; showCompact(); }
         ImGui.SameLine();
         changed |= ImGui.Checkbox("锁定大小", ref sizeLocked);
         ImGui.SameLine();
@@ -77,13 +82,18 @@ internal sealed class FloatingWindow : Window
             try
             {
                 DrawTab("常用功能", 0, () => common.Draw(compact: true));
+                DrawTab("物品统计", 1, statistics.DrawCompact, allowScrolling: true);
                 DrawTab("天气预报", 2, () => weather.Draw(compact: true, readOnly: clickThrough));
                 DrawTab("地图", 3, map.DrawCompact);
+                DrawTab("自动化", 3, automation.DrawCompact, allowScrolling: true);
             }
             finally { ImGui.EndTabBar(); }
         }
         settings.Put("floating.size", ImGui.GetWindowSize() / ImGuiHelpers.GlobalScale);
         settings.Put("floating.position", ImGui.GetWindowPos());
+        map.Save(settings, "map");
+        automation.Save(settings);
+        statistics.Save(settings);
         settings.Flush();
     }
 
@@ -162,14 +172,14 @@ internal sealed class FloatingWindow : Window
         return pressed;
     }
 
-    private void DrawTab(string label, int index, Action draw)
+    private void DrawTab(string label, int index, Action draw, bool allowScrolling = false)
     {
         if (!ImGui.BeginTabItem(label)) return;
         tab = index;
         try
         {
             var flags = clickThrough ? ImGuiWindowFlags.NoInputs : ImGuiWindowFlags.None;
-            if (index is 2 or 3) flags |= ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
+            if (!allowScrolling && (index is 2 or 3)) flags |= ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
             var visible = ImGui.BeginChild("##FloatingPage", Vector2.Zero, false, flags);
             try
             {

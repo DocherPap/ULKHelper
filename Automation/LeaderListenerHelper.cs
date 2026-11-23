@@ -3,9 +3,11 @@ using System.Numerics;
 namespace ULKHelper.Automation;
 
 internal sealed record LeaderMessage(DateTimeOffset Time, string Channel, string Text, string Result);
+internal sealed record LeaderChatRecord(PlayerIdentity Sender, string Channel, string Text, MapDestination? Destination, DateTimeOffset Time);
 
 internal sealed class LeaderListenerHelper
 {
+    public const int HistoryLookback = 10;
     public static bool IsWaitDirective(string text) => text.Contains("原地", StringComparison.Ordinal)
         || text.Contains("等待", StringComparison.Ordinal) || text.Contains("等等", StringComparison.Ordinal);
     private readonly Queue<LeaderMessage> history = new();
@@ -27,6 +29,22 @@ internal sealed class LeaderListenerHelper
         Destination = null;
         history.Clear();
         Status = "车头已选定，可开始监听。";
+    }
+
+    public bool RestoreCoordinate(IEnumerable<LeaderChatRecord> newestFirst, uint territory, uint map, Func<MapDestination, bool> mark)
+    {
+        foreach (var message in newestFirst.Take(HistoryLookback))
+        {
+            if (Leader != message.Sender || message.Destination is not { } destination
+                || destination.Territory != territory || destination.Map != map || !NavigationRules.Finite(destination.Position)) continue;
+            var restored = mark(destination);
+            if (restored) Destination = destination;
+            Status = restored ? "已从最近10条聊天记录取回车头坐标，可开始跟随。" : "历史坐标地图标记失败。";
+            RecordActivity(message.Time, message.Channel, message.Text, Status);
+            return restored;
+        }
+        Status = "车头已选定，最近10条聊天记录中没有本地图坐标。";
+        return false;
     }
 
     public void SetListening(bool enabled, bool shoutOnly = false)

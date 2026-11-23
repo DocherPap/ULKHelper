@@ -6,22 +6,27 @@ internal interface ICrystalCombat
 {
     string? BeginCrystalCombat(object owner);
     bool EndCrystalCombat(object owner);
+    string? BeginCliffCombat(object owner) => BeginCrystalCombat(owner);
+    bool CliffCombatHealthy(object owner) => true;
 }
 
 internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalActions crystals, IArrivalActions mount,
     ICrystalCombat? combat = null) : IDisposable
 {
     private readonly DestinationNavigationHelper walk = new(mesh);
+    private readonly CliffEscapeHelper cliff = new(mesh, mount, combat);
+    private bool cliffAttempted;
     private MapDestination? goal, arrival;
     private CrystalRoute? route;
     private CrystalPathPlanner? planner;
     private IReadOnlyList<CrystalRoute>? measuredRoutes;
+    private string? measuredDecision;
     private WorldContext context;
     private Vector3 origin;
     private Vector3? sourceAnchor;
     private DateTimeOffset started, phaseAt;
     private DateTimeOffset? crystalCombatAt;
-    private enum Phase { Plan, Mount, Source, Menu, Transfer, Direct, Final }
+    private enum Phase { Cliff, Plan, Mount, Source, Menu, Transfer, Direct, Final }
     private Phase phase;
     private int dismounts;
     private DateTimeOffset nextDismount;
@@ -31,21 +36,38 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     private bool finalUnknownHeight, preferCrystals;
     private float? verifiedFinalEndpointTolerance;
     private float finalNearbyGroundRadius;
+    private float? finalGroundSearchRadius;
     private Func<Vector3, bool>? finalGroundFilter;
     private IReadOnlySet<uint>? surveyVisited;
     public bool SurveyExhausted { get; private set; }
     private readonly TravelMountHelper travelMount = new(mount);
     public bool Active { get; private set; }
+    public bool HandlingCliff => Active && phase == Phase.Cliff;
     public bool Transferring => Active && phase == Phase.Transfer;
     public bool Interacting => Active && phase == Phase.Menu;
     public Vector3? LocateCrystal(IslandCrystal crystal) => crystals.Locate(crystal);
     public string Status { get; private set; } = "尚未开始导航。";
     public string? CrystalDecision { get; private set; }
     public MapDestination? TakeArrival() { var result = arrival; arrival = null; return result; }
+    public bool StartCamp(WorldContext world, Vector3 player, DateTimeOffset now, bool summonMount = true)
+    {
+        if (Active) { Status = "请先停止当前导航。"; return false; }
+        if (IslandCrystalRoutes.Entrance(world.Territory) is not { } crystal
+            || IslandCrystalRoutes.CampDestination(world, player) is not { } camp)
+        { Stop("未找到当前岛的入口营地。"); return false; }
+        var anchor = IslandCrystalRoutes.GroundAnchor(crystal, player, mesh, crystals.Locate(crystal));
+        if (anchor == null) { Stop("营地水晶附近未找到可用的地面参考。"); return false; }
+        camp = camp with { Position = ArrivalRules.Position(player, anchor.Value, 7) };
+        Start(camp, world, player, [], now, summonMount: summonMount, useCrystals: true,
+            waitWithoutFate: false, preferCrystals: true, unknownHeight: false,
+            groundFilter: point => NavigationRules.Distance(point, anchor.Value) <= 10
+                && Math.Abs(point.Y - anchor.Value.Y) <= 3);
+        return Active;
+    }
     public void Start(MapDestination destination, WorldContext world, Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now,
         bool summonMount = false, bool useCrystals = true, bool waitWithoutFate = true, float arrivalRadius = 3,
         bool unknownHeight = true, float nearbyGroundRadius = 25, bool preferCrystals = false, Func<Vector3, bool>? groundFilter = null,
-        float? verifiedEndpointTolerance = null, bool bypassCrystalsInCombat = false)
+        float? verifiedEndpointTolerance = null, bool bypassCrystalsInCombat = false, float? groundSearchRadius = null)
     {
         if (Active) { Status = "请先停止当前导航。"; return; }
         Stop(); CrystalDecision = null; goal = destination; context = world; origin = player; started = now;
@@ -57,19 +79,36 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
         finalArrivalRadius = arrivalRadius;
         finalUnknownHeight = unknownHeight;
         finalNearbyGroundRadius = nearbyGroundRadius;
+        finalGroundSearchRadius = groundSearchRadius;
         finalGroundFilter = groundFilter;
         verifiedFinalEndpointTolerance = verifiedEndpointTolerance;
         this.preferCrystals = preferCrystals;
         Active = true;
+        if (!unknownHeight && StartCliff(player, now, destination.Position)) return;
+        PlanJourney(player, fates, now);
+    }
+    private void PlanJourney(Vector3 player, IReadOnlyList<FateEntry> fates, DateTimeOffset now)
+    {
         if (useCrystals && preferCrystals && mesh.SupportsRouteEstimates)
         {
-            planner = new(mesh, world.Territory, player, destination.Position, now, nearbyGroundRadius,
-                knownHeight: !unknownHeight, destinationFilter: groundFilter, endpointTolerance: verifiedEndpointTolerance);
+            planner = new(mesh, context.Territory, player, goal!.Position, now, finalNearbyGroundRadius,
+                knownHeight: !finalUnknownHeight, destinationFilter: finalGroundFilter, endpointTolerance: verifiedFinalEndpointTolerance,
+                locateCrystal: crystals.Locate);
             phase = Phase.Plan;
             Status = "正在用 vnavmesh 比较直达与水晶路线。";
             return;
         }
         StartPlannedJourney(player, fates, now);
+    }
+    private bool StartCliff(Vector3 player, DateTimeOffset now, Vector3? target = null)
+    {
+        if (cliffAttempted || bypassCrystalsInCombat || surveyVisited != null) return false;
+        if (!mesh.SupportsRouteEstimates || !IslandCliffRoutes.All.Any(r => r.Territory == context.Territory
+            && IslandCliffRoutes.Contains(r, player))) return false;
+        var nearest = IslandCrystalRoutes.Nearest(context.Territory, player);
+        var exit = target ?? (nearest == null ? null : IslandCrystalRoutes.GroundAnchor(nearest, player, mesh, crystals.Locate(nearest)));
+        if (exit == null || !cliff.Start(context.Territory, player, exit.Value, requireMount, now)) return false;
+        cliffAttempted = true; phase = Phase.Cliff; Status = cliff.Status; return true;
     }
 
     public void StartUnspawnedFate(MapDestination centre, WorldContext world, Vector3 player, DateTimeOffset now,
@@ -104,8 +143,9 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     {
         route = useCrystals ? ChooseRoute(player) : null;
         var estimate = measuredRoutes == null ? "平面估算" : "vnavmesh 路长";
-        CrystalDecision = route == null ? $"{estimate}：水晶路线收益不足，直接前往。"
+        CrystalDecision = route == null ? $"{estimate}：未选择水晶路线，直接前往。"
             : $"{estimate}：选择岛内水晶路线 {route.Source.PlaceNameId} → {route.Target.PlaceNameId}。";
+        if (measuredDecision != null) CrystalDecision += $" {measuredDecision}。起点={origin}，终点={goal!.Position}";
         if (route == null) Final(player, fates, now);
         else BeginSource(player, fates, now);
     }
@@ -139,7 +179,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
         sourceAnchor = anchor;
         walk.Start(goal! with { Position = anchor.Value }, context, player, [], now, false, 2, unknownHeight: false,
             groundSearchRadius: IslandCrystalRoutes.GroundRadius, verifiedEndpointTolerance: .5f,
-            groundFilter: p => IslandCrystalRoutes.NearGround(p, anchor.Value));
+            groundFilter: p => IslandCrystalRoutes.NearGround(p, anchor.Value, IslandCrystalRoutes.ExpandedGroundRadius), expandGroundSearch: true);
         if (walk.Active) Status = "前往岛内水晶。";
         else if (mesh.Ready && !mesh.Busy && mesh.Route.Count == 0) Fallback(player, fates, now, walk.Status);
         else Stop(walk.Status);
@@ -152,6 +192,16 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
         {
             if (world != context || !safe && !(Transferring && transferScreen)) { Stop("角色或地图状态变化，已停止导航。"); return; }
             if (now - started >= TimeSpan.FromMinutes(5)) { Stop("导航超过5分钟，已停止。"); return; }
+            if (phase == Phase.Cliff)
+            {
+                cliff.Tick(player, mounted, casting, inCombat, now); Status = cliff.Status;
+                if (cliff.Active) return;
+                if (!cliff.Succeeded) { Stop(cliff.Status); return; }
+                origin = player;
+                measuredRoutes = null; measuredDecision = null; route = null;
+                PlanJourney(player, fates, now);
+                return;
+            }
             if (inCombat && bypassCrystalsInCombat && phase is (Phase.Plan or Phase.Mount or Phase.Source or Phase.Menu))
             {
                 planner?.Dispose();
@@ -183,6 +233,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
                         if (!planner.Tick(now)) return;
                         if (planner.DestinationHasNoGround) { Stop("目的地附近没有符合条件的可站立地面。"); return; }
                         measuredRoutes = planner.Routes;
+                        measuredDecision = planner.Decision;
                     }
                     catch (Exception)
                     {
@@ -253,7 +304,7 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
                 if (completed == null)
                 {
                     if (phase == Phase.Source && mesh.Ready && !mesh.Busy && mesh.Route.Count == 0) Fallback(player, fates, now);
-                    else Stop(walk.Status);
+                    else if (!StartCliff(player, now)) Stop(walk.Status);
                     return;
                 }
                 if (phase == Phase.Final) { var reached = goal; Stop("已到达目的地。"); arrival = reached; return; }
@@ -349,7 +400,8 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
     {
         phase = Phase.Final;
         walk.Start(goal!, context, player, fates, now, waitWithoutFate, finalArrivalRadius, finalUnknownHeight,
-            nearbyGroundRadius: finalNearbyGroundRadius, groundFilter: finalGroundFilter, verifiedEndpointTolerance: verifiedFinalEndpointTolerance);
+            nearbyGroundRadius: finalNearbyGroundRadius, groundFilter: finalGroundFilter, verifiedEndpointTolerance: verifiedFinalEndpointTolerance,
+            expandGroundSearch: true, groundSearchRadius: finalGroundSearchRadius);
         if (!walk.Active) Stop(walk.Status); else Status = walk.Status;
     }
     public void Stop(string reason = "已停止导航。")
@@ -362,9 +414,11 @@ internal sealed class IslandTravelHelper(INavigationMesh mesh, IIslandCrystalAct
         planner?.Dispose();
         planner = null;
         measuredRoutes = null;
+        measuredDecision = null;
+        cliff.Stop(); cliffAttempted = false;
         Active = false; arrival = null; opened = false; sourceReapproached = false; surveyVisited = null; walk.Stop();
         try { crystals.Cancel(); } catch { }
         Status = reason;
     }
-    public void Dispose() { Stop(); walk.Dispose(); }
+    public void Dispose() { Stop(); walk.Dispose(); cliff.Dispose(); }
 }

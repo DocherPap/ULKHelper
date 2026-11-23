@@ -1,0 +1,26 @@
+[
+  {
+    "Author": "DocherPap",
+    "Name": "优雷卡助手",
+    "InternalName": "ULKHelper",
+    "AssemblyVersion": "0.4.4.0",
+    "Changelog": "0.4.4：悬浮窗新增物品统计，优化材料卡片、筛选和页面布局。支持点击岛民设置车头并回查最近聊天坐标，修复收藏柜读取及新版 RSR 兼容。修正风冰水晶高程，统一回营地和水晶挂机，并增加平台落崖检查及战斗接续。",
+    "Description": "优雷卡装备与材料统计、四岛天气与 FATE 地图、幸福兔挖宝、文理技能、常用功能及自动化。",
+    "Punchline": "优雷卡地图、装备统计与岛内便捷工具",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "Tags": [
+      "eureka",
+      "优雷卡"
+    ],
+    "LastUpdate": 1795431244,
+    "DownloadLinkInstall": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.4.4/ULKHelper-0.4.4.0.zip",
+    "IsTestingExclusive": false,
+    "IsHide": false,
+    "DownloadLinkUpdate": "https://raw.githubusercontent.com/DocherPap/ULKHelper/main/dist/v0.4.4/ULKHelper-0.4.4.0.zip",
+    "RepoUrl": "https://github.com/DocherPap/ULKHelper"
+  }
+]

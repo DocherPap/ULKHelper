@@ -367,6 +367,47 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             snapshot, now, triggerSelection.Ids.ToHashSet(), compact: true);
     }
 
+    public void DrawCompactAutomation(AutomationPage automation)
+    {
+        var snapshot = provider.Snapshot;
+        if (provider.Islands.Count == 0) { ImGui.TextWrapped(snapshot.Status); return; }
+        RefreshIsland(snapshot);
+        ImGui.PushID("FloatingAutomation");
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(4, 2));
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(4, 3));
+        try
+        {
+            ImGui.SetNextItemWidth(Math.Max(100, ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize("停止全部").X - 16));
+            if (ImGui.Combo("##AutomationIsland", ref islandIndex, provider.Islands.Select(i => i.Name).ToArray(), provider.Islands.Count)) ResetView();
+            ImGui.SameLine();
+            if (ImGui.SmallButton("停止全部")) navigation?.Stop();
+            var island = provider.Islands[islandIndex];
+            triggerSelection.SetIsland(island.Territory);
+            var now = DateTimeOffset.UtcNow;
+            UpdateTiming(island, snapshot, now);
+            ImGui.SetNextItemWidth(-1);
+            var fateIndex = Array.FindIndex(island.Fates.ToArray(), point => point.Seed.Id == selected) + 1;
+            var names = new[] { "选择 FATE" }.Concat(island.Fates.Select(point => point.Name)).ToArray();
+            if (ImGui.Combo("##AutomationFate", ref fateIndex, names, names.Length))
+                selected = fateIndex == 0 ? (ushort)0 : island.Fates[fateIndex - 1].Seed.Id;
+            if (navigation == null) { ImGui.TextDisabled("自动化尚未就绪。"); return; }
+            if (ImGui.CollapsingHeader("跟随伐木", ImGuiTreeNodeFlags.DefaultOpen)) automation.DrawFollow(navigation.Snapshot);
+            DrawAutomationDivider();
+            if (ImGui.CollapsingHeader("自动触发", ImGuiTreeNodeFlags.DefaultOpen)) DrawTriggerPlanner(island, snapshot);
+            DrawAutomationDivider();
+            if (bunnies != null && ImGui.CollapsingHeader("幸福兔挖宝")) bunnies.DrawSummary(island, navigation);
+            DrawAutomationDivider();
+            if (ImGui.CollapsingHeader("FATE 详情与触发队列"))
+            {
+                DrawSelectedFate(island, snapshot);
+                DrawTriggerQueue(island, snapshot, navigation.Snapshot.KillCounts);
+            }
+            DrawAutomationDivider();
+            automation.DrawHistory(navigation.Snapshot);
+        }
+        finally { ImGui.PopStyleVar(2); ImGui.PopID(); }
+    }
+
     private void RefreshIsland(FateMapSnapshot snapshot)
     {
         if (bunnies?.ConsumeReset() == true) ResetView();
@@ -416,52 +457,22 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
             ImGui.EndChild();
 
             ImGui.TableNextColumn();
-            const ImGuiWindowFlags pinned = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
-            if (ImGui.BeginChild("##FateDetails", Vector2.Zero, false, pinned))
+            if (ImGui.BeginChild("##FateDetails", Vector2.Zero))
             {
-                var itemSpacing = ImGui.GetStyle().ItemSpacing;
-                ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(itemSpacing.X, Math.Min(itemSpacing.Y, 2)));
-                var textLine = ImGui.GetTextLineHeightWithSpacing();
-                var bunnyHeight = bunnies == null ? 0 : ImGui.GetFrameHeightWithSpacing() * 4 + textLine * 3 + 8;
-                var triggerHeight = ImGui.GetFrameHeightWithSpacing() * 7.6f + textLine * 2 + 6;
-                if (ImGui.BeginChild("##SelectedFateDetails", new Vector2(0, textLine * 5.7f), false, pinned))
-                    DrawSelectedFate(island, snapshot);
-                ImGui.EndChild();
+                DrawSelectedFate(island, snapshot);
+                if (navigation != null) { DrawAutomationDivider(); DrawTriggerPlanner(island, snapshot); }
+                if (automation != null && navigation != null) { DrawAutomationDivider(); automation.DrawFollow(navigation.Snapshot); }
+                if (bunnies != null) { DrawAutomationDivider(); bunnies.DrawSummary(island, navigation); }
                 DrawAutomationDivider();
-                if (navigation != null)
-                {
-                    if (ImGui.BeginChild("##PinnedTrigger", new Vector2(0, triggerHeight), false, pinned))
-                        DrawTriggerPlanner(island, snapshot);
-                    ImGui.EndChild();
-                }
+                if (ImGui.CollapsingHeader("FATE 列表")) DrawList(points, now);
+                DrawTriggerQueue(island, snapshot, navigation?.Snapshot.KillCounts);
                 if (automation != null && navigation != null)
                 {
                     DrawAutomationDivider();
-                    if (ImGui.BeginChild("##PinnedFollow", new Vector2(0, textLine * 4.8f), false, pinned))
-                        automation.DrawFollow(navigation.Snapshot);
-                    ImGui.EndChild();
-                }
-                if (bunnies != null)
-                {
+                    if (ImGui.CollapsingHeader($"岛民（{navigation.Snapshot.Players.Count}）###Residents")) automation.DrawResidents(navigation.Snapshot);
                     DrawAutomationDivider();
-                    if (ImGui.BeginChild("##PinnedBunny", new Vector2(0, bunnyHeight), false, pinned))
-                        bunnies.DrawSummary(island, navigation);
-                    ImGui.EndChild();
+                    automation.DrawHistory(navigation.Snapshot);
                 }
-                DrawAutomationDivider();
-                ImGui.PopStyleVar();
-                if (ImGui.BeginChild("##ScrollableMapLists", Vector2.Zero))
-                {
-                    if (ImGui.CollapsingHeader("FATE 列表")) DrawList(points, now);
-                    DrawTriggerQueue(island, snapshot, navigation?.Snapshot.KillCounts);
-                    if (automation != null && navigation != null)
-                    {
-                        if (ImGui.CollapsingHeader($"岛民（{navigation.Snapshot.Players.Count}）###Residents"))
-                            automation.DrawResidents(navigation.Snapshot);
-                        automation.DrawHistory(navigation.Snapshot);
-                    }
-                }
-                ImGui.EndChild();
             }
             ImGui.EndChild();
         }
@@ -470,9 +481,12 @@ internal sealed class FateMapPage(IFateMapProvider provider, IMapTextures textur
 
     private static void DrawAutomationDivider()
     {
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
+        var origin = ImGui.GetCursorScreenPos();
+        var width = Math.Max(1, ImGui.GetContentRegionAvail().X);
+        var padding = ImGui.GetTextLineHeight() * .3f;
+        ImGui.GetWindowDrawList().AddRectFilled(origin + new Vector2(0, padding),
+            origin + new Vector2(width, padding + 2), ImGui.GetColorU32(ImGuiCol.Separator));
+        ImGui.Dummy(new Vector2(width, padding * 2 + 2));
     }
 
     private void DrawNotifications(FateMapSnapshot snapshot)

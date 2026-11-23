@@ -155,6 +155,6 @@ internal sealed class BunnyPage(IBunnyTracker tracker,Func<uint,string> itemName
             if(candidate&&zoom>=2)draw.AddText(mark+new Vector2(7,-7),ImGui.GetColorU32(0xFFFFFFFF),(i+1).ToString());
             if(hover&&Vector2.Distance(mark,ImGui.GetIO().MousePos)<9)tooltip=p;
         }
-        if(tooltip!=null&&!dragged){ImGui.BeginTooltip();ImGui.TextUnformatted($"{(tooltip.Height.HasValue ? "已校准挖宝点" : "参考挖宝点")} ({tooltip.X:0.###}, {tooltip.Y:0.###})");ImGui.EndTooltip();}
+        if(tooltip!=null&&!dragged){ImGui.BeginTooltip();ImGui.TextUnformatted($"{(tooltip.Exact ? "已校准挖宝点" : "参考挖宝点")} ({tooltip.X:0.###}, {tooltip.Y:0.###})");ImGui.EndTooltip();}
     }
 }

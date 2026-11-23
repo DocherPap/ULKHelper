@@ -78,7 +78,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         arrivalGame = new(objects, party, fates, mounts);
         combat = new(plugin, commandManager, objects, targets);
         navigation = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame, combat);
-        surveyTravel = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame);
+        surveyTravel = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame, combat);
         bunnyTravel = new(mesh, new IslandCrystalGameAdapter(objects, gui, data), arrivalGame, combat);
         quickElementalSurvey = settings?.Get("common.quickElementalSurvey", false) ?? false;
         follow = new(navigation, mesh, mounts, combat);
@@ -221,6 +221,13 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         if (trigger.Active) return;
         if (!RemoteActive) follow.Stop("车头已更换。");
         listener.Select(identity);
+        if (objects.LocalPlayer == null) return;
+        try
+        {
+            listener.RestoreCoordinate(LeaderChatHistory.ReadLatest(identity, content => ParseLeaderCoordinate(content, client.TerritoryType, client.MapId)),
+                client.TerritoryType, client.MapId, MarkLeaderDestination);
+        }
+        catch (Exception ex) { log.Warning(ex, "回查最近10条车头聊天记录失败"); }
     }
     public void ClearLeader() => commands.Enqueue(() =>
     {
@@ -237,12 +244,15 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
     private bool EnsureTravelMount() => SafeState() && mounts.EnsureTravelMount(settings?.Get("mount", 0u) ?? 0);
     public void SelectMount(uint id) => commands.Enqueue(() => { if (!trigger.Active && !follow.Active) { mounts.Select(id); settings?.Put("mount", mounts.Selected); settings?.Flush(); } });
     public void NavigateTo(MapDestination destination) => commands.Enqueue(() => StartPointNavigation(destination));
-    public void GoToEntrance() => commands.Enqueue(() =>
+    public void GoToEntrance() => commands.Enqueue(StartCampNavigation);
+    private void StartCampNavigation()
     {
-        if (objects.LocalPlayer is { } player && IslandCrystalRoutes.CampDestination(Context(), player.Position) is { } camp)
-            StartPointNavigation(camp, false, waitWithoutFate: false);
-        else { usingFollow = false; navigation.Stop("请先进入优雷卡岛内。"); }
-    });
+        if (RemoteActive || BunnyAutomationActive || SurveyActive || commonJourney.Active || trigger.Active) return;
+        follow.Stop(); navigation.Stop(); arrivalGame.Reset(); usingFollow = false;
+        if (!SafeState()) { navigation.Stop("当前角色状态不允许移动，请结束交互后重试。"); return; }
+        pointNm = false;
+        navigation.StartCamp(Context(), objects.LocalPlayer!.Position, DateTimeOffset.UtcNow, EnsureTravelMount());
+    }
     private void StartPointNavigation(MapDestination destination, bool useNm = true, bool useCrystals = true,
         bool waitWithoutFate = true, bool requireFate = false)
     {
@@ -275,8 +285,10 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
         arrivalGame.Reset();
         if (follow.Start(Context(), DateTimeOffset.UtcNow))
         {
-            listener.ClearDestination(clearHistory: false);
             listener.SetListening(true, shoutOnly: true);
+            if (listener.Destination is { } destination && destination.Territory == client.TerritoryType && destination.Map == client.MapId)
+                follow.Receive(destination);
+            else listener.ClearDestination(clearHistory: false);
         }
     });
     public void Stop() => commands.Enqueue(() => StopTasks());
@@ -492,16 +504,7 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
             }
             if (current.Following && message.LogKind != XivChatType.Shout) return;
             var receivedAt = DateTimeOffset.UtcNow;
-            var link = content.Payloads.OfType<MapLinkPayload>().FirstOrDefault();
-            if (link == null)
-            {
-                var match = Coordinates.Match(text);
-                if (match.Success && float.TryParse(match.Groups["x"].Value, CultureInfo.InvariantCulture, out var x)
-                    && float.TryParse(match.Groups["y"].Value, CultureInfo.InvariantCulture, out var y) && x >= 1 && y >= 1)
-                    link = new MapLinkPayload(client.TerritoryType, client.MapId, x, y);
-            }
-            MapDestination? goal = link == null ? null : new(link.TerritoryType.RowId, link.Map.RowId,
-                new(link.RawX / 1000f, 0, link.RawY / 1000f), $"{link.PlaceName} {link.CoordinateString}");
+            var goal = ParseLeaderCoordinate(content, client.TerritoryType, client.MapId);
             // Chat callbacks only enqueue managed copies; all map/game operations happen in Update.
             commands.Enqueue(() =>
             {
@@ -509,12 +512,28 @@ internal sealed partial class AutomationHelpers : IAutomationHelpers, IDisposabl
                 var before = listener.Destination;
                 listener.Receive(identity, channel, text, goal, client.TerritoryType, client.MapId,
                     player.Position, receivedAt,
-                    destination => gui.OpenMapWithMapLink(new MapLinkPayload(destination.Territory, destination.Map,
-                        (int)MathF.Round(destination.Position.X * 1000), (int)MathF.Round(destination.Position.Z * 1000))), follow.Following);
+                    MarkLeaderDestination, follow.Following);
                 if (follow.Following && listener.Destination is { } accepted && !ReferenceEquals(before, accepted)) follow.Receive(accepted);
             });
         }
         catch (Exception ex) { log.Warning(ex, "解析车头消息失败"); }
+    }
+
+    private bool MarkLeaderDestination(MapDestination destination) => gui.OpenMapWithMapLink(new MapLinkPayload(destination.Territory, destination.Map,
+        (int)MathF.Round(destination.Position.X * 1000), (int)MathF.Round(destination.Position.Z * 1000)));
+
+    private static MapDestination? ParseLeaderCoordinate(SeString content, uint territory, uint map)
+    {
+        var link = content.Payloads.OfType<MapLinkPayload>().FirstOrDefault();
+        if (link == null)
+        {
+            var match = Coordinates.Match(content.TextValue);
+            if (match.Success && float.TryParse(match.Groups["x"].Value, CultureInfo.InvariantCulture, out var x)
+                && float.TryParse(match.Groups["y"].Value, CultureInfo.InvariantCulture, out var y) && x >= 1 && y >= 1)
+                link = new MapLinkPayload(territory, map, x, y);
+        }
+        return link == null ? null : new(link.TerritoryType.RowId, link.Map.RowId,
+            new(link.RawX / 1000f, 0, link.RawY / 1000f), $"{link.PlaceName} {link.CoordinateString}");
     }
 
     private static unsafe bool ReadFollowMovement()

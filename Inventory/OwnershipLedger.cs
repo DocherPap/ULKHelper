@@ -67,6 +67,13 @@ internal sealed class OwnershipLedger
         Revision++;
     }
 
+    public void MarkSourceCached(string key)
+    {
+        if (!Profile.Sources.TryGetValue(key, out var source) || !source.ReadThisSession) return;
+        source.ReadThisSession = false;
+        Revision++;
+    }
+
     public void Replace(string key, string label, Dictionary<uint, int> items, bool touch = false)
     {
         if (Profile.ContentId == 0) return;

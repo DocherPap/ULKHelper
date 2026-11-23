@@ -7,7 +7,6 @@ namespace ULKHelper.Windows;
 internal sealed class AutomationPage(IAutomationHelpers helpers, FateMapPage? map = null)
 {
     private string filter = "";
-    private PlayerIdentity? selected;
     public void Load(SettingsStore settings) => filter = settings.Get("automation.playerFilter", "");
     public void Save(SettingsStore settings) => settings.Put("automation.playerFilter", filter);
 
@@ -18,6 +17,11 @@ internal sealed class AutomationPage(IAutomationHelpers helpers, FateMapPage? ma
         ImGui.TextDisabled("构建：" + build);
         if (map == null) ImGui.TextDisabled("地图数据尚未就绪。");
         else map.Draw(this);
+    }
+    public void DrawCompact()
+    {
+        if (map != null) map.DrawCompactAutomation(this);
+        else DrawFollow(helpers.Snapshot);
     }
 
     public void DrawFollow(AutomationSnapshot state)
@@ -62,16 +66,15 @@ internal sealed class AutomationPage(IAutomationHelpers helpers, FateMapPage? ma
     {
         if (ImGui.SmallButton("刷新")) helpers.RefreshPlayers();
         ImGui.SameLine();
-        ImGui.BeginDisabled(selected == null || !state.Players.Any(p => p.Identity == selected));
-        if (ImGui.SmallButton("设为车头")) helpers.SelectLeader(selected!);
-        ImGui.EndDisabled();
+        ImGui.TextDisabled("点击名字设为车头");
         ImGui.SetNextItemWidth(-1);
         ImGui.InputTextWithHint("##PlayerSearch", "搜索岛民", ref filter, 100);
         foreach (var player in state.Players.Where(p => string.IsNullOrWhiteSpace(filter)
             || p.Identity.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)
             || p.WorldName.Contains(filter, StringComparison.OrdinalIgnoreCase)))
         {
-            if (ImGui.Selectable($"{player.Identity.Name}##{player.Identity.HomeWorld}", selected == player.Identity)) selected = player.Identity;
+            if (ImGui.Selectable($"{player.Identity.Name}##{player.Identity.HomeWorld}", state.Leader == player.Identity))
+                helpers.SelectLeader(player.Identity);
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip($"{player.Identity.Name} @ {player.WorldName}\n{(player.IsLoaded ? $"距离 {player.Distance:0}m" : "位置未加载")}");
         }
